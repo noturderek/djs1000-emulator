@@ -126,8 +126,9 @@ your samples on it before you start the emulator, then run as usual:
   your Mac has it mounted elsewhere. Quit the emulator first (close its window), or release the stick with
   `./sp16emu usb unmount`.
 - `./sp16emu usb create [--size 4G] [--force]` makes an empty stick without adding anything (it never overwrites an
-  existing image unless you add `--force`); `./sp16emu usb mount` mounts it in `build/.usb-mnt` and prints the folder
-  if you would rather copy with Finder, and `usb unmount` releases it. `--image PATH` works on another image.
+  existing image unless you add `--force`); `./sp16emu usb mount` mounts it in `build/.usb-mnt` (in
+  `~/Library/Caches/sp16emu/usb-mnt` when the clone is inside Downloads, Desktop, Documents or iCloud Drive) and prints
+  the folder if you would rather copy with Finder, and `usb unmount` releases it. `--image PATH` works on another image.
 - `./sp16emu run` attaches `build/stick.img` when it exists. `--no-usb` starts without it and `--usb-image PATH`
   attaches another image. If another running emulator already uses the stick, `run` says so and starts without it.
 
@@ -257,6 +258,7 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | `usb ...: is in use by a running emulator` | The emulator (or a leftover QEMU) has the stick. Quit it, stopping only the process ids the message names, then repeat the command. Mounting a stick the emulator writes to would corrupt it. |
 | `usb ...: already attached to this Mac` | Release it with `./sp16emu usb unmount`, then repeat. `./sp16emu run` also starts without the stick (and says why) while the Mac holds it. |
 | `usb ...: cannot attach` | The image has no FAT32 file system (for example a zero-filled file). Recreate it with `./sp16emu usb create --force`, or `usb add` formats a blank image by itself. |
+| `usb ...: cannot attach ... no mountable file systems` on a clone in Downloads, Desktop or Documents | macOS privacy protection refuses a mount whose mount point is in that folder, even though the image itself is fine. Current versions mount in `~/Library/Caches/sp16emu/usb-mnt` instead; update the clone. `./sp16emu doctor` warns about the location. A message that says "cannot mount ... privacy protection" means the same: move the clone (for example to `~/src/sp16-emulator`) or give your terminal app Full Disk Access (System Settings > Privacy & Security), then repeat. |
 | The window is black | Read `console.txt` in the newest folder under `build/sp16/sessions/`. |
 | The app quit or crashed | Start it again: it offers to collect diagnostics. Then see [Reporting a bug](#reporting-a-bug). The newest folder under `build/sp16/sessions/` holds `app.log` (the app's log) and `qemu-stderr.txt`. |
 

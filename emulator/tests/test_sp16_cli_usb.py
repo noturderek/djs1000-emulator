@@ -814,6 +814,88 @@ class LargePackTests(UsbCase):
         self.assertIn("--image PATH", err)
 
 
+
+class PrivacyFolderTests(UsbCase):
+    """A repository inside Downloads, Desktop, Documents or iCloud Drive: macOS refuses a mount whose mount point is in
+    there (mount(2) EPERM, reported by hdiutil as "no mountable file systems"), so the mount point goes to the cache."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = self.root / "home"
+        self.project = self.home / "Downloads" / "sp16-emulator"
+        self.build = self.project / "build"
+        self.build.mkdir(parents=True, mode=0o700)
+        self.ctx.home = self.home
+        self.ctx.root = self.project
+        self.ctx.build = self.build
+        self.cache = self.home / "Library" / "Caches" / "sp16emu" / "usb-mnt"
+
+    def test_protected_folders_are_recognised(self):
+        home = self.home
+        for path in (home / "Downloads", home / "Downloads" / "x" / "y", home / "downloads" / "x",
+                     home / "Desktop" / "x", home / "Documents", home / "Library" / "Mobile Documents"
+                     / "com~apple~CloudDocs" / "x"):
+            self.assertIsNotNone(cli.protected_folder(path, home), str(path))
+        for path in (home / "Downloadsx", home / "Projects" / "x", home / "Library" / "Mobile Documents" / "com~apple~Other",
+                     self.root / "build"):
+            self.assertIsNone(cli.protected_folder(path, home), str(path))
+        self.assertEqual(cli.protected_folder(self.build, home), str(home / "Downloads"))
+
+    def test_mount_root_moves_out_of_a_protected_build_folder(self):
+        self.assertEqual(cli.usb_mount_root(self.ctx), self.cache)
+        self.ctx.build = self.root / "build"
+        self.assertEqual(cli.usb_mount_root(self.ctx), self.root / "build" / ".usb-mnt")
+
+    def test_create_mounts_outside_the_protected_folder(self):
+        code, _, err = self.usb("create", "--size", "64M")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(self.stick().exists())
+        self.assertTrue(self.mounts[0].startswith(str(self.cache) + os.sep), self.mounts)
+        self.assertFalse(self.mounts[0].startswith(str(self.project) + os.sep))
+        expected = ["hdiutil attach", "newfs_msdos", "hdiutil detach", "hdiutil attach", "hdiutil detach"]
+        self.assertTrue(self.names() == expected, self.names())
+
+    def test_mount_and_unmount_clean_up_in_the_cache(self):
+        self.make_stick()
+        code, out, err = self.usb("mount")
+        self.assertEqual(code, 0, err)
+        here = Path(out.strip())
+        self.assertTrue(str(here).startswith(str(self.cache) + os.sep))
+        self.assertTrue(here.is_dir())
+        (here / ".DS_Store").write_bytes(b"x")
+        self.attached(self.stick(), mount=here)
+        code, _, err = self.usb("unmount")
+        self.assertEqual(code, 0, err)
+        self.assertFalse((here / ".DS_Store").exists() or here.exists())
+        self.assertEqual(self.names()[-1], "hdiutil detach")
+
+    def test_a_refused_mount_names_the_privacy_cause(self):
+        self.fail["hdiutil attach"] = 1
+        point = self.project / "mnt"
+        with self.assertRaises(cli.CliError) as caught:
+            cli.hdiutil_attach(self.ctx, self.stick(), ["-nobrowse", "-mountpoint", str(point)])
+        message = str(caught.exception)
+        self.assertIn("privacy protection", message)
+        self.assertIn("Full Disk Access", message)
+        self.assertNotIn("usb create --force", message)
+
+    def test_a_failed_mount_during_create_detaches_and_leaves_no_image(self):
+        original = self.run_tool
+
+        def refuse_mounts(argv, timeout=300):
+            if argv[:2] == ["hdiutil", "attach"] and "-mountpoint" in argv:
+                self.tool_calls.append(list(argv))
+                return 1, "", "hdiutil: attach failed - no mountable file systems"
+            return original(argv, timeout)
+        self.ctx.run_tool = refuse_mounts
+        code, _, err = self.usb("create", "--size", "64M")
+        self.assertEqual(code, 1)
+        self.assertIn("no mountable file systems", err)
+        self.assertFalse(self.stick().exists())
+        # the format pass detached its device; the refused mount had none to detach
+        self.assertTrue(self.names() == ["hdiutil attach", "newfs_msdos", "hdiutil detach", "hdiutil attach"], self.names())
+
+
 class HelpCoverageTests(UsbCase):
     def test_help_usb_lists_every_option_action_and_the_safety_rule(self):
         code, out, _ = self.main("help", "usb")

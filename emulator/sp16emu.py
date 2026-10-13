@@ -190,6 +190,7 @@ class Context:
         self.err = err or sys.stderr
         self.interactive = sys.stdin.isatty() if interactive is None else interactive
         self.preflight = True
+        self.home = Path(env.get("HOME") or os.path.expanduser("~"))  # the privacy-protected folders live here
 
     # output
     def say(self, text):
@@ -1096,6 +1097,14 @@ def doctor_checks(ctx):
             "use the real path, for example a folder in your home directory")
     else:
         add("ok", "folder path", "no commas or symlinks")
+    protected = protected_folder(ctx.root, ctx.home)
+    if protected:
+        add("warn", "repository location (macOS privacy)", f"inside {ctx.display(protected)}: the USB stick mounts in "
+            f"{ctx.display(ctx.home / USB_CACHE_MOUNTS)} instead, because macOS refuses mounts inside that folder",
+            "move the clone outside Downloads, Desktop, Documents and iCloud Drive (for example ~/src/sp16-emulator), "
+            "or give your terminal app Full Disk Access")
+    else:
+        add("ok", "repository location (macOS privacy)", "outside the folders macOS protects")
     if ctx.build.is_dir():
         if ctx.build.stat().st_mode & 0o077:
             add("fail", "build folder permissions", "readable by others", f"chmod 700 '{ctx.build}'")
@@ -1176,9 +1185,8 @@ def run_clean(ctx, args, tail):
         return 0
     if ctx.build.is_symlink():
         raise CliError(f"{ctx.display(ctx.build)} is a symlink; refusing to clean through it")
-    mounts = ctx.build / USB_MOUNTS
-    if args.everything and mounts.is_dir():
-        held = [m for m in sorted(mounts.iterdir()) if os.path.ismount(str(m))]
+    if args.everything:
+        held = [m for root in usb_mount_roots(ctx) if root.is_dir() for m in sorted(root.iterdir()) if os.path.ismount(str(m))]
         if held:
             raise CliError(f"the USB stick is mounted on this Mac at {held[0]}; release it first with: sp16emu usb unmount")
     for pid_owner in ([ctx.build] if args.everything else [b.path for b in list_builds(ctx) if args.all or b.name == args.name]):
@@ -1238,6 +1246,11 @@ STICK_MIN_SIZE = 64 << 20
 STICK_MAX_SIZE = 32 << 30
 USB_ACTIONS = ("create", "add", "ls", "mount", "unmount")
 USB_MOUNTS = ".usb-mnt"              # mount points live in build/.usb-mnt (hidden, so it is not taken for a build)
+# macOS privacy protection lets the disk-image service read an image in these folders, but the mount of a volume
+# whose mount point is inside one is refused (mount(2): Operation not permitted, which hdiutil reports as "no mountable
+# file systems"). Such a build folder mounts in the per-user cache instead.
+PROTECTED_FOLDERS = ("Downloads", "Desktop", "Documents", "Library/Mobile Documents/com~apple~CloudDocs")
+USB_CACHE_MOUNTS = "Library/Caches/sp16emu/usb-mnt"
 AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff")
 JUNK_FILES = (".DS_Store", ".apdisk")
 JUNK_PREFIX = "._"
@@ -1375,6 +1388,12 @@ def hdiutil_attach(ctx, image, options):
     if code:
         lines = [l for l in err.splitlines() if l.strip() and "deprecated" not in l]
         reason = lines[-1].strip() if lines else f"hdiutil exited with {code}"
+        point = options[options.index("-mountpoint") + 1] if "-mountpoint" in options else None
+        folder = protected_folder(point, ctx.home) if point else None
+        if folder:
+            raise CliError(f"cannot mount {ctx.display(image)} inside {folder}: macOS privacy protection refuses mounts in "
+                           f"that folder ({reason}); move the repository out of it (for example ~/src/sp16-emulator) or "
+                           "give your terminal app Full Disk Access, then repeat")
         raise CliError(f"cannot attach {ctx.display(image)}: {reason}. If it holds no FAT32 file system, recreate "
                        "it with: sp16emu usb create --force")
     for line in out.splitlines():
@@ -1398,11 +1417,38 @@ def hdiutil_detach(ctx, device):
     ctx.say(f"{device} was busy and had to be detached with force; check the stick with: sp16emu usb ls")
 
 
+def protected_folder(path, home):
+    """The privacy-protected folder (Downloads, Desktop, Documents or iCloud Drive under home) that holds path, or None."""
+    real = os.path.realpath(str(path)).casefold()
+    base = os.path.realpath(str(home))
+    for name in PROTECTED_FOLDERS:
+        folder = os.path.join(base, name).casefold()
+        if real == folder or real.startswith(folder + os.sep):
+            return os.path.join(str(home), name)
+    return None
+
+
+def usb_mount_root(ctx):
+    """Where this build's mount points go (not created): build/.usb-mnt, or the per-user cache when the build
+    folder is inside a privacy-protected folder, where macOS refuses the mount."""
+    if protected_folder(ctx.build, ctx.home):
+        return ctx.home / USB_CACHE_MOUNTS
+    return ctx.build / USB_MOUNTS
+
+
+def usb_mount_roots(ctx):
+    """Every folder a usb mount point can be in (unmount and clean look in all of them)."""
+    return [ctx.build / USB_MOUNTS, ctx.home / USB_CACHE_MOUNTS]
+
+
 def mount_root(ctx):
-    root = ctx.build / USB_MOUNTS
-    ensure_build_root(ctx)
+    root = usb_mount_root(ctx)
+    if root.is_symlink():
+        raise CliError(f"{ctx.display(root)} is a symlink; replace it with a real folder")
+    if root == ctx.build / USB_MOUNTS:
+        ensure_build_root(ctx)
     if not root.is_dir():
-        root.mkdir(mode=0o700)
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return root
 
 
@@ -1523,7 +1569,7 @@ def usb_dry_run(ctx, args, image, files):
         "create": [f"create {ctx.display(image)} ({args.size or '1G'}, sparse, mode 0600)",
                    "hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount IMAGE",
                    f"newfs_msdos -F 32 -v {STICK_LABEL} /dev/rdiskN", "hdiutil detach /dev/diskN",
-                   f"hdiutil attach ... -mountpoint {ctx.display(ctx.build / USB_MOUNTS)}/stick-XXXX IMAGE",
+                   f"hdiutil attach ... -mountpoint {ctx.display(usb_mount_root(ctx))}/stick-XXXX IMAGE",
                    f"mkdir -p '{STICK_FOLDER}/{STICK_SAMPLES}'", "hdiutil detach /dev/diskN"],
         "add": ["create and format the image first when it is missing or blank",
                 "hdiutil attach ... -mountpoint MOUNTPOINT IMAGE"]
@@ -1832,9 +1878,9 @@ def usb_unmount(ctx, image):
     if not found:
         ctx.out.write(f"{ctx.display(image)} is not mounted.\n")
         return 0
-    root = os.path.realpath(str(ctx.build / USB_MOUNTS))
+    roots = [os.path.realpath(str(r)) + os.sep for r in usb_mount_roots(ctx)]
     for device, mounts in found:
-        ours = [m for m in mounts if os.path.realpath(m).startswith(root + os.sep)]
+        ours = [m for m in mounts if any(os.path.realpath(m).startswith(r) for r in roots)]
         for mount in ours:
             remove_junk(mount)
         hdiutil_detach(ctx, device)
@@ -1975,7 +2021,8 @@ def make_commands():
         "its structure, `--tree DIR` copies only what is inside DIR) and removes the ._ and .DS_Store "
         "files macOS adds. WAV and AIFF files that are not PCM 16- or 24-bit 44.1 kHz are copied with one warning per kind, never "
         "converted; other files are skipped unless --any. `ls` lists the stick, `mount` mounts it (prints the mount "
-        "point, under build/.usb-mnt) and `unmount` releases it. Every command that mounts or writes refuses while a "
+        "point, under build/.usb-mnt, or in ~/Library/Caches/sp16emu/usb-mnt when the build folder is in Downloads, Desktop, "
+        "Documents or iCloud Drive) and `unmount` releases it. Every command that mounts or writes refuses while a "
         "running emulator has the image or this Mac has it attached elsewhere. Needs macOS (hdiutil, newfs_msdos).",
         positionals=[Pos("action", "what to do", choices=USB_ACTIONS), Pos("files", "usb add: the sample files or folders", nargs="*", metavar="FILES")],
         opts=USB_OPTS, usage="sp16emu usb create | add FILES... | ls | mount | unmount [--image PATH] [options]",
@@ -1991,8 +2038,8 @@ def make_commands():
                "Sizes: the default stick is 1G; --size goes up to 32G (sparse, so it costs no disk space until used). "
                "The files are checked against the free space before anything is copied. Each file must be under 4 GB "
                "(FAT32); a stick can hold much more in total.",
-               "Nothing outside the image and build/ is touched; mount points live in build/.usb-mnt and are removed "
-               "again."],
+               "Nothing outside the image and build/ is touched, except a mount point in ~/Library/Caches/sp16emu/usb-mnt when "
+               "the build folder is in a protected folder; mount points are removed again."],
         direct=True, intermixed=True)
     add("audio", "Build and run", "List CoreAudio output devices for --audio-device (devices); run the audio self-test",
         "`audio devices` compiles the audio tool on first use (into build/.cache, a few seconds) and prints each "

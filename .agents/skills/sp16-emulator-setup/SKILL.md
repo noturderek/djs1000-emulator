@@ -106,7 +106,7 @@ stopped:
   print its process ids; stop an emulator only by those exact ids) or when the Mac already has the image attached
   (`./sp16emu usb unmount`). Do not work around the refusal with `hdiutil` or Finder.
 - `usb create --force` replaces an existing stick and deletes its content: ask the user first.
-- Mount points live in `build/.usb-mnt` (removed again); `usb mount` prints the folder if the user wants Finder.
+- Mount points live in `build/.usb-mnt` (removed again); `usb mount` prints the folder if the user wants Finder. When the clone is inside Downloads, Desktop, Documents or iCloud Drive, macOS refuses mounts there, so they go to `~/Library/Caches/sp16emu/usb-mnt` instead (the image is fine where it is).
 
 ## 6. Modified firmware
 

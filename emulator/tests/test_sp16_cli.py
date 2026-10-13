@@ -565,9 +565,13 @@ class CleanTests(CliCase):
 
 
 class DoctorAndAudioTests(CliCase):
-    def run_doctor(self, results, which=None):
+    def run_doctor(self, results, which=None, root=None, home=None):
         ctx = self.make_ctx()
         ctx.which = which or (lambda name: "/usr/bin/" + name)
+        if root is not None:
+            ctx.root = root
+        if home is not None:
+            ctx.home = home
 
         def capture(argv, timeout=30):
             for key, value in results.items():
@@ -593,6 +597,15 @@ class DoctorAndAudioTests(CliCase):
         # check-ignore returning 0 means ignored, which is what the doctor wants to see
         self.assertNotIn("[FAIL] Docker", out)
         self.assertIn("Xcode Command Line Tools", out)
+
+    def test_doctor_warns_when_the_repository_is_in_a_protected_folder(self):
+        home = self.root / "home"
+        project = home / "Downloads" / "sp16-emulator"
+        code, out = self.run_doctor({"check-ignore": (0, "")}, root=project, home=home)
+        self.assertIn("[warn] repository location (macOS privacy): inside", out)
+        self.assertIn("Full Disk Access", out)
+        code, out = self.run_doctor({"check-ignore": (0, "")}, root=home / "Projects" / "sp16-emulator", home=home)
+        self.assertIn("[ok  ] repository location (macOS privacy)", out)
 
     def test_doctor_names_missing_tools(self):
         code, out = self.run_doctor({}, which=lambda name: None)
