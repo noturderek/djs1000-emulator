@@ -10,8 +10,8 @@ squashfs-tools and no crypto library on the host.
   squashfs; the host verifies the image hash and stores it in the firmware library with its manifest.
 - Library: <library>/<id>/{manifest.json, entry.json, firmware.sqfs, update.upd, data/}. Owner-only, no symlinks, and
   git-ignored when inside the repository.
-- check_report: the compatibility report of an import; an unverified one is shown as a notice (owner decision of
-  2026-10-13: any correctly keyed update runs, marked unverified when no verified profile matches).
+- check_report: the compatibility report of an import; an unverified one is shown as a notice (D2 in
+  docs/architecture.md: any correctly keyed update runs, marked unverified when no verified profile matches).
 """
 import datetime
 import hashlib
@@ -416,7 +416,7 @@ def check_report(manifest, library=None):
     reference = profiles.for_app(base_app_sha256(manifest))
     if reference is None:
         try:
-            reference = profiles.load(profiles.LEGACY_PROFILE)
+            reference = profiles.load(profiles.product()["reference_profile"])
         except ValueError:
             reference = None
     compat = manifest.get("compat") or {}
@@ -495,7 +495,7 @@ def candidate_profile(manifest, from_profile=None):
 
 def unverified_mod(mod_id, reason):
     """The manifest `mod` section of a modified update that could not be verified against its own manifest. It is
-    still imported and boots as unverified (owner decision of 2026-10-13); the reason is recorded."""
+    still imported and boots as unverified (D2 in docs/architecture.md); the reason is recorded."""
     token = mod_id if isinstance(mod_id, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", mod_id) else "unverified"
     return {"id": token, "verified": False, "reason": str(reason)[:300]}
 
@@ -569,7 +569,7 @@ def audit_build(bundle_paths, initrds, library, forbidden_files=None, forbidden_
 
     def inspect(label, digest, data):
         if Path(label.split(":")[-1]).name in forbidden_names:
-            extra.append({"file": label, "forbidden": "legacy vendor logo or icon file name"})
+            extra.append({"file": label, "forbidden": "vendor logo or old icon file name"})
         if digest in forbidden_files:
             extra.append({"file": label, "forbidden": forbidden_files[digest]})
         if data is not None:

@@ -50,56 +50,48 @@ case " $(cat /proc/cmdline) " in
   sp16_poweroff ;;
 esac
 mkdir -m 700 /tmp/sp16-root
-# Legacy builds carry the OEM rootfs in the initramfs and copy it to RAM. The decoupled base image carries no OEM files:
-# it verifies the firmware image disk against its manifest hash and mounts it read-only under a tmpfs overlay.
-sp16_legacy=0
+# The decoupled base image carries no OEM files: it verifies the firmware image disk against its manifest hash and
+# mounts it read-only under a tmpfs overlay.
 sp16_devlayer=0
 sp16_profile_env=
 # The firmware-specific runtime layout (app path and working directory, emulated CPU, library path, tmpfs
-# directories, data/eMMC/USB mount points, allowed app arguments) comes from the firmware profile, never from this
-# script: the legacy image reads its pinned 1.60 profile, the decoupled base the profile chosen at attach.
+# directories, data/eMMC/USB mount points, allowed app arguments) comes from the firmware profile chosen at attach,
+# never from this script.
 sp16_set_runtime() {
   [ $# -eq 10 ] || return 1
   sp16_profile=$1 sp16_app_path=$2 sp16_app_cwd=$3 sp16_cpu=$4 sp16_ldpath=$5 sp16_tmpfs_dirs=$6 \
     sp16_data_dir=$7 sp16_emmc_mount=$8 sp16_usb_mount=$9 sp16_app_args=${10}
 }
-if [ -d /opt/sp16/rootfs ]; then
-  sp16_legacy=1
-  sp16_set_runtime $(python3 /opt/sp16/profiles.py runtime legacy)
-  sp16_data_seed=/opt/sp16/rootfs$sp16_data_dir
-  cp -a /opt/sp16/rootfs/. /tmp/sp16-root/
-else
-  modprobe virtio_blk
-  sp16_identity=$(python3 /opt/sp16/guest-firmware.py attach 2>/dev/console) || {
-    echo 'SP16_FIRMWARE_ERROR firmware refused; powering off' > /dev/console; exit 1; }
-  set -- $sp16_identity
-  sp16_variant=$1 sp16_firmware=$2 sp16_profile_how=$3
-  shift 3
-  sp16_set_runtime "$@" || { echo 'SP16_FIRMWARE_ERROR invalid runtime layout; powering off' > /dev/console; exit 1; }
-  sp16_data_seed=/tmp/sp16-root$sp16_data_dir
-  sp16_profile_env="SP16_PROFILE=$sp16_profile"
-  [ "$sp16_profile_how" = verified ] || echo "SP16_FIRMWARE_UNVERIFIED profile=$sp16_profile chosen=$sp16_profile_how" > /dev/console
-  # Our own staged files (the synthetic pad calibration), never OEM content; they land in the overlay's upper layer.
-  if [ -d /opt/sp16/stage ]; then cp -a /opt/sp16/stage/. /tmp/sp16-root/; fi
-  # Developer overlay (M6, research builds only: the app attaches the host folder read-only over 9p). Its files,
-  # recipes and preload libraries are applied into the overlay's upper layer before each app start.
-  case " $(cat /proc/cmdline) " in
-   *" sp16.dev=1 "*)
-    mkdir -p /opt/sp16/dev-share
-    if modprobe 9pnet_virtio && modprobe 9p \
-       && mount -t 9p -o trans=virtio,version=9p2000.L,ro,msize=524288 sp16dev /opt/sp16/dev-share; then
-      sp16_devlayer=1 sp16_variant="$sp16_variant+dev"
-    else
-      echo 'SP16_DEV_ERROR developer overlay share unavailable' > /dev/console
-    fi ;;
-  esac
-fi
+modprobe virtio_blk
+sp16_identity=$(python3 /opt/sp16/guest-firmware.py attach 2>/dev/console) || {
+  echo 'SP16_FIRMWARE_ERROR firmware refused; powering off' > /dev/console; exit 1; }
+set -- $sp16_identity
+sp16_variant=$1 sp16_firmware=$2 sp16_profile_how=$3
+shift 3
+sp16_set_runtime "$@" || { echo 'SP16_FIRMWARE_ERROR invalid runtime layout; powering off' > /dev/console; exit 1; }
+sp16_data_seed=/tmp/sp16-root$sp16_data_dir
+sp16_profile_env="SP16_PROFILE=$sp16_profile"
+[ "$sp16_profile_how" = verified ] || echo "SP16_FIRMWARE_UNVERIFIED profile=$sp16_profile chosen=$sp16_profile_how" > /dev/console
+# Our own staged files (the synthetic pad calibration), never OEM content; they land in the overlay's upper layer.
+if [ -d /opt/sp16/stage ]; then cp -a /opt/sp16/stage/. /tmp/sp16-root/; fi
+# Developer overlay (M6, research builds only: the app attaches the host folder read-only over 9p). Its files,
+# recipes and preload libraries are applied into the overlay's upper layer before each app start.
+case " $(cat /proc/cmdline) " in
+ *" sp16.dev=1 "*)
+  mkdir -p /opt/sp16/dev-share
+  if modprobe 9pnet_virtio && modprobe 9p \
+     && mount -t 9p -o trans=virtio,version=9p2000.L,ro,msize=524288 sp16dev /opt/sp16/dev-share; then
+    sp16_devlayer=1 sp16_variant="$sp16_variant+dev"
+  else
+    echo 'SP16_DEV_ERROR developer overlay share unavailable' > /dev/console
+  fi ;;
+esac
 cp /usr/bin/qemu-arm-static /tmp/sp16-root/qemu-arm-static
 mkdir -p /tmp/sp16-root/opt/sp16 /tmp/sp16-root/dev
 cp /opt/sp16/libsp16-ui.so /tmp/sp16-root/opt/sp16/
 : > /tmp/sp16-root/dev/null
 : > /tmp/sp16-root/dev/full
-# Audio transport (M4b1, native.py build --audio file): give the chroot the sp16.pcm port as a character node so the
+# Audio transport (native.py build --audio file): give the chroot the sp16.pcm port as a character node so the
 # stub's forwarder thread can stream the OEM's playback frames to the host file sink. Off unless asked for.
 sp16_audio_env=
 case " $(cat /proc/cmdline) " in
@@ -112,21 +104,6 @@ case " $(cat /proc/cmdline) " in
   fi ;;
 esac
 printf 'pcm.null { type null }\n' > /tmp/sp16-root/etc/sp16-alsa.conf
-if [ "$sp16_legacy" = 1 ]; then
-sp16_identity=$(python3 - "$sp16_app_path" <<'PY'
-import json
-import sys
-from pathlib import Path
-sys.path.insert(0, '/opt/sp16')
-from app_identity import verify
-manifest = json.loads(Path('/opt/sp16/app-identity.json').read_text())
-verify(Path('/tmp/sp16-root' + sys.argv[1]).read_bytes(), manifest)
-print(manifest['variant'], manifest['firmware'])
-PY
-)
-sp16_variant=${sp16_identity% *}
-sp16_firmware=${sp16_identity#* }
-fi
 # Persistent eMMC (fullpanel builds only: native.py adds sp16.data=1 with a virtio block device). This is our
 # trusted init, not the OEM: it formats the card once (only when it has no filesystem), repairs an unclean shutdown
 # with fsck.vfat -a, and mounts it at the chroot's /mnt/emmc before the app starts. The OEM's own mkfs/mount stay
@@ -168,7 +145,7 @@ sp16_data_setup() {
   mkdir -p "/tmp/sp16-root$sp16_emmc_mount/.sp16/data" "/tmp/sp16-root$sp16_data_dir"
   cp -an "$sp16_data_seed/." "/tmp/sp16-root$sp16_emmc_mount/.sp16/data/" 2>/dev/null || :
   mount --bind "/tmp/sp16-root$sp16_emmc_mount/.sp16/data" "/tmp/sp16-root$sp16_data_dir" || return 1
-  # Profile runtime.tmpfs_dirs (1.60, strace M3c: the OEM symlinks Projects/Scenes/Samples into /root/pdj/project/
+  # Profile runtime.tmpfs_dirs (1.60: the OEM symlinks Projects/Scenes/Samples into /root/pdj/project/
   # and lists /root/pdj/browse; neither directory exists in the rootfs).
   for sp16_dir in $(echo "$sp16_tmpfs_dirs" | tr , ' '); do
     [ "$sp16_dir" = - ] && continue
@@ -210,7 +187,7 @@ case " $(cat /proc/cmdline) " in
     < /tmp/sp16-root/sp16-strace.fifo | sed -u 's/^/SP16_STRACE /' > /dev/console) &
   sp16_trace_args="-strace -D /sp16-strace.fifo" ;;
  *" sp16.trace=pcmtap "*)
-  # Research PCM tap (M4a): the stub copies each playback stream into a bounded file under /tmp; this helper
+  # Research PCM tap: the stub copies each playback stream into a bounded file under /tmp; this helper
   # prints every finished capture to the console as gzip+base64 lines (SP16_PCM_DUMP) for host-side analysis.
   # No audio ever reaches a host device.
   sp16_pcmtap=1 ;;
@@ -284,14 +261,6 @@ while True:
 PY
   SP16_EMMC_MOUNT=$sp16_emmc_mount python3 -u /tmp/sp16-pcm-dump.py > /dev/console 2>&1 &
 fi
-if [ "$sp16_legacy" = 1 ]; then
-SP16_APP_CWD=$sp16_app_cwd python3 /opt/sp16/enter.py /tmp/sp16-root /qemu-arm-static $sp16_trace_args -cpu $sp16_cpu \
- -E DISPLAY=127.0.0.1:99 -E LD_LIBRARY_PATH=$sp16_ldpath \
- -E LD_PRELOAD=/opt/sp16/libsp16-ui.so -E ALSA_CONFIG_PATH=/etc/sp16-alsa.conf \
- -E SP16_PANEL_INPUT=1 $sp16_tap_env $sp16_audio_env \
- $sp16_app_path $sp16_app_arg > /output/application.txt 2>&1 &
-sp16_app_pid=$!
-else
 # Decoupled builds (M6): a supervisor restarts only the OEM app on request (control port "app-restart", research
 # socket op app-restart), re-applying the developer overlay first; the VM, Xvfb, bridge and mounts stay up. Stale shim
 # endpoints of a killed app are removed (the shim refuses an existing endpoint and only unlinks on a clean close).
@@ -322,8 +291,7 @@ else
   done
 ) &
 sp16_app_pid=$!
-fi
-# Control watcher (M3c clean stop + M3f virtual USB stick), one trusted script for both triggers: "watch" answers the
+# Control watcher (clean stop and virtual USB stick), one trusted script for both triggers: "watch" answers the
 # host's requests on the control port (shutdown, usb-attach, usb-eject); "once" runs when the bridge exits (host gone:
 # quit, crash or kill -9) and does the same stop without a host. Stop kills the OEM app, syncs, unmounts the stick and
 # the data filesystem and reports clean=yes|no. The USB image (second virtio disk, serial sp16usb) is formatted by this

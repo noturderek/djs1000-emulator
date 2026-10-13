@@ -1,4 +1,4 @@
-/* Contract for the audio transport (M4b1). Build twice like sp16_pcm_tap_contract.c
+/* Contract for the audio transport. Build twice like sp16_pcm_tap_contract.c
  * (-DSP16_FAKE_ALSA -shared -fPIC -> libsp16-fake-alsa.so; normal -> test) and run with the ARM UI preload plus
  * SP16_PCM_PORT=/tmp/run/port (a regular file in mode "file", a FIFO nobody reads in mode "stall") and no tap.
  *   file : every written frame arrives bit-exact (channels 12..15 of the 16-channel stream), packets carry a

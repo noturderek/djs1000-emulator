@@ -649,7 +649,7 @@ static void pcm_tap_feed(struct pcm_state *s,const void *buffer,snd_pcm_sframes_
     if (have+take>=t->cap_frames) tap_u32(t->map,12,2); /* done=2: full */
 }
 
-/* Audio transport (M4b1, off unless SP16_PCM_PORT names the guest virtio-serial node, set by guest-init for
+/* Audio transport (off unless SP16_PCM_PORT names the guest virtio-serial node, set by guest-init for
  * sp16.audio=file). The audio thread (snd_pcm_writei) only copies the interesting channels into a per-stream
  * lock-free SPSC ring of 256 period slots (about 370 ms): no lock, no syscall besides the clock read pace() already makes, and it
  * never waits. A full ring drops the new period and counts it (the frame index still advances, so the host sees a

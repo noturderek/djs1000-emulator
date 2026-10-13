@@ -716,8 +716,7 @@ class DriftTests(unittest.TestCase):
     def test_native_build_flags(self):
         tool = self.flags_of(str(TOOLS / "native.py"), "build")
         handled = self.reachable("build") | {"--output", "--decoupled", "--profile"}
-        legacy = {"--rootfs", "--mod", "--app-arg", "--no-persistence"}  # private builds only; reachable after `--`
-        self.assertEqual(tool - handled - legacy, set(), "native.py build has options ./sp16 does not know")
+        self.assertEqual(tool - handled, set(), "native.py build has options ./sp16 does not know")
 
     def test_native_build_choices(self):
         text = subprocess.run([sys.executable, str(TOOLS / "native.py"), "build", "--help"], capture_output=True,

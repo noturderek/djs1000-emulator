@@ -1,7 +1,6 @@
 # Decoupled guest base image (docs/architecture.md, M2/M3): our code and Debian packages only, no OEM files.
 # Build tooling only; the resulting kernel + initramfs boot under native macOS QEMU. The user's firmware is imported
 # into a read-only squashfs inside this guest (sp16.mode=import) and attached at run time as a virtio-blk disk.
-# The legacy Dockerfile.native-guest (whole OEM rootfs in the initramfs) is unchanged.
 FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends linux-image-arm64 kmod cpio gzip iproute2 \

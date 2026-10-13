@@ -1,7 +1,7 @@
 import Foundation
 import Darwin
 
-/// Host side of the audio transport (M4b1, `native.py build --audio file`): reads the dedicated virtio-serial
+/// Host side of the audio transport (`native.py build --audio file`): reads the dedicated virtio-serial
 /// port (`<socket>.pcm`), writes one WAV per playback stream into the session directory and keeps counters.
 /// File sink only: nothing here touches CoreAudio or any output device. See hardware_stub.c for the packet layout.
 final class AudioSink {

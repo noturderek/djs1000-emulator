@@ -228,7 +228,6 @@ struct PanelRenderState {
 final class PanelRenderer {
     let layout: PanelLayout
     private var fontCache: [String: NSFont] = [:]
-    private var svgCache: [String: NSImage] = [:]
 
     init(layout: PanelLayout) { self.layout = layout }
 
@@ -336,9 +335,6 @@ final class PanelRenderer {
             f = NSFont(name: "SnellRoundhand-Bold", size: size)
                 ?? NSFont(descriptor: NSFont.systemFont(ofSize: size, weight: .semibold).fontDescriptor.withDesign(.serif)!, size: size)
                 ?? NSFont.systemFont(ofSize: size)
-        case "logo":
-            let base = NSFont.systemFont(ofSize: size, weight: weight)
-            f = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) } ?? base
         default:
             f = NSFont.systemFont(ofSize: size, weight: weight)
         }
@@ -381,16 +377,7 @@ final class PanelRenderer {
         default: x = p.x - w / 2
         }
         let top = p.y + f.capHeight / 2 - f.ascender
-        guard face == "logo", let ctx = NSGraphicsContext.current?.cgContext else {
-            str.draw(at: CGPoint(x: x, y: top))
-            return w
-        }
-        // Synthetic italic: shear about the baseline (obliqueness is ignored by rounded system fonts).
-        ctx.saveGState()
-        ctx.translateBy(x: x, y: p.y + f.capHeight / 2)
-        ctx.concatenate(CGAffineTransform(a: 1, b: 0, c: -0.2, d: 1, tx: 0, ty: 0))
-        str.draw(at: CGPoint(x: 0, y: top - (p.y + f.capHeight / 2)))
-        ctx.restoreGState()
+        str.draw(at: CGPoint(x: x, y: top))
         return w
     }
 
@@ -447,36 +434,9 @@ final class PanelRenderer {
             drawUSBPort(ctx, d.rect, d.radius ?? 6)
         case "icon":
             drawIcon(ctx, d.name ?? "", c: CGPoint(x: d.cx ?? 0, y: d.cy ?? 0), size: d.size ?? 12, ink: ink)
-        case "svg":
-            drawSVG(d.name ?? "", in: d.rect, color: d.color)
         default:
             break
         }
-    }
-
-    /// Draws a bundled official logo (Resources/<name>.svg) recoloured to the panel ink, fitted into `rect`.
-    /// The artwork is flat filled paths, so every fill is replaced; AppKit rasterises it at the target size.
-    private func drawSVG(_ name: String, in rect: CGRect, color: String?) {
-        let hex: String
-        switch color {
-        case "gray": hex = "8d8f93"
-        case "dark": hex = "1b1b1d"
-        case "green": hex = "b7f25b"
-        default: hex = "eceeef"
-        }
-        let key = "\(name)/\(hex)"
-        if svgCache[key] == nil {
-            guard let url = Bundle.main.url(forResource: name, withExtension: "svg")
-                    ?? URL(string: "file://" + FileManager.default.currentDirectoryPath + "/assets/\(name).svg"),
-                  let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-            let tinted = text.replacingOccurrences(of: "fill:#[0-9a-fA-F]{6}", with: "fill:#\(hex)", options: .regularExpression)
-            svgCache[key] = NSImage(data: Data(tinted.utf8))
-        }
-        guard let image = svgCache[key], image.size.width > 0, image.size.height > 0 else { return }
-        let scale = min(rect.width / image.size.width, rect.height / image.size.height)
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let target = CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
-        image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 
     private func drawUSBPort(_ ctx: CGContext, _ r: CGRect, _ radius: CGFloat) {
@@ -1674,10 +1634,7 @@ final class PanelView: NSView, NSViewToolTipOwner {
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .group }
-    override func accessibilityLabel() -> String? {
-        // Decoupled builds carry a neutral product name (docs/architecture.md, D4); legacy builds keep theirs.
-        Bundle.main.bundleIdentifier?.hasPrefix("local.sp16-compatible.") == true ? "SP-16 panel" : "SP-16 panel"
-    }
+    override func accessibilityLabel() -> String? { "SP-16 panel" }
     override func accessibilityChildren() -> [Any]? {
         if axElements == nil { axElements = makeAccessibilityElements() }
         return (axElements ?? []) + [toolbar]

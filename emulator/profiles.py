@@ -5,10 +5,10 @@ application path and SHA-256, panel MCU revisions), runtime layout (working dire
 data/eMMC/USB mount points, tmpfs directories, allowed app arguments), the panel maps measured on that version
 (buttons, counters, analog words, lamp roles, pad curve limits, selector window) and the pad calibration file format.
 It never holds firmware content. A version is "verified" when a profile whose status is "verified" matches its exact
-application; that requires a passing verification record (the hardware conformance suite is the gate). Since the
-owner decision of 2026-10-13 (replacing D2) every correctly keyed import also boots without one: a "candidate"
-profile, or the product's reference profile for an unprofiled import, supplies the measurements and the run is
-marked unverified.
+application; that requires a passing verification record (the hardware conformance suite is the gate). Since D2 in
+docs/architecture.md (which replaced the earlier refusal) every correctly keyed import also boots without one: a
+"candidate" profile, or the product's reference profile for an unprofiled import, supplies the measurements and the
+run is marked unverified.
 
 A product descriptor (profiles/products/<product>.json) holds what is common to a product's updates: layer layout,
 application and loader candidates, the stock trailer marker and the reference profile used before a version has its
@@ -22,7 +22,7 @@ PROFILE_DIR = Path(__file__).resolve().parent / "profiles"
 SCHEMA = 1
 STATUSES = ("verified", "candidate")
 PRODUCT = "sp16"
-# The version the legacy builds are pinned to.
+# The 1.60 profile: the default when no profile is named.
 LEGACY_PROFILE = "sp16-1.60"
 ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -32,7 +32,7 @@ TOKEN = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 LAMP_KINDS = {"mono": range(0, 35), "rgb": range(0, 32)}
 FRAME_BYTES = 128
 
-# Hardware-suite fields at the top level of a profile and their JSON container types (the suite's section 2.4 names;
+# Hardware-suite fields at the top level of a profile and their JSON container types (the names the suite uses;
 # selector_window_frames, pad_curve, button_roles, lamp_roles and analog_words live under "panel").
 SUITE_FIELDS = {"identity": dict, "home": dict, "touch_probe": dict, "touch_dead": dict, "screen_titles": list,
                 "nav_probe": dict, "selector_probe": dict, "knob_columns": list, "knob_probe": dict,
@@ -122,7 +122,7 @@ def validate(profile):
              and "{value}" in calibration["attribute"] and isinstance(calibration.get("pads"), int)
              and 1 <= calibration["pads"] <= 64, "calibration template")
     _require(isinstance(calibration.get("markers", []), list), "calibration.markers")
-    # Hardware conformance suite fields (docs/hardware-suite.md, section 2.4): optional
+    # Hardware conformance suite fields (docs/hardware-suite.md): optional
     # here; null means not yet authored. Only their container types are checked; the suite runner reads them.
     for key, kinds in SUITE_FIELDS.items():
         _require(profile.get(key) is None or isinstance(profile[key], kinds), f"suite field {key}")
@@ -193,7 +193,7 @@ def product(name=PRODUCT, directory=None):
 
 def active(app_sha256, allow_unverified=True, directory=None):
     """The profile a boot uses and how it was chosen: ("verified"|"candidate"|"reference", profile). Every firmware
-    gets a profile (owner decision of 2026-10-13); `allow_unverified` is accepted for old callers and has no effect."""
+    gets a profile (D2 in docs/architecture.md); `allow_unverified` is accepted for old callers and has no effect."""
     profile = for_app(app_sha256, directory)
     if profile and profile["status"] == "verified":
         return "verified", profile
@@ -216,17 +216,17 @@ def runtime_fields(profile, app_path=None):
 
 
 def legacy():
-    """The 1.60 profile the legacy builds pin; it must stay verified."""
+    """The verified 1.60 profile, the reference the tools and tests use; it must stay verified."""
     profile = load(LEGACY_PROFILE)
     if profile["status"] != "verified":
-        raise ValueError("the legacy 1.60 profile must be verified")
+        raise ValueError("the 1.60 reference profile must be verified")
     return profile
 
 
 if __name__ == "__main__":
     import sys
-    # Legacy guest init: `python3 profiles.py runtime <id>` prints the runtime fields of a profile.
+    # `python3 profiles.py runtime <id>` prints the runtime fields of a profile.
     if len(sys.argv) == 3 and sys.argv[1] == "runtime":
-        print(" ".join(runtime_fields(legacy() if sys.argv[2] == "legacy" else load(sys.argv[2]))))
+        print(" ".join(runtime_fields(load(sys.argv[2]))))
     else:
         raise SystemExit("usage: profiles.py runtime <profile id>")

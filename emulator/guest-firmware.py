@@ -10,7 +10,7 @@ Runs only inside the offline VM (our init, never OEM scripts):
   attach  At run time: verify the firmware image (serial sp16fw) against the manifest hash from the kernel command
           line, mount it read-only under a tmpfs overlay at /tmp/sp16-root, verify the application hash against the
           manifest (refused on mismatch), then pick the profile for the base application: a verified one, else a
-          candidate or the product's reference measurements, marked unverified (owner decision of 2026-10-13).
+          candidate or the product's reference measurements, marked unverified (D2 in docs/architecture.md).
 """
 import glob
 import hashlib

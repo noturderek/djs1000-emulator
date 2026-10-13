@@ -1,4 +1,4 @@
-"""Repacked updates (docs/architecture.md M6 part 6, D3): layer rewrite, mod trailer, mod verification refusals.
+"""Repacked updates (docs/architecture.md, M6 and D3): layer rewrite, mod trailer, mod verification refusals.
 Synthetic archives and mocked VMs only."""
 import hashlib
 import importlib.util

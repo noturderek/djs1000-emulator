@@ -87,7 +87,7 @@ def mod_files(folder):
 
 # ------------------------------------------------------------------------------------------------------------- new
 
-def new(folder, mod_id, base_profile=profiles.LEGACY_PROFILE):
+def new(folder, mod_id, base_profile=profiles.product()["reference_profile"]):
     folder = Path(folder)
     if folder.exists() and any(folder.iterdir()):
         raise ModError(f"{folder} exists and is not empty")

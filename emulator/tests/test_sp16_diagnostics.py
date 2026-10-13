@@ -299,7 +299,7 @@ class SwiftSourceTests(unittest.TestCase):
         self.assertIn("helpMenuItem()", window.split("if config.firmware != nil {", 1)[1].split("let inputItem", 1)[0])
         self.assertEqual((TOOLS / "firmware-window.swift").read_text().count("menu.addItem(helpMenuItem())"), 2)
 
-    def test_legacy_builds_do_not_start_the_log_or_capture_stderr(self):
+    def test_app_log_starts_only_for_decoupled_builds(self):
         window = (TOOLS / "native-window.swift").read_text()
         self.assertIn("if decoded.firmware != nil {\n        // Decoupled builds: the app log", window)
         self.assertIn("if config.firmware == nil {\n            process.standardError = log\n        } else {", window)

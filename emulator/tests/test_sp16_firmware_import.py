@@ -292,7 +292,7 @@ class LibraryTests(unittest.TestCase):
         (entry_id, report), _ = self.import_synthetic(
             lambda meta, image: guest_manifest(app_sha="e" * 64, version=meta["trailer_version"], crc=meta["crc32"],
                                                image=image), version=b"1.50")
-        self.assertTrue(report["boots"])  # any correctly keyed update runs (owner decision of 2026-10-13)
+        self.assertTrue(report["boots"])  # any correctly keyed update runs (D2 in docs/architecture.md)
         self.assertFalse(report["verified"])
         self.assertEqual(report["status"], "unverified")
         self.assertIn("no compatibility profile", report["reason"])
@@ -442,13 +442,17 @@ class DecoupledBuildTests(unittest.TestCase):
 
     def test_decoupled_build_option_rules(self):
         with self.assertRaises(ValueError):
-            native.build("rootfs", "out", decoupled=True, profile="fullpanel")
+            native.build("out", profile="testmode")
         with self.assertRaises(ValueError):
-            native.build(None, "out", decoupled=True, profile="testmode")
-        with self.assertRaises(ValueError):  # the legacy build never accepted the flag and still does not
-            native.build("rootfs", "out", allow_unverified=True)
+            native.build("out", profile=None)
+        with self.assertRaises(ValueError):  # research only
+            native.build("out", profile="fullpanel", trace="strace")
         with self.assertRaises(ValueError):
-            native.build(None, "out")
+            native.build("out", profile="fullpanel", uncalibrated=True, pad_calibration=242)
+        with self.assertRaises(ValueError):
+            native.build("out", profile="fullpanel", audio="file", audio_device="uid")
+        with self.assertRaises(ValueError):
+            native.build("out", profile="fullpanel", audio="coreaudio", audio_device="bad\nuid")
 
     def test_decoupled_assets_never_name_an_application(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -1,4 +1,4 @@
-"""Repacked updates for the emulator only (docs/architecture.md M6 part 6, design decision D3).
+"""Repacked updates for the emulator only (docs/architecture.md, M6 and design decision D3).
 
 package_update: a verified stock base from the library + a mod's recipes -> the guest rebuilds the affected layer
 deterministically, embeds sp16-mod.json (base identity, full recipes, result hashes), builds the ISO with fixed dates,
@@ -8,7 +8,7 @@ distributes or flashes it.
 
 verify_mod: on import of such an update, rebuild it from the verified base and the recipes it declares and compare the
 whole file. An identical rebuild is verified and inherits the base's profile; any other correctly keyed update is still
-imported, as unverified with the reason recorded (owner decision of 2026-10-13, replacing the earlier refusal).
+imported, as unverified with the reason recorded (D2 in docs/architecture.md, which replaced the earlier refusal).
 """
 import hashlib
 import json
@@ -155,7 +155,7 @@ def package_update(library, boot, base_id, mod_folder, key, out):
 
 
 class Unverifiable(firmware.FirmwareError):
-    """A modified update whose own manifest cannot be confirmed. Since the owner decision of 2026-10-13 such an update
+    """A modified update whose own manifest cannot be confirmed. Since D2 in docs/architecture.md such an update
     is still imported (as unverified, reason recorded); infrastructure failures stay plain FirmwareErrors."""
 
 

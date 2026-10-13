@@ -2,18 +2,15 @@
 # This runs only during packaging, never during the macOS app session.
 set -eu
 umask 077
-if [ -e /opt/sp16/sp16-base ]; then
-  # Decoupled base image (docs/architecture.md): it must never carry OEM files. Its Debian package list and
-  # copyright files go into the app bundle's third-party notices (M7).
-  test ! -e /opt/sp16/rootfs
-  dpkg-query -W -f='${Package} ${Version} source=${source:Package} ${source:Version}\n' > /output/third-party-packages.txt
-  for sp16_copyright in /usr/share/doc/*/copyright; do
-    printf '==== %s\n' "${sp16_copyright#/usr/share/doc/}"
-    cat "$sp16_copyright"
-  done > /output/third-party-copyright.txt
-else
-  test -f /opt/sp16/rootfs/sp16-emulator-manifest.json
-fi
+# Decoupled base image (docs/architecture.md): it must never carry OEM files. Its Debian package list and
+# copyright files go into the app bundle's third-party notices (M7).
+test -e /opt/sp16/sp16-base
+test ! -e /opt/sp16/rootfs
+dpkg-query -W -f='${Package} ${Version} source=${source:Package} ${source:Version}\n' > /output/third-party-packages.txt
+for sp16_copyright in /usr/share/doc/*/copyright; do
+  printf '==== %s\n' "${sp16_copyright#/usr/share/doc/}"
+  cat "$sp16_copyright"
+done > /output/third-party-copyright.txt
 test ! -e /output/guest.cpio.gz
 sp16_kernel=$(find /boot -name 'vmlinuz-*' -type f | head -1)
 test -n "$sp16_kernel"

@@ -93,7 +93,7 @@ class PanelModel:
     # invisible. Each queued edge is shown for at least this many frames before the next one.
     MIN_EDGE_FRAMES = 3
     MAX_DELTA = 64
-    # PC-NAV-1: the OEM rotary object notifies once per 8 received frames with a sign-only selector
+    # The OEM rotary object notifies once per 8 received frames with a sign-only selector
     # consumer, so at most one selector count is released per window; HOT_FRAMES keeps the fast
     # cadence for two windows after any input change so the last window closes quickly.
     SELECTOR_WINDOW_FRAMES = panel_map.SELECTOR_WINDOW_FRAMES
@@ -254,7 +254,7 @@ class PanelModel:
 
     def active(self):
         with self.lock:
-            # PC-STR-1: anything held (buttons, step keys, pads, the touch strip) keeps the fast
+            # Anything held (buttons, step keys, pads, the touch strip) keeps the fast
             # cadence for as long as it is held, not only for HOT_FRAMES after the last change.
             return bool(self.pending or self.edges or any(self.held.values()) or self.cdc_contact
                         or self.overrides or self.hot > 0)

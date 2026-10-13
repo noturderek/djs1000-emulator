@@ -14,12 +14,10 @@ import shutil
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
-import app_identity
 import firmware
 import native
 import panel
 import panel_map
-import prepare
 import profiles
 import recipes
 
@@ -51,47 +49,34 @@ class LegacyProfileTests(unittest.TestCase):
         self.assertEqual(panel_map.PAD_CURVE(1), (172, 512))
         self.assertEqual(panel_map.PAD_CURVE(127), (874, 512))
         self.assertEqual(panel.PanelModel.SELECTOR_WINDOW_FRAMES, 8)
-        self.assertEqual(prepare.EXPECTED_APP, "3d1392a61323e73ea4f2fddef8fe9e0142add7a6f6fab79ab0eb0d5396555464")
-        self.assertEqual(app_identity.FIRMWARE, "1.60")
+        self.assertEqual(profile["firmware"]["app_sha256"],
+                         "3d1392a61323e73ea4f2fddef8fe9e0142add7a6f6fab79ab0eb0d5396555464")
+        self.assertEqual(profile["firmware"]["version"], "1.60")
         self.assertEqual(profile["firmware"]["upd_sha256"],
                          "ff1cc60c4b6e2a3793196486826e78eb223e2f86cd95b5c968f6fca3ade537a4")
-        self.assertEqual(native.FIRMWARE, "1.60")
 
-    @unittest.skip("legacy build files are not part of the public repository")
-    def test_decrypt_tool_reads_the_same_update_pin(self):
-        sys.path.insert(0, str(TOOLS.parent))
-        import sp16_firmware
-        self.assertEqual(sp16_firmware.DECRYPT_PROFILES["sp16"],
-                         {"version": "1.60", "sha256": profiles.legacy()["firmware"]["upd_sha256"]})
-        self.assertEqual(sp16_firmware.DECRYPT_PROFILES["djs-1000"]["version"], "1.22")
-
-    @unittest.skip("legacy build files are not part of the public repository")
     def test_no_literal_1_60_hash_pins_remain_in_code(self):
         pin = "3d1392a61323e73ea4f2fddef8fe9e0142add7a6f6fab79ab0eb0d5396555464"
         upd = "ff1cc60c4b6e2a3793196486826e78eb223e2f86cd95b5c968f6fca3ade537a4"
-        for path in [*TOOLS.glob("*.py"), *TOOLS.glob("*.sh"), TOOLS.parent / "sp16_firmware.py"]:
+        for path in [*TOOLS.glob("*.py"), *TOOLS.glob("*.sh")]:
             text = path.read_text()
             self.assertNotIn(pin, text, path.name)
             self.assertNotIn(upd, text, path.name)
         self.assertNotIn("firmware=1.60", (TOOLS / "guest-init.sh").read_text())
 
-    @unittest.skip("legacy build files are not part of the public repository")
-    def test_guest_images_carry_the_profile_and_recipe(self):
+    def test_base_image_carries_the_profile_and_recipe(self):
         ignore = (TOOLS / ".dockerignore").read_text()
         for name in ("profiles.py", "recipes.py", "profiles/sp16-1.60.json"):
-            self.assertIn(name, native.GUEST_FILES)
+            self.assertIn(name, native.BASE_GUEST_FILES)
             self.assertTrue((TOOLS / name).is_file())
         for allowed in ("!profiles.py", "!recipes.py", "!profiles/*.json"):
             self.assertIn(allowed, ignore)
-        legacy = (TOOLS / "Dockerfile.native-guest").read_text()
-        for line in ("COPY profiles.py", "COPY recipes.py", "COPY profiles /opt/sp16/profiles"):
-            self.assertIn(line, legacy)
         base = (TOOLS / "Dockerfile.native-base").read_text()
         for line in ("COPY profiles.py", "COPY recipes.py", "COPY profiles /opt/sp16/profiles"):
             self.assertIn(line, base)
-        # The decoupled base ships no legacy identity module or recipe pins, and strips the update hash (M7).
+        # The decoupled base ships no firmware identity module and no mods, and strips the update hash (M7).
         self.assertNotIn("COPY mods", base)
-        self.assertNotIn("COPY app_identity.py", base)
+        self.assertNotIn("app_identity", base)
         self.assertIn('fk != "upd_sha256"', base)
 
 
@@ -122,7 +107,6 @@ class VersionDataTests(unittest.TestCase):
         expected = ('<?xml version="1.0" encoding="UTF-8"?>\n\n<PadCalibrationData '
                     + " ".join(f'CALIB_VALUE_PAD{n}="242"' for n in range(1, 17)) + '/>\n')
         self.assertEqual(native.pad_calibration_xml(242), expected)
-        self.assertEqual(native.PAD_CALIBRATION_PATH, "/opt/sp16/rootfs/root/data/padcalibration.xml")
 
     def test_guest_init_has_no_version_literals_outside_comments(self):
         code = "\n".join(line for line in (TOOLS / "guest-init.sh").read_text().splitlines()

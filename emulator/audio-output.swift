@@ -3,13 +3,13 @@ import AVFoundation
 import CoreAudio
 import Darwin
 
-/// Host audio output (M4b2, `native.py build --audio coreaudio`). Pure parts first (jitter buffer with adaptive
+/// Host audio output (`native.py build --audio coreaudio`). Pure parts first (jitter buffer with adaptive
 /// resampling, drift controller), then the AVAudioEngine wrapper. Nothing here is created unless the build asked for it.
 ///
 /// Timing model. The producer is the transport reader (bursts of 1-3 periods of 64 frames every ~2 ms, guest clock);
 /// the consumer is the device callback (blocks of `block` frames, device clock). Prefill target =
 /// one device block (the callback needs a whole block at once) + a jitter margin of 10 ms. 6.4 ms covers the measured
-/// transport p95 (2.9 ms; M4b1) plus the 2 ms forwarder poll plus one 64-frame period (1.45 ms). A PI controller on the
+/// transport p95 (2.9 ms) plus the 2 ms forwarder poll plus one 64-frame period (1.45 ms). A PI controller on the
 /// smoothed buffer depth trims the resampling ratio so the depth stays at the target whatever the clock mismatch is.
 
 /// Tiny unfair lock; the render thread holds it for a memcpy-sized critical section only.

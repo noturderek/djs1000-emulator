@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SP-16 hardware conformance suite runner (docs/hardware-suite.md, section 5).
+"""SP-16 hardware conformance suite runner (docs/hardware-suite.md).
 
 45 checks (HW-01..HW-45) of the emulated hardware boundary, driven only through a research session's control socket,
 its files and process signals to exact PIDs. The firmware is the oracle for hardware outcomes only; per-version data
@@ -32,7 +32,7 @@ import wave
 TOOLS = Path(__file__).resolve().parent
 SUITE_NAME = "sp16-hardware-conformance"
 SUITE_VERSION = "1.0.0"
-# Bump when a change to the emulated hardware boundary (shim, bridge, panel model) can alter verdicts (spec 5.5 item 5).
+# Bump when a change to the emulated hardware boundary (shim, bridge, panel model) can alter verdicts.
 HARDWARE_EPOCH = 1
 # Sources whose hash forms the hardware fingerprint (the emulated boundary).
 FINGERPRINT_SOURCES = ("hardware_stub.c", "guest-bridge.py", "panel.py", "panel_map.py", "protocol.py", "input.py")
@@ -3656,7 +3656,7 @@ def mark_verified(profile_path, result, result_path, result_sha256):
         raise EnvError(f"N/A without a declared hardware.absent reason: {unjustified}")
     if summary.get("needs_owner_signoff") and not profile.get("owner_signoff"):
         raise EnvError("more than five N/A need a maintainer's sign-off line (owner_signoff) in the profile")
-    try:  # record the stored result relative to the repository (it lives in the git-ignored private workspace)
+    try:  # record the stored result relative to the repository (results live in the git-ignored private/ folder)
         result_path = Path(result_path).resolve().relative_to(TOOLS.parent)
     except ValueError:
         pass

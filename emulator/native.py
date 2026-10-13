@@ -17,8 +17,7 @@ import tarfile
 import tempfile
 import urllib.request
 
-from prepare import EXPECTED_APP, REPO, guest_file, private_path
-from app_identity import FIRMWARE, identity, validate_identity
+from prepare import private_path
 import diagnostics
 import firmware
 import profiles
@@ -27,10 +26,6 @@ TOOLS = Path(__file__).resolve().parent
 QEMU_VERSION = "10.2.1"
 QEMU_ARCHIVE_SHA256 = "a3717477d8e2c84d630bfffbc20f6cd3293eb45aa1e6dac6d0cc27689991c9e1"
 APP_NAME = "SP16 Emulator.app"
-GUEST_FILES = ("Dockerfile.native-guest", "Dockerfile", "hardware_stub.c", "guest-init.sh",
-               "guest-bridge.py", "pack-guest.sh", "protocol.py", "panel.py", "panel_map.py", "input.py",
-               "enter.py", "app_identity.py", "profiles.py", "recipes.py", "profiles/sp16-1.60.json",
-               "profiles/products/sp16.json")
 BASE_GUEST_FILES = ("Dockerfile.native-base", "hardware_stub.c", "guest-init.sh", "guest-bridge.py", "pack-guest.sh",
                     "protocol.py", "panel.py", "panel_map.py", "input.py", "enter.py", "profiles.py", "recipes.py",
                     "prepare.py", "guest-firmware.py", "profiles/sp16-1.60.json",
@@ -38,13 +33,13 @@ BASE_GUEST_FILES = ("Dockerfile.native-base", "hardware_stub.c", "guest-init.sh"
 SWIFT_SOURCES = ("native-window.swift", "panel-view.swift", "data-image.swift", "audio-sink.swift",
                 "audio-output.swift", "firmware-library.swift", "firmware-window.swift", "app-diagnostics.swift")
 ICON_TOOL = "make-icon.swift"
-ICON_LOGO = "assets/legacy-logo.svg"
-ICON_FILE = "sp16-emulator"
-PANEL_RESOURCES = ("panel-layout.json", "assets/legacy-logo-2.svg", "assets/legacy-logo-3.svg",
-                   "assets/legacy-logo.svg", "qemu_reaper.py")
-PROFILES = ("fullpanel", "testmode")
+# Vendor logo files and the old icon name. The public copy never ships them: the distribution scan (native.py
+# firmware audit) refuses their names and, if any is present, their content.
+VENDOR_LOGO_FILES = ("assets/legacy-logo.svg", "assets/legacy-logo-2.svg", "assets/legacy-logo-3.svg")
+OLD_ICON_NAME = "sp16-emulator"
+PROFILES = ("fullpanel",)
 # Decoupled builds (docs/architecture.md M7, design decision D4): neutral product name and bundle id, no vendor
-# logos, a project-made icon, the firmware library tool and third-party notices. Legacy builds keep theirs.
+# logos, a project-made icon, the firmware library tool and third-party notices.
 DECOUPLED_APP_NAME = "SP-16 Compatible Emulator.app"
 DECOUPLED_PRODUCT = "SP-16 Compatible Emulator"
 DECOUPLED_EXECUTABLE = "SP16Emulator"
@@ -53,25 +48,17 @@ DECOUPLED_RESOURCES = ("panel-layout.json", "qemu_reaper.py")
 NEUTRAL_ICON = "assets/neutral-pads.svg"
 DECOUPLED_ICON_FILE = "sp16-compatible-emulator"
 FWLIB_FILES = ("firmware.py", "profiles.py", "recipes.py", "fwpack.py", "diagnostics.py")
-# Legacy builds (the whole prepared firmware rootfs inside the guest image) need files that only the private
-# repository has. Without them (the public copy) the CLI offers decoupled builds only and hides the legacy options.
-LEGACY_AVAILABLE = (TOOLS / "Dockerfile.native-guest").is_file()
-LEGACY_REFUSAL = ("this copy builds firmware-free apps only: import firmware with `native.py firmware import` "
-                  "instead of --rootfs, --app-arg, --no-persistence or --profile testmode")
 
 # Optional per-task suffix (e.g. a task id) so a dev build gets its own bundle ID and quitting one app by ID
 # never quits another. Without it the bundle IDs are unchanged.
 BUNDLE_SUFFIX_PATTERN = re.compile(r"[a-z0-9-]{1,32}")
-# The pad calibration file (path, format, accepted range, default) is firmware data from the profile. The legacy
-# builds stage the 1.60 profile's (JUCE ValueTree XML /root/data/padcalibration.xml, 48..504, default 242: the
-# firmware's own default knee level, at which its pressure mapping is the identity).
-#. Decoupled builds pass the choice on the
-# kernel command line and the guest stages it in the active profile's format. The synthetic (not factory) value keeps
-# the firmware out of its uncalibrated pad-blink state; --uncalibrated reproduces the stock behaviour for research.
-_LEGACY_CALIBRATION = profiles.legacy()["calibration"]
-PAD_CALIBRATION_RANGE = tuple(_LEGACY_CALIBRATION["range"])
-PAD_CALIBRATION_PATH = "/opt/sp16/rootfs" + _LEGACY_CALIBRATION["path"]
-DEFAULT_PAD_CALIBRATION = _LEGACY_CALIBRATION["default"]
+# The pad calibration file (path, format, accepted range, default) is firmware data from the profile. The 1.60
+# profile's (JUCE ValueTree XML /root/data/padcalibration.xml, 48..504, default 242: the firmware's own default knee
+# level, at which its pressure mapping is the identity). Decoupled builds pass the choice on the kernel command line
+# and the guest stages it in the active profile's format. The synthetic (not factory) value keeps the firmware out of
+# its uncalibrated pad-blink state; --uncalibrated reproduces the stock behaviour for research.
+_REFERENCE_CALIBRATION = profiles.legacy()["calibration"]
+DEFAULT_PAD_CALIBRATION = _REFERENCE_CALIBRATION["default"]
 
 
 def resolve_pad_calibration(profile, value=None, uncalibrated=False):
@@ -97,8 +84,8 @@ def validate_bundle_suffix(token):
 
 
 def pad_calibration_xml(value, calibration=None):
-    """The calibration file in a profile's own format (default: the legacy 1.60 profile)."""
-    calibration = calibration or _LEGACY_CALIBRATION
+    """The calibration file in a profile's own format (default: the 1.60 reference profile)."""
+    calibration = calibration or _REFERENCE_CALIBRATION
     low, high = calibration["range"]
     if not isinstance(value, int) or not low <= value <= high:
         raise ValueError(f"pad calibration value must be an integer in {low}..{high}")
@@ -193,7 +180,7 @@ def remove_guest_image(image):
               file=sys.stderr, flush=True)
 
 
-def build_guest(root, output, application, patched_app=None, extra_files=(), dockerfile="Dockerfile.native-guest"):
+def build_guest(output):
     print("Packaging offline Linux guest (Docker is build tooling only)…", flush=True)
     # No shared tag: --iidfile records this build's image ID, so parallel builds cannot
     # package each other's guest code.
@@ -201,51 +188,36 @@ def build_guest(root, output, application, patched_app=None, extra_files=(), doc
     iidfile = iid_dir / "image.iid"
     image = None
     try:
-        run(["docker", "build", "-f", str(TOOLS / dockerfile),
+        run(["docker", "build", "-f", str(TOOLS / "Dockerfile.native-base"),
              "--iidfile", str(iidfile), str(TOOLS)], log=output / "guest-build.log")
         built = iidfile.read_text().strip()
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", built):
             raise ValueError("docker build returned an invalid image identity")
         image = built
-        return package_guest(root, output, application, image, patched_app, extra_files)
+        return package_guest(output, image)
     finally:
         if image:
             remove_guest_image(image)
         shutil.rmtree(iid_dir, ignore_errors=True)
 
 
-def package_guest(root, output, application, image, patched_app, extra_files):
+def package_guest(output, image):
     guest = Path(tempfile.mkdtemp(prefix="guest-", dir=output))
-    manifest = guest / "app-identity.json"
-    if root is not None:
-        manifest.write_text(json.dumps(application, indent=2) + "\n")
-    identity = None
+    container = None
     try:
-        identity = subprocess.check_output(["docker", "create", "--network", "none",
+        container = subprocess.check_output(["docker", "create", "--network", "none",
             "--mount", f"type=bind,src={guest},dst=/output", image], text=True).strip()
-        if len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
+        if len(container) != 64 or any(c not in "0123456789abcdef" for c in container):
             raise ValueError("invalid packaging container identity")
-        if root is not None:
-            run(["docker", "cp", str(root) + "/.", identity + ":/opt/sp16/rootfs"])
-        if patched_app:
-            run(["docker", "cp", str(patched_app),
-                 identity + ":/opt/sp16/rootfs/root/pdj/EP085_Main_R"])
-        for source, destination in extra_files:
-            run(["docker", "cp", str(source), identity + ":" + destination])
-        if root is not None:
-            run(["docker", "cp", str(manifest), identity + ":/opt/sp16/app-identity.json"])
-        run(["docker", "start", "-a", identity], log=output / "guest-pack.log")
+        run(["docker", "start", "-a", container], log=output / "guest-pack.log")
     finally:
-        if identity:
-            subprocess.run(["docker", "rm", "-f", identity], stdout=subprocess.DEVNULL, check=False)
+        if container:
+            subprocess.run(["docker", "rm", "-f", container], stdout=subprocess.DEVNULL, check=False)
     if not (guest / "guest.cpio.gz").is_file() or not (guest / "kernel").is_file():
         raise ValueError("guest packer did not produce both boot assets")
-    if root is None:
-        manifest.unlink(missing_ok=True)
     return guest
 
 
-APP_ARGS = ("testmode",)
 TRACE_MODES = ("strace", "gdb", "pcmtap")
 
 
@@ -262,19 +234,16 @@ FIRMWARE_PLACEHOLDERS = ("@FWIMAGE@", "@FWSHA@", "@FWBYTES@", "@FWAPP@", "@FWBAS
 PADCAL_PATTERN = re.compile(r"default|off|[0-9]{1,5}")
 
 
-def arguments(qemu, guest, socket, app_arg=None, trace=None, data=False, audio=None, firmware=False,
-              padcal=None):
+def arguments(qemu, guest, socket, trace=None, data=False, audio=None, firmware=False, padcal=None):
     if audio is not None and audio not in AUDIO_MODES:
         raise ValueError("unsupported audio mode")
     if trace is not None and trace not in TRACE_MODES:
         raise ValueError("unsupported trace mode")
-    if app_arg is not None and app_arg not in APP_ARGS:
-        raise ValueError("unsupported application argument")
     persistent = ["-drive", f"file={DATA_PLACEHOLDER},format=raw,if=none,id=sp16emmc",
                   "-device", "virtio-blk-device,drive=sp16emmc,serial=sp16emmc",
                   "-chardev", f"socket,id=sp16ctl,path={socket}.ctl,server=on,wait=off",
                   "-device", "virtserialport,chardev=sp16ctl,name=sp16.ctl"] if data else []
-    # Audio transport (M4b1): a dedicated virtio-serial port carrying playback frames to the host file sink.
+    # Audio transport: a dedicated virtio-serial port carrying playback frames to the host file sink.
     pcm = ["-chardev", f"socket,id=sp16pcm,path={socket}.pcm,server=on,wait=off",
            "-device", "virtserialport,chardev=sp16pcm,name=sp16.pcm"] if audio else []
     if padcal is not None and (not firmware or not PADCAL_PATTERN.fullmatch(str(padcal))):
@@ -286,7 +255,6 @@ def arguments(qemu, guest, socket, app_arg=None, trace=None, data=False, audio=N
             "-monitor", "none", "-serial", "stdio", "-nic", "none", "-no-reboot",
             "-kernel", str(guest / "kernel"), "-initrd", str(guest / "guest.cpio.gz"),
             "-append", "console=ttyAMA0 rdinit=/init panic=-1 oops=panic random.trust_cpu=on"
-                       + (f" sp16.app={app_arg}" if app_arg else "")
                        + (f" sp16.trace={trace}" if trace else "")
                        + (" sp16.data=1" if data else "")
                        + (" sp16.audio=file" if audio else "")
@@ -337,8 +305,8 @@ together with the app.
 """
 
 
-def build_icon(output, resources, logo=ICON_LOGO, name=ICON_FILE):
-    """Render the app icon (make-icon.swift draws every size) and package it as Resources/<ICON_FILE>.icns."""
+def build_icon(output, resources, logo=NEUTRAL_ICON, name=DECOUPLED_ICON_FILE):
+    """Render the app icon (make-icon.swift draws every size) and package it as Resources/<name>.icns."""
     work = output / "icon-build"
     iconset = work / f"{name}.iconset"
     shutil.rmtree(work, ignore_errors=True)
@@ -349,90 +317,72 @@ def build_icon(output, resources, logo=ICON_LOGO, name=ICON_FILE):
     run(["iconutil", "-c", "icns", str(iconset), "-o", str(resources / f"{name}.icns")], log=output / "icon-pack.log")
 
 
-def resolve_persistence(profile, no_persistence=False):
-    """Only the full-panel profile carries the persistent data image; stock/mod-lab/testmode never do."""
-    if profile != "fullpanel":
-        if no_persistence:
-            raise ValueError("--no-persistence applies to the fullpanel profile only")
-        return False
-    return not no_persistence
-
-
-def bundle(output, qemu, guest, variant="stock", profile=None, research=False, app_arg=None, trace=None,
-           bundle_suffix=None, persistent=False, audio=None, audio_device=None, decoupled=False, library=None,
-           padcal=None):
-    app = output / (DECOUPLED_APP_NAME if decoupled else APP_NAME)
-    if decoupled and (output / APP_NAME).exists():
-        shutil.rmtree(output / APP_NAME)  # an earlier, pre-M7 bundle of this same decoupled build
-    executable = app / "Contents/MacOS" / (DECOUPLED_EXECUTABLE if decoupled else "SP16LegacyEmulator")
+def bundle(output, qemu, guest, variant="stock", profile=None, research=False, trace=None, bundle_suffix=None,
+           persistent=False, audio=None, audio_device=None, library=None, padcal=None):
+    app = output / DECOUPLED_APP_NAME
+    if (output / APP_NAME).exists():
+        shutil.rmtree(output / APP_NAME)  # a bundle an earlier version of this tool left in the same build folder
+    executable = app / "Contents/MacOS" / DECOUPLED_EXECUTABLE
     executable.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     resources = app / "Contents/Resources"
-    if decoupled:
-        shutil.rmtree(resources, ignore_errors=True)  # start clean: no stale legacy icon or logo survives a rebuild
+    shutil.rmtree(resources, ignore_errors=True)  # start clean: nothing from an earlier build survives a rebuild
     resources.mkdir(mode=0o700, exist_ok=True)
     run(["swiftc", "-O", "-parse-as-library", "-framework", "AppKit", "-framework", "AVFoundation", "-framework", "CoreAudio",
          *(str(TOOLS / name) for name in SWIFT_SOURCES), "-o", str(executable)],
         log=output / "swift-build.log")
-    for name in (DECOUPLED_RESOURCES if decoupled else PANEL_RESOURCES):
+    for name in DECOUPLED_RESOURCES:
         shutil.copy2(TOOLS / name, resources / Path(name).name)
-    if decoupled:
-        # The app checks the selected firmware against these profiles before boot (D2); the firmware library tool
-        # (import screen, library window) is the same code as `native.py firmware`.
-        fwlib = resources / "fwlib"
-        shutil.rmtree(fwlib, ignore_errors=True)
-        for folder in (resources / "profiles", fwlib, fwlib / "profiles"):
-            shutil.rmtree(folder, ignore_errors=True) if folder == resources / "profiles" else None
-            folder.mkdir(mode=0o700, exist_ok=True)
-        for source in sorted((TOOLS / "profiles").glob("*.json")):
-            text = json.dumps(shipped_profile(profiles.load(source.stem)), indent=2, sort_keys=True) + "\n"
-            (resources / "profiles" / source.name).write_text(text)
-            (fwlib / "profiles" / source.name).write_text(text)
-        for name in FWLIB_FILES:
-            shutil.copy2(TOOLS / name, fwlib / name)
-        (fwlib / "profiles/products").mkdir(mode=0o700)
-        for source in sorted((TOOLS / "profiles/products").glob("*.json")):
-            profiles.product(source.stem)
-            shutil.copy2(source, fwlib / "profiles/products" / source.name)
-        # Where this app came from, for bug reports (Help > Collect Diagnostics reads it).
-        (resources / "build-info.json").write_text(json.dumps(
-            {"git_commit": diagnostics.git_commit(TOOLS),
-             "built": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}, indent=2) + "\n")
-        notices = resources / "ThirdParty"
-        shutil.rmtree(notices, ignore_errors=True)
-        notices.mkdir(mode=0o700)
-        (resources / "THIRD-PARTY-NOTICES.md").write_text(third_party_notices(guest))
-        for source, name in (("third-party-packages.txt", "packages.txt"), ("third-party-copyright.txt", "copyright.txt")):
-            if (guest / source).exists():
-                shutil.copy2(guest / source, notices / name)
-    build_icon(output, resources, NEUTRAL_ICON if decoupled else ICON_LOGO,
-               DECOUPLED_ICON_FILE if decoupled else ICON_FILE)
-    info = {"CFBundleIdentifier": "local.sp16-emulator.legacy", "CFBundleName": "SP16 Emulator",
-            "CFBundleExecutable": "SP16LegacyEmulator", "CFBundlePackageType": "APPL", "CFBundleIconFile": ICON_FILE,
-            "CFBundleShortVersionString": "0.1", "NSHighResolutionCapable": True,
-            "LSMinimumSystemVersion": "13.0"}
-    if decoupled:
-        info.update(CFBundleIdentifier=DECOUPLED_BUNDLE_ID, CFBundleName=DECOUPLED_PRODUCT,
-                    CFBundleExecutable=DECOUPLED_EXECUTABLE, CFBundleIconFile=DECOUPLED_ICON_FILE)
+    # The app checks the selected firmware against these profiles before boot (D2); the firmware library tool
+    # (import screen, library window) is the same code as `native.py firmware`.
+    fwlib = resources / "fwlib"
+    shutil.rmtree(fwlib, ignore_errors=True)
+    for folder in (resources / "profiles", fwlib, fwlib / "profiles"):
+        shutil.rmtree(folder, ignore_errors=True) if folder == resources / "profiles" else None
+        folder.mkdir(mode=0o700, exist_ok=True)
+    for source in sorted((TOOLS / "profiles").glob("*.json")):
+        text = json.dumps(shipped_profile(profiles.load(source.stem)), indent=2, sort_keys=True) + "\n"
+        (resources / "profiles" / source.name).write_text(text)
+        (fwlib / "profiles" / source.name).write_text(text)
+    for name in FWLIB_FILES:
+        shutil.copy2(TOOLS / name, fwlib / name)
+    (fwlib / "profiles/products").mkdir(mode=0o700)
+    for source in sorted((TOOLS / "profiles/products").glob("*.json")):
+        profiles.product(source.stem)
+        shutil.copy2(source, fwlib / "profiles/products" / source.name)
+    # Where this app came from, for bug reports (Help > Collect Diagnostics reads it).
+    (resources / "build-info.json").write_text(json.dumps(
+        {"git_commit": diagnostics.git_commit(TOOLS),
+         "built": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}, indent=2) + "\n")
+    notices = resources / "ThirdParty"
+    shutil.rmtree(notices, ignore_errors=True)
+    notices.mkdir(mode=0o700)
+    (resources / "THIRD-PARTY-NOTICES.md").write_text(third_party_notices(guest))
+    for source, name in (("third-party-packages.txt", "packages.txt"), ("third-party-copyright.txt", "copyright.txt")):
+        if (guest / source).exists():
+            shutil.copy2(guest / source, notices / name)
+    build_icon(output, resources)
+    info = {"CFBundleIdentifier": DECOUPLED_BUNDLE_ID, "CFBundleName": DECOUPLED_PRODUCT,
+            "CFBundleExecutable": DECOUPLED_EXECUTABLE, "CFBundlePackageType": "APPL",
+            "CFBundleIconFile": DECOUPLED_ICON_FILE, "CFBundleShortVersionString": "0.1",
+            "NSHighResolutionCapable": True, "LSMinimumSystemVersion": "13.0"}
     if profile:
         info["CFBundleIdentifier"] += "." + profile
-        info["CFBundleName"] += "" if decoupled else {"fullpanel": " Full Panel"}.get(profile, " Factory Test")
     if bundle_suffix:
         info["CFBundleIdentifier"] += "." + bundle_suffix
         info["CFBundleName"] += " " + bundle_suffix
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
     sessions = output / "sessions"
     sessions.mkdir(mode=0o700, exist_ok=True)
-    defaults = {"qemu": str(qemu), "arguments": arguments(qemu, guest, "@SOCKET@", app_arg, trace, persistent, audio,
-                                                       decoupled, padcal if decoupled else None),
+    defaults = {"qemu": str(qemu),
+                "arguments": arguments(qemu, guest, "@SOCKET@", trace, persistent, audio, True, padcal),
                 "session": str(sessions), "socket": "@SOCKET@", "variant": variant,
                 "profile": profile or "", "research": research}
     if audio:
         defaults["audio"] = audio + (":" + audio_device if audio_device else "")
     if persistent:
         defaults["data"] = {"dir": str(output / DATA_DIRECTORY), "size": DATA_IMAGE_SIZE}
-    if decoupled:
-        # Data images are per firmware identity: <library>/<id>/data (the app replaces data.dir at launch).
-        defaults["firmware"] = {"library": str(library)}
+    # Data images are per firmware identity: <library>/<id>/data (the app replaces data.dir at launch).
+    defaults["firmware"] = {"library": str(library)}
     (resources / "default-config.json").write_text(json.dumps(defaults, indent=2) + "\n")
     run(["codesign", "--force", "--sign", "-", str(app)], log=output / "app-sign.log")
     return app
@@ -440,20 +390,9 @@ def bundle(output, qemu, guest, variant="stock", profile=None, research=False, a
 
 def validated_assets(output):
     assets = json.loads((output / "assets.json").read_text())
-    if assets.get("decoupled") is True:
-        return validated_base_assets(output, assets)
-    application = validate_identity(assets.get("application", identity()))
-    if assets.get("app_sha256") != application["app_sha256"] or assets.get("firmware") != FIRMWARE:
-        raise ValueError("native assets do not identify an allowed SP-16 application")
-    required = (Path(assets["qemu"]), Path(assets["guest"]) / "kernel",
-                Path(assets["guest"]) / "guest.cpio.gz")
-    if not all(str(path) in assets["hashes"] for path in required):
-        raise ValueError("native boot asset hashes are incomplete")
-    for name, expected in assets["hashes"].items():
-        path = Path(name)
-        if not path.resolve().is_relative_to(output.resolve()) or digest(path) != expected:
-            raise ValueError("native boot asset identity changed; rebuild")
-    return assets
+    if assets.get("decoupled") is not True:
+        raise ValueError("unsupported build folder (made by an older build); rebuild it with native.py build")
+    return validated_base_assets(output, assets)
 
 
 def validated_base_assets(output, assets):
@@ -473,104 +412,28 @@ def validated_base_assets(output, assets):
 def base_boot(output):
     """QEMU and base guest paths of a validated decoupled build, for the import VM."""
     assets = validated_assets(private_path(output))
-    if assets.get("decoupled") is not True:
-        raise ValueError("firmware commands need a decoupled build (native.py build --decoupled)")
     guest = Path(assets["guest"])
     return assets, {"qemu": assets["qemu"], "kernel": str(guest / "kernel"), "initrd": str(guest / "guest.cpio.gz"),
                     "initrd_sha256": assets["hashes"][str(guest / "guest.cpio.gz")]}
 
 
-def build(root, output, *, reuse_qemu_from=None, profile=None, research=False, app_arg=None,
-          pad_calibration=None, uncalibrated=False, trace=None, bundle_suffix=None, no_persistence=False, audio=None,
-          audio_device=None, decoupled=False, library=None, allow_unverified=False):
+def build(output, *, reuse_qemu_from=None, profile="fullpanel", research=False, pad_calibration=None,
+          uncalibrated=False, trace=None, bundle_suffix=None, audio=None, audio_device=None, library=None,
+          allow_unverified=False):
+    """Decoupled build (docs/architecture.md, M3): the app bundle, QEMU and a guest base image with no OEM files.
+    Firmware comes from the per-build library (native.py firmware import) and is attached at launch read-only."""
     bundle_suffix = validate_bundle_suffix(bundle_suffix)
-    if decoupled:
-        return build_decoupled(output, reuse_qemu_from=reuse_qemu_from, profile=profile, research=research,
-                               pad_calibration=pad_calibration, uncalibrated=uncalibrated, trace=trace,
-                               bundle_suffix=bundle_suffix, audio=audio, audio_device=audio_device, library=library,
-                               allow_unverified=allow_unverified, root=root, app_arg=app_arg,
-                               no_persistence=no_persistence)
-    if allow_unverified or library:
-        raise ValueError("--allow-unverified and --library apply to decoupled builds only")
-    if not (TOOLS / "Dockerfile.native-guest").is_file():
-        raise ValueError(LEGACY_REFUSAL)
-    if root is None:
-        raise ValueError("--rootfs is required (or build --decoupled)")
-    persistent = resolve_persistence(profile, no_persistence)
-    if trace and not research:
-        raise ValueError("--trace is research-only; add --research")
-    if audio and not (research or profile == "fullpanel"):
-        raise ValueError("--audio is for research or fullpanel builds only")
-    if audio_device is not None and audio not in ("coreaudio", "both"):
-        raise ValueError("--audio-device needs --audio coreaudio or both")
-    if audio_device is not None and (not audio_device or len(audio_device) > 512 or any(ord(c) < 32 for c in audio_device)):
-        raise ValueError("--audio-device must be a device UID (or offline:<wav>[:rate[:ppm[:block]]])")
-    pad_calibration = resolve_pad_calibration(profile, pad_calibration, uncalibrated)
-    host_check()
-    root = private_path(root)
-    if digest(guest_file(root, "/root/pdj/EP085_Main_R")) != EXPECTED_APP:
-        raise ValueError("build requires the validated unmodified SP-16 1.60 application")
-    output = private_path(output, fresh=not Path(output).exists())
-    if profile and (output / "assets.json").exists():
-        # An experimental profile may be rebuilt in place; never overwrite another build.
-        if json.loads((output / "assets.json").read_text()).get("profile") != profile:
-            raise ValueError("existing output belongs to a different build profile")
-    output.mkdir(mode=0o700, exist_ok=True)
-    if "," in str(output):
-        raise ValueError("build path must not contain commas")
-    extra_files = []
-    if pad_calibration is not None:
-        calibration = output / "pad-calibration.xml"
-        calibration.write_text(pad_calibration_xml(pad_calibration))
-        calibration.chmod(0o600)
-        extra_files.append((calibration, PAD_CALIBRATION_PATH))
-    application = identity()
-    if reuse_qemu_from:
-        previous = validated_assets(private_path(reuse_qemu_from))
-        if previous.get("qemu_version") != QEMU_VERSION:
-            raise ValueError("reused QEMU must match the pinned version")
-        qemu = output / "qemu-system-aarch64"
-        if Path(previous["qemu"]).resolve() != qemu.resolve():
-            shutil.copy2(previous["qemu"], qemu)
-        if digest(qemu) != previous["hashes"][previous["qemu"]]:
-            raise ValueError("reused QEMU copy differs")
-    else:
-        qemu = build_qemu(output)
-    guest = build_guest(root, output, application, extra_files=extra_files)
-    app = bundle(output, qemu, guest, application["variant"], profile, research, app_arg, trace, bundle_suffix,
-                 persistent, audio, audio_device)
-    assets = {"firmware": FIRMWARE, "app_sha256": application["app_sha256"],
-              "application": application, "qemu_version": QEMU_VERSION,
-              "app_bundle": str(app), "qemu": str(qemu), "guest": str(guest),
-              "profile": profile or "", "research": research, "app_arg": app_arg or "", "trace": trace or "", "audio": audio or "", "audio_device": audio_device or "",
-              "pad_calibration": pad_calibration, "persistent_data": persistent,
-              "hashes": {str(p): digest(p) for p in (qemu, guest / "kernel", guest / "guest.cpio.gz")},
-              "guest_source_hashes": {name: digest(TOOLS / name) for name in GUEST_FILES}}
-    (output / "assets.json").write_text(json.dumps(assets, indent=2) + "\n")
-    if profile:
-        for stale in output.glob("guest-*"):
-            if stale.is_dir() and stale.resolve() != guest.resolve():
-                shutil.rmtree(stale)
-    print(json.dumps({"status": "native_app_built", "app": str(app), "runtime_requires_docker": False}))
-
-
-def build_decoupled(output, *, reuse_qemu_from=None, profile=None, research=False, pad_calibration=None,
-                    uncalibrated=False, trace=None, bundle_suffix=None, audio=None, audio_device=None, library=None,
-                    allow_unverified=False, root=None, app_arg=None, no_persistence=False):
-    """Decoupled build (docs/architecture.md, M3): the app bundle, QEMU and a guest base image with no OEM files. Firmware comes
-    from the per-build library (native.py firmware import) and is attached at launch as a read-only disk."""
-    if root is not None or app_arg:
-        raise ValueError("a decoupled build takes no --rootfs or --app-arg (firmware is imported separately)")
     if profile != "fullpanel":
-        raise ValueError("--decoupled currently supports --profile fullpanel")
-    if no_persistence:
-        raise ValueError("decoupled builds keep a per-firmware data image")
+        raise ValueError("the build supports --profile fullpanel only")
     if trace and not research:
         raise ValueError("--trace is research-only; add --research")
     # allow_unverified is accepted and ignored: every correctly keyed firmware boots, marked unverified when no
-    # verified profile matches (owner decision of 2026-10-13).
+    # verified profile matches (D2 in docs/architecture.md).
     if audio_device is not None and audio not in ("coreaudio", "both"):
         raise ValueError("--audio-device needs --audio coreaudio or both")
+    if audio_device is not None and (not audio_device or len(audio_device) > 512
+                                     or any(ord(c) < 32 for c in audio_device)):
+        raise ValueError("--audio-device must be a device UID (or offline:<wav>[:rate[:ppm[:block]]])")
     if uncalibrated and pad_calibration is not None:
         raise ValueError("--uncalibrated and --pad-calibration-value are mutually exclusive")
     # The range and format are the active firmware profile's; the guest validates the value at boot.
@@ -587,7 +450,6 @@ def build_decoupled(output, *, reuse_qemu_from=None, profile=None, research=Fals
     # Absolute: the app is started by LaunchServices with / as its working directory, so a relative path breaks.
     library = Path(os.path.abspath(library)) if library else output / "library"
     firmware.Library(library, create=True)
-    extra_files = []
     if reuse_qemu_from:
         previous = validated_assets(private_path(reuse_qemu_from))
         if previous.get("qemu_version") != QEMU_VERSION:
@@ -599,9 +461,9 @@ def build_decoupled(output, *, reuse_qemu_from=None, profile=None, research=Fals
             raise ValueError("reused QEMU copy differs")
     else:
         qemu = build_qemu(output)
-    guest = build_guest(None, output, None, None, extra_files, dockerfile="Dockerfile.native-base")
-    app = bundle(output, qemu, guest, "stock", profile, research, None, trace, bundle_suffix, True, audio,
-                 audio_device, decoupled=True, library=library, padcal=padcal)
+    guest = build_guest(output)
+    app = bundle(output, qemu, guest, "stock", profile, research, trace, bundle_suffix, True, audio, audio_device,
+                 library=library, padcal=padcal)
     assets = {"decoupled": True, "firmware": None, "qemu_version": QEMU_VERSION,
               "app_bundle": str(app), "qemu": str(qemu), "guest": str(guest), "library": str(library),
               "profile": profile, "research": research, "trace": trace or "", "audio": audio or "",
@@ -666,7 +528,7 @@ def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overla
         manifest = firmware.verify_image(library, firmware_id)
         status = firmware.boot_status(manifest, library)
         if status["status"] != "verified":
-            # Not refused (owner decision of 2026-10-13): it boots on the reference measurements, marked unverified.
+            # Not refused (D2 in docs/architecture.md): it boots on the reference measurements, marked unverified.
             report = firmware.check_report(manifest, library)
             print("firmware is unverified (" + status["reason"] + "); it boots on the product's reference "
                   "measurements.\n" + json.dumps(report, indent=2), file=sys.stderr)
@@ -705,12 +567,10 @@ def firmware_command(args):
         return 0
     if args.action == "audit":
         # Distribution scan (M3 gate, M7): bundle, QEMU, kernel and every file inside the base initramfs.
-        # Vendor logo files exist only in the private repository; an exported copy without them still checks names.
-        logos = {digest(TOOLS / name): f"vendor logo {name}" for name in (*PANEL_RESOURCES[1:], ICON_LOGO)
-                 if (TOOLS / name).is_file()}
+        logos = {digest(TOOLS / name): f"vendor logo {name}" for name in VENDOR_LOGO_FILES if (TOOLS / name).is_file()}
         upd_pins = {p["firmware"]["upd_sha256"]: f"update SHA-256 pin of {p['id']} (not needed for verification)"
                     for p in profiles.all_profiles() if p["firmware"].get("upd_sha256")}
-        names = {Path(name).name for name in (*PANEL_RESOURCES[1:], ICON_LOGO)} | {f"{ICON_FILE}.icns"}
+        names = {Path(name).name for name in VENDOR_LOGO_FILES} | {f"{OLD_ICON_NAME}.icns"}
         report = firmware.audit_build([assets["app_bundle"], assets["qemu"], boot["kernel"]], [boot["initrd"]], library,
                                       forbidden_files=logos, forbidden_strings=upd_pins, forbidden_names=names)
         print(json.dumps(report, indent=2))
@@ -760,22 +620,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     builder = commands.add_parser("build", help="compile QEMU/window and package guest once")
-    legacy_help = (lambda text: text) if LEGACY_AVAILABLE else (lambda text: argparse.SUPPRESS)
-    builder.add_argument("--rootfs", help=legacy_help("prepared OEM rootfs (legacy builds); omit with --decoupled"))
     builder.add_argument("--output", required=True)
     builder.add_argument("--reuse-qemu-from", help="copy hash-verified QEMU from an existing private build")
-    builder.add_argument("--profile", choices=PROFILES, default=None if LEGACY_AVAILABLE else "fullpanel",
-                         help="separate experimental app profile/bundle ID" if LEGACY_AVAILABLE
-                         else "app profile (fullpanel, the default, is the only one in this copy)")
-    builder.add_argument("--app-arg", choices=APP_ARGS,
-                         help=legacy_help("launch the OEM application with a fixed research argument"))
+    builder.add_argument("--profile", choices=PROFILES, default="fullpanel",
+                         help="app profile (fullpanel is the only one)")
     builder.add_argument("--pad-calibration-value", type=int, metavar="N",
                          help="fullpanel only: stage a synthetic padcalibration.xml with N (48..504) for all pads "
                               f"(default {DEFAULT_PAD_CALIBRATION}, not factory data)")
     builder.add_argument("--uncalibrated", action="store_true",
                          help="fullpanel only: stage no calibration file, so the OEM reports uncalibrated pads (blinking)")
-    builder.add_argument("--no-persistence", action="store_true",
-                         help=legacy_help("fullpanel only: build without the persistent <output>/data/emmc.img block device"))
     builder.add_argument("--research", action="store_true",
                          help="enable the owner-only session control socket (events, raw research frames, snapshots)")
     builder.add_argument("--trace", choices=TRACE_MODES,
@@ -794,12 +647,9 @@ def main():
                               "default output. "
                               "offline:<wav>[:rate[:ppm[:block]]] renders the output graph to a file on a software clock "
                               "instead (verification; never opens a device)")
-    builder.add_argument("--decoupled", action="store_true", default=not LEGACY_AVAILABLE,
-                         help="build the app, QEMU and a guest base image with no OEM files; "
-                              "firmware is imported into the build's library (native.py firmware import) and attached "
-                              "read-only at launch" + ("" if LEGACY_AVAILABLE else " (always on in this copy)"))
+    builder.add_argument("--decoupled", action="store_true", help="always on; kept for older commands")
     builder.add_argument("--library", metavar="DIR",
-                         help="with --decoupled: firmware library directory (default <output>/library)")
+                         help="firmware library directory (default <output>/library)")
     builder.add_argument("--allow-unverified", action="store_true",
                          help="no longer needed and has no effect: any correctly keyed firmware boots, marked unverified when "
                               "no verified profile matches (accepted so existing commands keep working)")
@@ -838,16 +688,12 @@ def main():
     diag.add_argument("--out", metavar="ZIP", help="zip to write (default ~/Desktop/sp16-diagnostics-<time>.zip, else the build folder)")
     diag.add_argument("--key-file", help="also prove this key file's key is absent from the zip (never printed)")
     args = parser.parse_args()
-    if args.command == "build" and not LEGACY_AVAILABLE and (
-            args.rootfs or args.app_arg or args.no_persistence or args.profile != "fullpanel"):
-        parser.exit(1, f"native emulator failed: {LEGACY_REFUSAL}\n")
     try:
         if args.command == "build":
-            build(args.rootfs, args.output, reuse_qemu_from=args.reuse_qemu_from,
-                  profile=args.profile, research=args.research, app_arg=args.app_arg,
-                  pad_calibration=args.pad_calibration_value, uncalibrated=args.uncalibrated, trace=args.trace,
-                  bundle_suffix=args.bundle_suffix, no_persistence=args.no_persistence, audio=args.audio,
-                  audio_device=args.audio_device, decoupled=args.decoupled, library=args.library,
+            build(args.output, reuse_qemu_from=args.reuse_qemu_from,
+                  profile=args.profile, research=args.research, pad_calibration=args.pad_calibration_value,
+                  uncalibrated=args.uncalibrated, trace=args.trace, bundle_suffix=args.bundle_suffix,
+                  audio=args.audio, audio_device=args.audio_device, library=args.library,
                   allow_unverified=args.allow_unverified)
         elif args.command == "firmware":
             return firmware_command(args)
