@@ -38,8 +38,8 @@ profile ([profiles.md](profiles.md)).
 ## Boot
 
 1. The app reads its `default-config.json`, resolves the selected firmware in the library, checks it against the
-   profiles bundled in the app (only a verified profile for that exact application hash boots), re-hashes the
-   firmware image and starts QEMU with Hypervisor.framework.
+   profiles bundled in the app (a verified profile for that exact application hash makes the run verified, anything
+   else runs unverified on the reference profile), re-hashes the firmware image and starts QEMU with Hypervisor.framework.
 2. QEMU boots the Debian guest kernel and the base initramfs. The firmware image is attached read-only as a
    virtio-blk disk, the data image as a second disk.
 3. The guest init re-verifies the image hash and the application hash against the manifest and its own copy of the
@@ -65,8 +65,8 @@ profile ([profiles.md](profiles.md)).
 | ID | Decision |
 |---|---|
 | D1 | The user supplies the key (a key file, or the official GPL source archive it comes from). Nothing is bundled or downloaded. The key is used for the import boot only. |
-| D2 | Unknown versions are refused. Only versions with a verified profile boot. A developer build (`--research --allow-unverified`) can boot a candidate to verify it. |
-| D3 | The developer workflow also produces repacked updates, for this emulator only. They carry an `SP16MODLAB-<version>` marker and are accepted only when the importer can rebuild them byte for byte from a verified base and the declared recipes. |
+| D2 | Any update encrypted with the correct key is accepted and runs. A version with a verified profile runs as verified; any other runs on the reference profile, marked unverified (title, library status, a one-time notice, console `SP16_FIRMWARE_UNVERIFIED`). `--allow-unverified` is accepted and does nothing. |
+| D3 | The developer workflow also produces repacked updates, for this emulator only. They carry an `SP16MODLAB-<version>` marker and are verified when the importer can rebuild them byte for byte from a verified base and the declared recipes, and run as unverified otherwise. |
 | D4 | Neutral product name and bundle id, no vendor logos, source-only distribution. |
 
 Code comments refer to the stages in which the design was built: M1 firmware registry and profiles, M2 importer,
@@ -76,16 +76,16 @@ updates), M7 distribution packaging.
 
 ## Adding a firmware version
 
-1. Import it. It is stored as `unverified`; read the compatibility report for unknown device nodes, ALSA names,
+1. Import it. It is stored as `unverified` and already runs; read the compatibility report for unknown device nodes, ALSA names,
    ioctls, panel revisions and calibration markers.
 2. `python3 emulator/native.py firmware profile --output build/sp16 --id <id> > emulator/profiles/sp16-<version>.json`
    writes a `candidate` profile with this import's identity and the reference profile's measurements.
-3. Build a developer variant that shares the library and boots candidates:
-   `python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --allow-unverified --library build/sp16/library --output build/sp16-dev --bundle-suffix dev`.
+3. Build a research variant that shares the library:
+   `python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --library build/sp16/library --output build/sp16-dev --bundle-suffix dev`.
 4. Launch it, correct any measurement that differs (lamp roles, pad curve, selector window, runtime layout,
    calibration), and run the hardware suite at the full tier ([hardware-suite.md](hardware-suite.md)).
-5. Only a full-tier pass marks the profile `verified` (`hwsuite.py --mark-verified`). Until then normal builds refuse
-   the version.
+5. Only a full-tier pass marks the profile `verified` (`hwsuite.py --mark-verified`). Until then the version
+   runs as unverified.
 
 ## Research socket
 

@@ -3,11 +3,11 @@ import Foundation
 
 /// Decoupled builds (docs/architecture.md, M3/M4): the firmware library written by `native.py firmware import`
 /// (or the app's import screen). Each entry is <library>/<id>/{manifest.json, entry.json, firmware.sqfs, data/}.
-/// Before boot the app re-checks the D2 policy against the profiles bundled in Resources/profiles and the image
-/// SHA-256 against the manifest; the guest checks the image and application hashes again.
+/// Before boot the app classifies the entry against the profiles bundled in Resources/profiles (verified, or
+/// unverified and run on the reference measurements, owner decision of 2026-10-13) and re-checks the image SHA-256
+/// against the manifest; the guest checks the image and application hashes again.
 struct FirmwareConfig: Decodable {
     let library: String
-    let allow_unverified: Bool?
 }
 
 struct FirmwareEntry {
@@ -109,14 +109,24 @@ enum FirmwareLibrary {
         }
         var base = app
         var modOK = true
+        var modReason = "mod was not verified against a base firmware in the library"
         if kind == "mod" {
-            guard let mod = manifest["mod"] as? [String: Any], let baseSHA = mod["base_app_sha256"] as? String,
-                  matches(baseSHA, shaPattern), let baseID = mod["base_id"] as? String, matches(baseID, idPattern) else {
+            guard let mod = manifest["mod"] as? [String: Any], let verified = mod["verified"] as? Bool else {
                 throw FirmwareLibraryError.invalid("firmware \(id) has an invalid mod section")
             }
-            base = baseSHA
-            modOK = mod["verified"] as? Bool == true
-                && (try? load(library: library, id: baseID))?.appSHA256 == baseSHA
+            if verified {
+                guard let baseSHA = mod["base_app_sha256"] as? String, matches(baseSHA, shaPattern),
+                      let baseID = mod["base_id"] as? String, matches(baseID, idPattern) else {
+                    throw FirmwareLibraryError.invalid("firmware \(id) has an invalid mod section")
+                }
+                base = baseSHA
+                modOK = (try? load(library: library, id: baseID))?.appSHA256 == baseSHA
+            } else {
+                // A modified update that did not verify against its manifest: matched by its own application hash.
+                modOK = false
+                modReason = "modified update that does not verify against its manifest: "
+                    + String((mod["reason"] as? String ?? "no reason recorded").prefix(300))
+            }
         }
         var name = id
         if let entryData = try? Data(contentsOf: directory.appendingPathComponent("entry.json")),
@@ -124,10 +134,11 @@ enum FirmwareLibrary {
            let text = entry["name"] as? String, !text.isEmpty { name = String(text.prefix(80)) }
         let profile = bundledProfiles()[base]
         var status = "unverified", reason = ""
-        if profile == nil { reason = "no compatibility profile for this firmware" }
+        if !modOK && kind == "mod" && base == app { reason = modReason }
+        else if profile == nil { reason = "no compatibility profile for this firmware" }
         else if profile!.version != version { reason = "update version differs from the profile's version" }
         else if profile!.status != "verified" { reason = "profile \(profile!.id) is a candidate, not verified" }
-        else if !modOK { reason = "mod was not verified against a base firmware in the library" }
+        else if !modOK { reason = modReason }
         else { status = "verified" }
         return FirmwareEntry(id: id, name: name, kind: kind, version: version, appPath: appPath, appSHA256: app,
                              baseAppSHA256: base,
@@ -169,18 +180,29 @@ enum FirmwareLibrary {
         }
     }
 
-    static func report(_ entry: FirmwareEntry) -> String {
-        var lines = ["Firmware \(entry.name) (\(entry.id), version \(entry.version), \(entry.kind)) cannot start:",
-                     entry.reason]
+    /// The one-time notice for firmware that runs without a verified profile: why, and what the importer found.
+    static func unverifiedNotice(_ entry: FirmwareEntry) -> String {
+        var lines = ["\(entry.name) (\(entry.id), version \(entry.version), \(entry.kind)) is not verified.",
+                     entry.reason,
+                     "It runs on the reference measurements of the SP-16 emulator (pad curve, lamp roles, panel "
+                     + "maps). Anything that differs in this update may behave differently from the real unit.", ""]
         if let compat = entry.manifest["compat"] as? [String: Any] {
+            var findings = 0
             for key in ["devices_unknown", "pcms_unknown", "ioctls_unknown_candidates"] {
                 if let list = compat[key] as? [String], !list.isEmpty {
                     lines.append("\(key.replacingOccurrences(of: "_", with: " ")): \(list.joined(separator: ", "))")
+                    findings += 1
                 }
             }
+            if let markers = compat["calibration_markers"] as? [String: Bool], markers.values.contains(false) {
+                lines.append("calibration file markers missing: "
+                             + markers.filter { !$0.value }.keys.sorted().joined(separator: ", "))
+                findings += 1
+            }
+            if findings == 0 { lines.append("Compatibility scan: no unknown device nodes, PCMs or ioctls.") }
         }
-        lines.append("Only versions with a verified compatibility profile run (design decision D2). "
-                     + "Run `native.py firmware check` for the full report.")
+        lines.append("")
+        lines.append("`native.py firmware check --id \(entry.id)` prints the full compatibility report.")
         return lines.joined(separator: "\n")
     }
 }

@@ -4,10 +4,11 @@ A profile holds everything the emulator does differently per firmware version, a
 application path and SHA-256, panel MCU revisions), runtime layout (working directory, emulated CPU, library path,
 data/eMMC/USB mount points, tmpfs directories, allowed app arguments), the panel maps measured on that version
 (buttons, counters, analog words, lamp roles, pad curve limits, selector window) and the pad calibration file format.
-It never holds firmware content. A version boots in a normal build only with a profile whose status is "verified",
-which requires a passing verification record (design decision D2; the hardware conformance suite is the gate going
-forward). "candidate" profiles, or an unprofiled import using the product's reference profile, boot only with the
-explicit developer opt-in.
+It never holds firmware content. A version is "verified" when a profile whose status is "verified" matches its exact
+application; that requires a passing verification record (the hardware conformance suite is the gate). Since the
+owner decision of 2026-10-13 (replacing D2) every correctly keyed import also boots without one: a "candidate"
+profile, or the product's reference profile for an unprofiled import, supplies the measurements and the run is
+marked unverified.
 
 A product descriptor (profiles/products/<product>.json) holds what is common to a product's updates: layer layout,
 application and loader candidates, the stock trailer marker and the reference profile used before a version has its
@@ -190,14 +191,12 @@ def product(name=PRODUCT, directory=None):
     return data
 
 
-def active(app_sha256, allow_unverified=False, directory=None):
-    """The profile a boot uses and how it was chosen: ("verified"|"candidate"|"reference", profile). Without the
-    developer opt-in only a verified profile is returned; otherwise None."""
+def active(app_sha256, allow_unverified=True, directory=None):
+    """The profile a boot uses and how it was chosen: ("verified"|"candidate"|"reference", profile). Every firmware
+    gets a profile (owner decision of 2026-10-13); `allow_unverified` is accepted for old callers and has no effect."""
     profile = for_app(app_sha256, directory)
     if profile and profile["status"] == "verified":
         return "verified", profile
-    if not allow_unverified:
-        return None, None
     if profile:
         return "candidate", profile
     return "reference", load(product(directory=directory)["reference_profile"], directory)

@@ -78,7 +78,7 @@ else
   sp16_set_runtime "$@" || { echo 'SP16_FIRMWARE_ERROR invalid runtime layout; powering off' > /dev/console; exit 1; }
   sp16_data_seed=/tmp/sp16-root$sp16_data_dir
   sp16_profile_env="SP16_PROFILE=$sp16_profile"
-  [ "$sp16_profile_how" = verified ] || echo "SP16_FIRMWARE_UNVERIFIED profile=$sp16_profile chosen=$sp16_profile_how (developer opt-in)" > /dev/console
+  [ "$sp16_profile_how" = verified ] || echo "SP16_FIRMWARE_UNVERIFIED profile=$sp16_profile chosen=$sp16_profile_how" > /dev/console
   # Our own staged files (the synthetic pad calibration), never OEM content; they land in the overlay's upper layer.
   if [ -d /opt/sp16/stage ]; then cp -a /opt/sp16/stage/. /tmp/sp16-root/; fi
   # Developer overlay (M6, research builds only: the app attaches the host folder read-only over 9p). Its files,

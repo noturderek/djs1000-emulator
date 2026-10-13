@@ -145,9 +145,11 @@ class VersionDataTests(unittest.TestCase):
         self.assertEqual(product["update"]["stock_marker"], "LIVESAMPLER")
         legacy_app = profiles.legacy()["firmware"]["app_sha256"]
         self.assertEqual(profiles.active(legacy_app)[0], "verified")
-        self.assertEqual(profiles.active("e" * 64), (None, None))
-        how, profile = profiles.active("e" * 64, allow_unverified=True)
+        # Owner decision of 2026-10-13: an unknown application gets the reference profile, never a refusal; the old
+        # allow_unverified argument is accepted and changes nothing.
+        how, profile = profiles.active("e" * 64)
         self.assertEqual((how, profile["id"]), ("reference", "sp16-1.60"))
+        self.assertEqual(profiles.active("e" * 64, allow_unverified=False), (how, profile))
         with tempfile.TemporaryDirectory() as folder:
             shutil.copytree(TOOLS / "profiles/products", Path(folder) / "products")
             candidate = copy.deepcopy(profiles.legacy())
@@ -155,8 +157,9 @@ class VersionDataTests(unittest.TestCase):
             candidate["firmware"].update(version="1.50", app_sha256="e" * 64)
             write_profile(folder, candidate)
             write_profile(folder, profiles.legacy())
-            self.assertEqual(profiles.active("e" * 64, directory=folder), (None, None))
-            self.assertEqual(profiles.active("e" * 64, True, folder)[0], "candidate")
+            how, chosen = profiles.active("e" * 64, directory=folder)
+            self.assertEqual((how, chosen["id"]), ("candidate", "sp16-1.50"))
+            self.assertEqual(profiles.active(legacy_app, directory=folder)[0], "verified")
 
     def test_candidate_profile_scaffold(self):
         manifest = {"update": {"trailer_version": "1.50", "sha256": "1" * 64,

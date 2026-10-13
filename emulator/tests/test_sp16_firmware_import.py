@@ -288,13 +288,30 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(firmware.FirmwareError, "already in the library"):
             self.import_synthetic()
 
-    def test_unknown_application_imports_but_is_refused_to_boot(self):
+    def test_unknown_application_imports_and_boots_marked_unverified(self):
         (entry_id, report), _ = self.import_synthetic(
             lambda meta, image: guest_manifest(app_sha="e" * 64, version=meta["trailer_version"], crc=meta["crc32"],
                                                image=image), version=b"1.50")
-        self.assertFalse(report["boots"])
+        self.assertTrue(report["boots"])  # any correctly keyed update runs (owner decision of 2026-10-13)
+        self.assertFalse(report["verified"])
         self.assertEqual(report["status"], "unverified")
         self.assertIn("no compatibility profile", report["reason"])
+        summary = self.library.summary(entry_id)
+        self.assertEqual((summary["status"], summary["profile"]), ("unverified", None))
+        # The image is still re-verified before every boot: a changed image is refused, verified or not.
+        image = self.library.entry_dir(entry_id) / "firmware.sqfs"
+        data = bytearray(image.read_bytes())
+        data[10] ^= 1
+        image.write_bytes(bytes(data))
+        with self.assertRaisesRegex(firmware.FirmwareError, "does not match"):
+            firmware.verify_image(self.library, entry_id)
+
+    def test_modified_stock_trailer_update_imports_unverified(self):
+        (entry_id, report), _ = self.import_synthetic(
+            lambda meta, image: guest_manifest(app_sha="d" * 64, version=meta["trailer_version"], crc=meta["crc32"],
+                                               image=image))
+        self.assertEqual((report["boots"], report["status"], report["profile"]), (True, "unverified", None))
+        self.assertEqual(self.library.manifest(entry_id)["kind"], "stock")
 
     def test_version_mismatch_and_candidate_profiles_are_unverified(self):
         manifest = self.library.manifest(self.import_synthetic()[0][0])
@@ -325,12 +342,37 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(firmware.FirmwareError, "does not match"):
             firmware.verify_image(self.library, entry_id)
 
-    def test_mod_updates_need_mod_verification(self):
+    def test_mod_update_without_verification_imports_as_unverified(self):
         update = make_update(self.dir / "mod.UPD", marker=b"SP16MODLAB-")
         with mock.patch.object(firmware, "run_import_vm", self.fake_vm(
                 lambda meta, image: guest_manifest(version="1.60", crc=meta["crc32"], image=image))):
-            with self.assertRaisesRegex(firmware.FirmwareError, "mod verification"):
-                firmware.import_update(self.library, self.boot, update, b"k" * 32)
+            entry_id, report = firmware.import_update(self.library, self.boot, update, b"k" * 32)
+        self.assertRegex(entry_id, r"^sp16-1\.60-mod-unverified-[0-9a-f]{12}$")
+        manifest = self.library.manifest(entry_id)
+        self.assertEqual((manifest["kind"], manifest["mod"]["verified"]), ("mod", False))
+        self.assertTrue(manifest["mod"]["reason"])
+        self.assertEqual((report["boots"], report["status"], report["profile"]), (True, "unverified", None))
+        self.assertIn("does not verify", report["reason"])
+        # an unverified mod is matched by its own application hash, never by a base it did not prove
+        self.assertEqual(firmware.base_app_sha256(manifest), manifest["app_sha256"])
+        # a mod section that claims verification without its base is an invalid manifest
+        broken = copy.deepcopy(manifest)
+        broken["mod"]["verified"] = True
+        with self.assertRaisesRegex(firmware.FirmwareError, "invalid"):
+            firmware.validate_manifest(broken)
+
+    def test_still_refused_without_a_valid_trailer_or_with_the_wrong_key(self):
+        bad_crc = make_update(self.dir / "crc.UPD")
+        data = bytearray(bad_crc.read_bytes())
+        data[3] ^= 1
+        bad_crc.write_bytes(bytes(data))
+        with self.assertRaisesRegex(firmware.FirmwareError, "CRC"):
+            firmware.import_update(self.library, self.boot, bad_crc, b"k" * 32)
+        wrong_key = make_update(self.dir / "wrong.UPD")
+        with mock.patch.object(firmware, "run_import_vm", lambda *a, **k: {"result": "refused", "error": "no volume"}):
+            with self.assertRaisesRegex(firmware.FirmwareError, "no volume"):
+                firmware.import_update(self.library, self.boot, wrong_key, b"k" * 32)
+        self.assertEqual(list(self.library.path.iterdir()), [])
 
     def test_rename_select_remove_and_ids(self):
         entry_id = self.import_synthetic()[0][0]
@@ -380,19 +422,15 @@ class DecoupledBuildTests(unittest.TestCase):
             self.assertIn(token, joined)
         self.assertNotIn("allow_unverified", joined)
         self.assertNotIn("@FW", " ".join(native.arguments(Path("/q"), Path("/g"), "/s", data=True)))
-        self.assertIn("sp16.allow_unverified=1",
-                      " ".join(native.arguments(Path("/q"), Path("/g"), "/s", firmware=True, allow_unverified=True)))
-        with self.assertRaises(ValueError):
-            native.arguments(Path("/q"), Path("/g"), "/s", allow_unverified=True)
+        # --allow-unverified is a no-op flag now: nothing about it reaches the guest command line.
+        self.assertNotIn("allow_unverified", " ".join(native.arguments(Path("/q"), Path("/g"), "/s", firmware=True)))
 
     def test_decoupled_build_option_rules(self):
         with self.assertRaises(ValueError):
             native.build("rootfs", "out", decoupled=True, profile="fullpanel")
         with self.assertRaises(ValueError):
             native.build(None, "out", decoupled=True, profile="testmode")
-        with self.assertRaises(ValueError):
-            native.build(None, "out", decoupled=True, profile="fullpanel", allow_unverified=True)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError):  # the legacy build never accepted the flag and still does not
             native.build("rootfs", "out", allow_unverified=True)
         with self.assertRaises(ValueError):
             native.build(None, "out")

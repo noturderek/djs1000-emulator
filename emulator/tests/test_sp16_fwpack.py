@@ -123,24 +123,41 @@ class ModVerificationTests(unittest.TestCase):
         firmware.validate_manifest(manifest)
         self.assertEqual(firmware.boot_status(manifest, self.library)["status"], "verified")
 
-    def test_refusals(self):
-        with self.assertRaisesRegex(firmware.FirmwareError, "not the rebuild"):
-            self.verify("f" * 64)
+    def test_unverifiable_mods_are_accepted_as_unverified_with_a_reason(self):
+        mismatch = self.verify("f" * 64)
+        self.assertFalse(mismatch["verified"])
+        self.assertEqual(mismatch["id"], "utility-label")
+        self.assertIn("content differs", mismatch["reason"])
         cases = [
             (lambda: self.mod.update(kind="other"), "sp16-mod.json"),
             (lambda: self.mod["base"].update(upd_sha256="0" * 64), "not in the library"),
             (lambda: self.mod["base"].update(app_sha256="0" * 64), "declared base"),
             (lambda: self.mod.update(recipes=[]), "no recipes"),
+            (lambda: self.mod.update(recipes=[{"schema": 99}]), "invalid patch recipe"),
             (lambda: self.guest.update(app_sha256="0" * 64), "differs from its declared recipe result"),
         ]
         for mutate, reason in cases:
             saved_mod, saved_guest = json.loads(json.dumps(self.mod)), dict(self.guest)
             mutate()
             self.guest["mod"] = self.mod
-            with self.assertRaisesRegex(firmware.FirmwareError, reason):
-                self.verify("e" * 64)
+            result = self.verify("e" * 64)
+            self.assertFalse(result["verified"], reason)
+            self.assertRegex(result["reason"], reason)
             self.mod, self.guest = saved_mod, saved_guest
             self.guest["mod"] = self.mod
+        manifest = {**self.base, "id": "sp16-1.60-mod-utility-label-eeeeeeeeeeee", "kind": "mod",
+                    "app_sha256": "9" * 64, "mod": mismatch}
+        firmware.validate_manifest(manifest)
+        status = firmware.boot_status(manifest, self.library)
+        self.assertEqual((status["status"], status["profile"]), ("unverified", None))
+        self.assertIn("content differs", status["reason"])
+
+    def test_infrastructure_failures_are_still_refusals(self):
+        def broken_build(*args):
+            raise firmware.FirmwareError("package VM did not start")
+        with mock.patch.object(fwpack, "build_update", broken_build):
+            with self.assertRaisesRegex(firmware.FirmwareError, "did not start"):
+                fwpack.mod_verifier(self.library, {}, b"k" * 32)(self.guest, self.meta, self.dir)
 
     def test_mod_trailer_is_never_a_stock_marker(self):
         self.assertFalse(fwpack.MOD_MARKER.startswith(b"LIVESAMPLER"))

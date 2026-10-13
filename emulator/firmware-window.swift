@@ -160,10 +160,12 @@ final class FirmwareImportWindow: NSObject, NSWindowDelegate {
         report.string = FirmwareTool.describe(result)
         if result["status"] as? String == "firmware_imported", let id = result["id"] as? String {
             importedID = id
-            let boots = (result["report"] as? [String: Any])?["boots"] as? Bool ?? false
-            status.stringValue = boots ? "Imported \(id)." : "Imported \(id), but it cannot start: no verified compatibility profile."
-            startButton.isHidden = !boots
-            if boots { _ = FirmwareTool.run(["select", "--library", library, "--id", id]) }
+            let report = result["report"] as? [String: Any]
+            let verified = report?["status"] as? String == "verified"
+            status.stringValue = verified ? "Imported \(id)."
+                : "Imported \(id). It is unverified (\(report?["reason"] ?? "no verified profile")) and runs on the reference measurements."
+            startButton.isHidden = false
+            _ = FirmwareTool.run(["select", "--library", library, "--id", id])
         } else {
             status.stringValue = "Import refused."
         }
@@ -241,10 +243,6 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
 
     @objc func startSelected() {
         guard let entry = selected, let id = entry["id"] as? String else { return }
-        guard entry["status"] as? String == "verified" || config.firmware?.allow_unverified == true else {
-            status.stringValue = "\(id) cannot start: \(entry["reason"] ?? "no verified compatibility profile")"
-            return
-        }
         _ = FirmwareTool.run(["select", "--library", library, "--id", id])
         FirmwareTool.relaunch(firmware: id)
     }
@@ -337,5 +335,41 @@ final class FirmwareLibrarySetupApplication: NSObject, NSApplicationDelegate {
         menu.addItem(editMenuItem())
         NSApp.mainMenu = menu
         libraryWindow.show()
+    }
+}
+
+/// The one-time, non-blocking notice for firmware that runs without a verified profile (owner decision of
+/// 2026-10-13). It shows the compatibility findings once per firmware image; the window title and the library's
+/// Status column keep saying "unverified".
+enum UnverifiedNotice {
+    static var panel: NSPanel?
+    static let defaultsKey = "sp16.unverified-notice-seen"
+
+    static func showOnce(key: String, text: String) {
+        var seen = UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []
+        guard !seen.contains(key) else { return }
+        seen.append(key)
+        UserDefaults.standard.set(Array(seen.suffix(200)), forKey: defaultsKey)
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 300),
+                            styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.title = "Unverified firmware"
+        panel.isReleasedWhenClosed = false
+        panel.becomesKeyOnlyIfNeeded = true
+        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 520, height: 220))
+        view.isEditable = false
+        view.string = text
+        view.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let scroll = NSScrollView(); scroll.documentView = view; scroll.hasVerticalScroller = true
+        scroll.heightAnchor.constraint(equalToConstant: 220).isActive = true
+        scroll.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        let close = NSButton(title: "OK", target: panel, action: #selector(NSWindow.performClose(_:)))
+        let stack = NSStackView(views: [scroll, close])
+        stack.orientation = .vertical; stack.alignment = .trailing
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        panel.contentView = stack
+        panel.center()
+        panel.orderFront(nil)
+        Self.panel = panel
     }
 }

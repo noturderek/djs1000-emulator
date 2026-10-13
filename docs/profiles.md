@@ -14,7 +14,7 @@ What every update of the product shares; used by the importer before a version h
 | Field | Meaning |
 |---|---|
 | `schema`, `product`, `name` | `1`, `sp16`, display name |
-| `reference_profile` | measurements used for an unprofiled version booted with the developer opt-in, and the start of `native.py firmware profile` |
+| `reference_profile` | measurements used for an unprofiled version booted without a verified profile (marked unverified), and the start of `native.py firmware profile` |
 | `update.stock_marker` | trailer marker of an official update (repacked updates use `SP16MODLAB-`) |
 | `update.images_dir`, `update.tar_layers[]`, `update.squashfs_layers[]` | where the firmware layers are inside the update and where each is unpacked |
 | `update.revision_files[]` | small version files copied into the manifest |
@@ -28,7 +28,7 @@ What every update of the product shares; used by the importer before a version h
 | Field | Meaning |
 |---|---|
 | `schema`, `id`, `product` | `1`, `sp16-<version>`, `sp16` |
-| `status` | `verified` or `candidate`; only `verified` boots in a normal build |
+| `status` | `verified` or `candidate`; only `verified` makes a run verified, a candidate (or no profile, then the product's reference profile) runs unverified |
 | `firmware` | `version`, `app_path`, `app_sha256` (the identity that matches a profile to an import), `upd_sha256` (repository copy only), `app_revision`, `panel_revisions`, `loader_path` |
 | `runtime` | application working directory, emulated CPU, library path, data, storage and USB mount points, writable directories, allowed application arguments |
 | `panel` | `selector_window_frames`, `pad_curve`, `button_roles`, `buttons_inert`, `counters`, `analog_words`, `lamp_roles`, `lamp_groups`, `mono_dim_flag` |

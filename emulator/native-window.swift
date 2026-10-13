@@ -11,7 +11,7 @@ struct Configuration: Decodable {
     let research: Bool?
     let data: DataConfig?
     let audio: String?
-    /// Decoupled builds only: the firmware library and the developer opt-in for unverified versions.
+    /// Decoupled builds only: the firmware library.
     let firmware: FirmwareConfig?
     /// The firmware entry this session boots (decoupled builds), recorded in runtime.json.
     var firmwareID: String? = nil
@@ -103,7 +103,9 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     var title: String {
-        if let name = config.firmwareName { return "SP-16 Emulator — \(name)" }
+        if let name = config.firmwareName {
+            return "SP-16 Emulator — \(name)" + (unverifiedNotice == nil ? "" : " (unverified)")
+        }
         if config.variant == "utility-label" { return "SP16 Emulator — MOD LAB experiment" }
         if config.profile == "fullpanel" { return "SP16 Emulator — Full Panel (experimental)" }
         if config.profile == "testmode" { return "SP16 Emulator — OEM factory test (research)" }
@@ -123,6 +125,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         window.center(); window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(panel)
         NSApp.activate(ignoringOtherApps: true)
+        if let notice = unverifiedNotice { UnverifiedNotice.showOnce(key: notice.key, text: notice.text) }
         let console = config.session + "/console.txt"
         FileManager.default.createFile(atPath: console, contents: nil, attributes: [.posixPermissions: 0o600])
         log = try? FileHandle(forWritingTo: URL(fileURLWithPath: console))
@@ -703,10 +706,15 @@ func attachData(_ config: Configuration, ephemeral: Bool, usbImage: String? = ni
     } catch { refuse("\(error)") }
 }
 
-/// Decoupled builds: pick the requested (or selected) firmware, apply the D2 policy and the image integrity check, and
-/// point the data image at that firmware's own data directory.
+/// Decoupled builds: pick the requested (or selected) firmware, check the image integrity, mark it unverified when no
+/// verified profile matches (it still boots, owner decision of 2026-10-13) and point the data image at that firmware's
+/// own data directory.
 /// Decoupled build with nothing to boot yet: the app shows the import screen (or the library) instead of a VM.
 var firmwareSetup: (config: Configuration, library: String)?
+
+/// Set when the booted firmware is unverified: the compatibility notice shown once after the window opens, and the
+/// reason the window title carries "(unverified)".
+var unverifiedNotice: (key: String, text: String)?
 
 func resolveFirmware(_ defaults: Configuration, requested: String?) -> Configuration {
     guard let firmware = defaults.firmware else {
@@ -719,17 +727,18 @@ func resolveFirmware(_ defaults: Configuration, requested: String?) -> Configura
     }
     do {
         let entry = try FirmwareLibrary.load(library: firmware.library, id: id)
-        if entry.status != "verified" && firmware.allow_unverified != true { refuse(FirmwareLibrary.report(entry)) }
         try FirmwareLibrary.verifyImage(entry)
         try FileManager.default.createDirectory(atPath: entry.dataDirectory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
-        let suffix = entry.status == "verified" ? "" : " (UNVERIFIED, developer opt-in)"
+        if entry.status != "verified" {
+            unverifiedNotice = (entry.id + ":" + entry.imageSHA256, FirmwareLibrary.unverifiedNotice(entry))
+        }
         return Configuration(qemu: defaults.qemu, arguments: FirmwareLibrary.substitute(defaults.arguments, entry: entry),
                              session: defaults.session, socket: defaults.socket, variant: entry.kind,
                              profile: defaults.profile, research: defaults.research,
                              data: DataConfig(dir: entry.dataDirectory, size: defaults.data?.size), audio: defaults.audio,
                              firmware: firmware, firmwareID: entry.id,
-                             firmwareName: "\(entry.name) (\(entry.version))" + suffix)
+                             firmwareName: "\(entry.name) (\(entry.version))")
     } catch { refuse("\(error)") }
 }
 

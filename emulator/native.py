@@ -260,7 +260,7 @@ PADCAL_PATTERN = re.compile(r"default|off|[0-9]{1,5}")
 
 
 def arguments(qemu, guest, socket, app_arg=None, trace=None, data=False, audio=None, firmware=False,
-              allow_unverified=False, padcal=None):
+              padcal=None):
     if audio is not None and audio not in AUDIO_MODES:
         raise ValueError("unsupported audio mode")
     if trace is not None and trace not in TRACE_MODES:
@@ -274,8 +274,6 @@ def arguments(qemu, guest, socket, app_arg=None, trace=None, data=False, audio=N
     # Audio transport (M4b1): a dedicated virtio-serial port carrying playback frames to the host file sink.
     pcm = ["-chardev", f"socket,id=sp16pcm,path={socket}.pcm,server=on,wait=off",
            "-device", "virtserialport,chardev=sp16pcm,name=sp16.pcm"] if audio else []
-    if allow_unverified and not firmware:
-        raise ValueError("--allow-unverified applies to decoupled builds only")
     if padcal is not None and (not firmware or not PADCAL_PATTERN.fullmatch(str(padcal))):
         raise ValueError("padcal is default, off or a number, for decoupled builds only")
     fw = ["-drive", "file=@FWIMAGE@,format=raw,if=none,id=sp16fw,readonly=on",
@@ -291,8 +289,7 @@ def arguments(qemu, guest, socket, app_arg=None, trace=None, data=False, audio=N
                        + (" sp16.audio=file" if audio else "")
                        + (" sp16.fw=@FWSHA@ sp16.fwbytes=@FWBYTES@ sp16.fwapp=@FWAPP@ sp16.fwbase=@FWBASE@"
                           " sp16.fwver=@FWVER@ sp16.app_path=@FWAPPPATH@" if firmware else "")
-                       + (f" sp16.padcal={padcal}" if firmware and padcal is not None else "")
-                       + (" sp16.allow_unverified=1" if allow_unverified else ""),
+                       + (f" sp16.padcal={padcal}" if firmware and padcal is not None else ""),
             "-device", "virtio-serial-device",
             "-chardev", f"socket,id=sp16,path={socket},server=on,wait=off",
             "-device", "virtserialport,chardev=sp16,name=sp16.ui", *fw, *persistent, *pcm]
@@ -358,7 +355,7 @@ def resolve_persistence(profile, no_persistence=False):
 
 def bundle(output, qemu, guest, variant="stock", profile=None, research=False, app_arg=None, trace=None,
            bundle_suffix=None, persistent=False, audio=None, audio_device=None, decoupled=False, library=None,
-           allow_unverified=False, padcal=None):
+           padcal=None):
     app = output / (DECOUPLED_APP_NAME if decoupled else APP_NAME)
     if decoupled and (output / APP_NAME).exists():
         shutil.rmtree(output / APP_NAME)  # an earlier, pre-M7 bundle of this same decoupled build
@@ -420,7 +417,7 @@ def bundle(output, qemu, guest, variant="stock", profile=None, research=False, a
     sessions = output / "sessions"
     sessions.mkdir(mode=0o700, exist_ok=True)
     defaults = {"qemu": str(qemu), "arguments": arguments(qemu, guest, "@SOCKET@", app_arg, trace, persistent, audio,
-                                                       decoupled, allow_unverified, padcal if decoupled else None),
+                                                       decoupled, padcal if decoupled else None),
                 "session": str(sessions), "socket": "@SOCKET@", "variant": variant,
                 "profile": profile or "", "research": research}
     if audio:
@@ -429,7 +426,7 @@ def bundle(output, qemu, guest, variant="stock", profile=None, research=False, a
         defaults["data"] = {"dir": str(output / DATA_DIRECTORY), "size": DATA_IMAGE_SIZE}
     if decoupled:
         # Data images are per firmware identity: <library>/<id>/data (the app replaces data.dir at launch).
-        defaults["firmware"] = {"library": str(library), "allow_unverified": allow_unverified}
+        defaults["firmware"] = {"library": str(library)}
     (resources / "default-config.json").write_text(json.dumps(defaults, indent=2) + "\n")
     run(["codesign", "--force", "--sign", "-", str(app)], log=output / "app-sign.log")
     return app
@@ -575,8 +572,8 @@ def build_decoupled(output, *, reuse_qemu_from=None, profile=None, research=Fals
         raise ValueError("decoupled builds keep a per-firmware data image")
     if trace and not research:
         raise ValueError("--trace is research-only; add --research")
-    if allow_unverified and not research:
-        raise ValueError("--allow-unverified is a developer option; add --research")
+    # allow_unverified is accepted and ignored: every correctly keyed firmware boots, marked unverified when no
+    # verified profile matches (owner decision of 2026-10-13).
     if audio_device is not None and audio not in ("coreaudio", "both"):
         raise ValueError("--audio-device needs --audio coreaudio or both")
     if uncalibrated and pad_calibration is not None:
@@ -609,12 +606,11 @@ def build_decoupled(output, *, reuse_qemu_from=None, profile=None, research=Fals
         qemu = build_qemu(output)
     guest = build_guest(None, output, None, None, extra_files, dockerfile="Dockerfile.native-base")
     app = bundle(output, qemu, guest, "stock", profile, research, None, trace, bundle_suffix, True, audio,
-                 audio_device, decoupled=True, library=library, allow_unverified=allow_unverified, padcal=padcal)
+                 audio_device, decoupled=True, library=library, padcal=padcal)
     assets = {"decoupled": True, "firmware": None, "qemu_version": QEMU_VERSION,
               "app_bundle": str(app), "qemu": str(qemu), "guest": str(guest), "library": str(library),
               "profile": profile, "research": research, "trace": trace or "", "audio": audio or "",
               "audio_device": audio_device or "", "pad_calibration": padcal, "persistent_data": True,
-              "allow_unverified": allow_unverified,
               "hashes": {str(p): digest(p) for p in (qemu, guest / "kernel", guest / "guest.cpio.gz")},
               "guest_source_hashes": {name: digest(TOOLS / name) for name in BASE_GUEST_FILES}}
     (output / "assets.json").write_text(json.dumps(assets, indent=2) + "\n")
@@ -674,10 +670,11 @@ def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overla
         library = firmware.Library(assets["library"])
         manifest = firmware.verify_image(library, firmware_id)
         status = firmware.boot_status(manifest, library)
-        if status["status"] != "verified" and not assets.get("allow_unverified"):
+        if status["status"] != "verified":
+            # Not refused (owner decision of 2026-10-13): it boots on the reference measurements, marked unverified.
             report = firmware.check_report(manifest, library)
-            raise ValueError("firmware refused (no verified compatibility profile): " + status["reason"]
-                             + "\n" + json.dumps(report, indent=2))
+            print("firmware is unverified (" + status["reason"] + "); it boots on the product's reference "
+                  "measurements.\n" + json.dumps(report, indent=2), file=sys.stderr)
     # LaunchServices supervises the app. Closing its window stops its own QEMU.
     # --ephemeral: disposable per-session data image and no profile lock (tests); persistent builds default to the profile image.
     app_args = (["--ephemeral"] if ephemeral else []) + (["--usb-image", prepare_usb_image(usb_image)] if usb_image else []) \
@@ -798,8 +795,8 @@ def main():
     builder.add_argument("--library", metavar="DIR",
                          help="with --decoupled: firmware library directory (default <output>/library)")
     builder.add_argument("--allow-unverified", action="store_true",
-                         help="with --decoupled --research: developer opt-in that boots a firmware whose profile is a "
-                              "candidate or missing, to verify it and create its profile (D2); never for distribution")
+                         help="no longer needed and has no effect: any correctly keyed firmware boots, marked unverified when "
+                              "no verified profile matches (accepted so existing commands keep working)")
     builder.add_argument("--bundle-suffix", metavar="TOKEN",
                          help="append .TOKEN to the bundle ID (lowercase letters, digits, hyphens; max 32), for dev builds "
                               "that must be quit separately; default bundle IDs are unchanged")

@@ -108,9 +108,10 @@ python3 emulator/native.py firmware import --output build/sp16-dev --update priv
 
 The repacked update is built from the verified base in your library and the mod's recipes, deterministically. It
 carries an `SP16MODLAB-<base version>` marker and a manifest of its base and recipes. On import the emulator rebuilds
-it from the base and the recipes and accepts it only if the result is identical; it then inherits the base's
-profile. A changed byte anywhere is refused. Repacked updates take recipes only (`files/` and `preload/` stay
-developer overlays).
+it from the base and the recipes. An identical rebuild is verified and inherits the base's profile. A modified update
+made any other way (edited by hand, a changed byte, a different tool) can be imported and run too: it is accepted when
+it is intact and was encrypted with the correct key, and runs as **unverified** with the reason recorded in the
+library. Repacked updates take recipes only (`files/` and `preload/` stay developer overlays).
 
 A repacked update contains the vendor's firmware. Keep it in `private/`, never distribute it and never flash it to a
 device.

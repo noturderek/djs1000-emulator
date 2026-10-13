@@ -8,8 +8,9 @@ Runs only inside the offline VM (our init, never OEM scripts):
           squashfs onto the output disk (serial sp16out). The manifest goes back over the port as JSON. The key only
           ever lives in this process and the kernel's dm table; it is never written to a file or printed.
   attach  At run time: verify the firmware image (serial sp16fw) against the manifest hash from the kernel command
-          line, mount it read-only under a tmpfs overlay at /tmp/sp16-root, verify the application hash and refuse a
-          base application without a verified profile unless the build allows unverified candidates.
+          line, mount it read-only under a tmpfs overlay at /tmp/sp16-root, verify the application hash against the
+          manifest (refused on mismatch), then pick the profile for the base application: a verified one, else a
+          candidate or the product's reference measurements, marked unverified (owner decision of 2026-10-13).
 """
 import glob
 import hashlib
@@ -409,9 +410,7 @@ def attach(params):
     if app_sha != params.get("sp16.fwapp"):
         raise ValueError("application does not match the firmware manifest")
     base = params.get("sp16.fwbase", app_sha)
-    how, profile = profiles.active(base, params.get("sp16.allow_unverified") == "1")
-    if profile is None:
-        raise ValueError("no verified compatibility profile for this firmware")
+    how, profile = profiles.active(base)
     variant = ("stock" if base == app_sha else "mod") + ("" if how == "verified" else "-unverified")
     version = params.get("sp16.fwver", "")
     if not re.fullmatch(r"[0-9]\.[0-9]{2}", version):

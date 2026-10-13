@@ -78,7 +78,8 @@ Read the JSON result: `firmware_imported` with an id and a report, or `firmware_
 | not an update for this sampler (application missing) | a different product's update |
 | already imported | it is in the library; `firmware list` |
 
-A version without a verified profile imports but is refused at boot (see section 7 to verify one).
+Any intact update that decrypts with the correct key imports. A version without a verified profile runs as
+unverified (title "(unverified)", library status, a one-time notice); see section 7 to verify one.
 
 ## 5. Run
 
@@ -103,7 +104,7 @@ python3 emulator/fwdev.py test --output build/sp16-dev --mod private/my-mod
 ```
 
 `utility-label` makes the HOME screen's Utility tile read MOD LAB on 1.60. For a repacked update use
-`fwdev.py package --upd ... --out private/<name>.UPD` and import it; a tampered copy must be refused.
+`fwdev.py package --upd ... --out private/<name>.UPD` and import it; a tampered copy imports as unverified with the reason recorded.
 
 ## 7. Hardware suite
 

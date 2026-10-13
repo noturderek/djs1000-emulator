@@ -75,8 +75,9 @@ python3 emulator/native.py firmware import --output build/sp16 \
 ```
 
 The import takes about 10 seconds. It checks the update, unpacks it inside the emulator's own Linux guest, and
-stores a read-only firmware image and a manifest in the library. It prints a compatibility report. Refused imports
-(damaged file, wrong key, not an update for this sampler) leave nothing behind.
+stores a read-only firmware image and a manifest in the library. It prints a compatibility report. Any update that
+is intact and was encrypted with the correct key is accepted, whoever made it. Refused imports (damaged or truncated
+file, wrong key, not an update for this sampler, already imported) leave nothing behind.
 
 ### 4. Run
 
@@ -92,16 +93,18 @@ and `check --id <id>` manage them. In the app, Firmware > Library does the same.
 
 ## Supported firmware versions
 
-A version boots only when it has a **verified** compatibility profile in `emulator/profiles/` (one that passed the
-full hardware conformance suite). Any other version is refused with a compatibility report. Verified today: **1.50
-and 1.60**.
+A version is **verified** when it has a verified compatibility profile in `emulator/profiles/` (one that passed the
+full hardware conformance suite). Verified today: **1.50 and 1.60**. Any other update that was encrypted with the
+correct key also runs, as **unverified**: it uses the reference measurements of the verified versions, the window title
+says "(unverified)", the library lists it as unverified, and the app shows its compatibility report once. The
+integrity checks are the same for every version (a changed library image is refused at boot).
 
 | Version | Profile | Status |
 |---|---|---|
 | 1.60 | `sp16-1.60.json` | verified |
 | 1.50 | `sp16-1.50.json` | verified |
 
-To verify a new version, see [docs/architecture.md](docs/architecture.md#adding-a-firmware-version).
+To turn an unverified version into a verified one, see [docs/architecture.md](docs/architecture.md#adding-a-firmware-version).
 
 ## Load a modified firmware
 
@@ -141,7 +144,7 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | QEMU build fails | Read `build/sp16/qemu-configure.log` or `qemu-build.log`; usually a missing `ninja`, `pkgconf`, `glib` or `pixman`. |
 | QEMU link fails with `64-bit mach-o not 8-byte aligned` | A QEMU build folder configured with GNU `ar` (Homebrew `binutils` on `PATH`) from an older checkout; the build now uses Apple's `/usr/bin/ar`. Delete `build/sp16/qemu-build` and build again. |
 | Guest image build fails | Start Docker Desktop and retry; read `build/sp16/guest-build.log`. |
-| `firmware refused (no verified compatibility profile)` | The version has no verified profile (see the table above). |
+| Window title says `(unverified)` | The version has no verified profile (see the table above); it runs on the reference measurements. `native.py firmware check --id <id>` prints the report. |
 | Import: `update CRC does not match` or `not sector-aligned` | The update file is damaged or incomplete; download it again. |
 | Import: `GPL archive is damaged or incomplete` | Give both zip parts, in order (part 1, then part 2). |
 | Import: `the key does not decrypt this update` | The key does not belong to this update. |

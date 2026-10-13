@@ -11,8 +11,8 @@ Start from the evidence: the session folder (`build/<build>/sessions/native-*/`,
 | `docker build` fails | `guest-build.log` | start Docker Desktop; retry (needs network for Debian packages) |
 | `swiftc` fails | `swift-build.log` | install or update the Xcode Command Line Tools |
 | Import screen: Python is required | `/usr/bin/python3 --version` | `xcode-select --install` |
-| `firmware refused (no verified compatibility profile)` | `native.py firmware check --output <build> --id <id>` | the version is a candidate or unknown; verify it with the hardware suite in a developer build |
-| `SP16_FIRMWARE_ERROR` then the VM stops | `console.txt` | the image changed since import (re-import), no verified profile, or a pad calibration value outside the profile's range |
+| Title says `(unverified)` | `native.py firmware check --output <build> --id <id>` | the version is a candidate or unknown and runs on the reference measurements; verify it with the hardware suite in a research build |
+| `SP16_FIRMWARE_ERROR` then the VM stops | `console.txt` | the image changed since import (re-import), an invalid manifest, or a pad calibration value outside the profile's range |
 | Window black or empty | `console.txt` for `SP16_NATIVE_READY`; `metrics.json` frame counts | if QEMU exited, read the end of `console.txt`; if ready but no frames, the firmware's app has not drawn yet (wait 10 s) |
 | Pads blink red and ignore hits | build flags | the firmware reports missing pad calibration; do not build with `--uncalibrated` |
 | Input does nothing | `metrics.json` `input_results` and guest `events`, `unsupported`, `failed` | `unsupported` means that control has no mapping in this version's profile |
@@ -21,4 +21,4 @@ Start from the evidence: the session folder (`build/<build>/sessions/native-*/`,
 | App vanishes without a crash report | `log show --last 10m --predicate 'eventMessage CONTAINS "SIGPIPE"'` | report it with the console |
 | Unknown hardware use | `metrics.json` `guest.unknown_devices`, `guest.unknown_ioctls` | the firmware uses an interface the shim does not serve; report it |
 | A mod has no effect | `console.txt` `SP16_DEV` and `SP16_DEV_ERROR` lines | wrong base hash or original bytes: the recipe is refused and the firmware starts unchanged |
-| Repacked update refused at import | the refusal reason | it was not rebuilt from a verified base with the declared recipes, or it was modified |
+| Repacked update shows as unverified | the library Status reason | it was not rebuilt from a verified base with the declared recipes, or it was modified; it still runs |

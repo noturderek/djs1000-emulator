@@ -10,7 +10,8 @@ squashfs-tools and no crypto library on the host.
   squashfs; the host verifies the image hash and stores it in the firmware library with its manifest.
 - Library: <library>/<id>/{manifest.json, entry.json, firmware.sqfs, update.upd, data/}. Owner-only, no symlinks, and
   git-ignored when inside the repository.
-- check_report: the compatibility report shown whenever a version is refused (D2).
+- check_report: the compatibility report of an import; an unverified one is shown as a notice (owner decision of
+  2026-10-13: any correctly keyed update runs, marked unverified when no verified profile matches).
 """
 import datetime
 import hashlib
@@ -349,18 +350,32 @@ def validate_manifest(manifest, entry_id=None):
     need(isinstance(manifest.get("files"), dict), "files")
     if manifest["kind"] == "mod":
         mod = manifest.get("mod")
-        need(isinstance(mod, dict) and SHA256.fullmatch(str(mod.get("base_app_sha256")))
-             and ENTRY_ID.fullmatch(str(mod.get("base_id"))) and mod.get("verified") is True, "mod")
+        need(isinstance(mod, dict) and isinstance(mod.get("verified"), bool), "mod")
+        if mod["verified"]:
+            need(SHA256.fullmatch(str(mod.get("base_app_sha256"))) and ENTRY_ID.fullmatch(str(mod.get("base_id"))),
+                 "mod")
+        else:
+            need(isinstance(mod.get("reason"), str) and 0 < len(mod["reason"]) <= 300, "mod")
     return manifest
 
 
+def mod_verified(manifest):
+    return manifest["kind"] == "mod" and manifest["mod"].get("verified") is True
+
+
 def base_app_sha256(manifest):
-    return manifest["mod"]["base_app_sha256"] if manifest["kind"] == "mod" else manifest["app_sha256"]
+    """The application whose profile applies: a verified mod inherits its base's, anything else (stock update, mod
+    that did not verify) is matched by its own application hash."""
+    return manifest["mod"]["base_app_sha256"] if mod_verified(manifest) else manifest["app_sha256"]
 
 
 def boot_status(manifest, library=None):
-    """D2 policy: a stock import boots only with a verified profile for its exact application; a mod import boots only
-    when it was verified by rebuild against a base that itself has a verified profile."""
+    """D2 policy (revised 2026-10-13): every correctly keyed import boots. It is "verified" when a verified profile
+    matches its exact application (a mod that was rebuilt from a verified base inherits the base's profile), and
+    "unverified" otherwise; an unverified boot uses the product's reference measurements and is marked as such."""
+    if manifest["kind"] == "mod" and not mod_verified(manifest):
+        return {"status": "unverified", "profile": None,
+                "reason": "modified update that does not verify against its manifest: " + manifest["mod"]["reason"]}
     base = base_app_sha256(manifest)
     profile = profiles.for_app(base)
     if profile is None:
@@ -410,7 +425,8 @@ def check_report(manifest, library=None):
         {"check": "key decrypts the update", "result": "pass"},
         {"check": "update layout (the product's layers)", "result": "pass"},
         {"check": "SP-16 application present", "result": "pass", "detail": manifest["app_path"]},
-        {"check": "compatibility profile", "result": "pass" if status["status"] == "verified" else "fail",
+        {"check": "compatibility profile (unverified firmware still boots on the reference measurements)",
+         "result": "pass" if status["status"] == "verified" else "warn",
          "detail": status["reason"] or status["profile"]},
         {"check": "device nodes known to the shim",
          "result": "pass" if not compat.get("devices_unknown") else "warn",
@@ -428,10 +444,11 @@ def check_report(manifest, library=None):
     ]
     if manifest["kind"] == "mod":
         items.append({"check": "mod rebuilt from its verified base and recipes",
-                      "result": "pass" if manifest["mod"].get("verified") else "fail",
-                      "detail": {"base": manifest["mod"].get("base_id"), "recipes": manifest["mod"].get("recipes")}})
+                      "result": "pass" if manifest["mod"].get("verified") else "warn",
+                      "detail": {"base": manifest["mod"].get("base_id"), "recipes": manifest["mod"].get("recipes"),
+                                 "reason": manifest["mod"].get("reason")}})
     return {"firmware": manifest["id"], "version": manifest["update"]["trailer_version"], "kind": manifest["kind"],
-            "boots": status["status"] == "verified", "status": status["status"], "profile": status["profile"],
+            "boots": True, "verified": status["status"] == "verified", "status": status["status"], "profile": status["profile"],
             "reason": status["reason"], "checks": items}
 
 
@@ -464,6 +481,13 @@ def candidate_profile(manifest, from_profile=None):
     if "hardware" in reference:
         profile["hardware"] = {"absent": []}  # to be filled for this version
     return profiles.validate(profile)
+
+
+def unverified_mod(mod_id, reason):
+    """The manifest `mod` section of a modified update that could not be verified against its own manifest. It is
+    still imported and boots as unverified (owner decision of 2026-10-13); the reason is recorded."""
+    token = mod_id if isinstance(mod_id, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", mod_id) else "unverified"
+    return {"id": token, "verified": False, "reason": str(reason)[:300]}
 
 
 def refusal_report(update_meta, reason):
@@ -706,9 +730,8 @@ def import_update(library, boot, update_path, key, *, name=None, verify_mod=None
             "mod": None,
         }
         if kind == "mod":
-            if verify_mod is None:
-                raise FirmwareError("a modified update can only be imported through mod verification")
-            manifest["mod"] = verify_mod(guest, meta, work)
+            manifest["mod"] = (verify_mod(guest, meta, work) if verify_mod is not None else
+                               unverified_mod(None, "no mod verification was available"))
             entry_id = f"sp16-{version}-mod-{manifest['mod']['id']}-{meta['sha256'][:12]}"
         manifest["id"] = entry_id
         validate_manifest(manifest, entry_id)
