@@ -163,7 +163,8 @@ def build_qemu(output):
         with tarfile.open(archive) as package:
             package.extractall(partial, filter=qemu_source_filter)
         (partial / source.name).rename(source)
-        partial.rmdir()
+        # Not rmdir: Finder can drop a .DS_Store into the folder meanwhile, and the source tree is already in place.
+        shutil.rmtree(partial, ignore_errors=True)
     build = output / "qemu-build"
     build.mkdir(mode=0o700, exist_ok=True)
     if not (build / "build.ninja").exists():
