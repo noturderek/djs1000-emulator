@@ -1,4 +1,4 @@
-"""The sp16emu usb command group and the automatic stick attach in `sp16emu run`, with hdiutil and ps mocked."""
+"""The ./sp16 usb command group and the automatic stick attach in `./sp16 run`, with hdiutil and ps mocked."""
 import collections
 import os
 from pathlib import Path
@@ -139,7 +139,7 @@ class ParsingTests(UsbCase):
         code, _, err = self.usb("format")
         self.assertEqual(code, 2)
         self.assertIn("usb:", err)
-        self.assertIn("sp16emu help usb", err)
+        self.assertIn("./sp16 help usb", err)
 
     def test_options_for_other_actions_and_stray_files_are_refused(self):
         for argv in (["ls", "--force"], ["add", "a.wav", "--size", "2G"], ["create", "--to", "x"], ["mount", "--any"]):
@@ -172,7 +172,7 @@ class ParsingTests(UsbCase):
             self.ctx.dry_run = True
             code, out, _ = self.usb(*argv)
             self.assertEqual(code, 0)
-            self.assertIn(f"sp16emu usb {argv[0]}", out)
+            self.assertIn(f"./sp16 usb {argv[0]}", out)
         self.assertEqual(self.tool_calls, [])
         self.assertFalse(self.stick().exists())
 
@@ -205,7 +205,7 @@ class ImageResolutionTests(UsbCase):
     def test_a_missing_default_stick_names_the_fix(self):
         code, _, err = self.usb("ls")
         self.assertEqual(code, 1)
-        self.assertIn("sp16emu usb create", err)
+        self.assertIn("./sp16 usb create", err)
         self.assertEqual(self.tool_calls, [])
 
 
@@ -293,7 +293,7 @@ class HolderTests(UsbCase):
 
     def test_this_process_and_its_parents_are_not_holders(self):
         stick = self.make_stick()
-        self.ps_row(os.getpid(), f"python3 sp16emu usb add --image {stick}", ppid=7001)
+        self.ps_row(os.getpid(), f"python3 ./sp16 usb add --image {stick}", ppid=7001)
         self.ps_row(7001, f"make usb-add USB_IMAGE={stick}", ppid=7002)
         self.ps_row(7002, f"-zsh {stick}")
         self.ps_row(7003, f"make usb-add USB_IMAGE={stick}")   # an unrelated second command: a holder
@@ -341,7 +341,7 @@ class HolderTests(UsbCase):
             code, _, err = self.usb(*argv)
             self.assertEqual(code, 1, argv)
             self.assertIn("already attached to this Mac as /dev/disk9 at /Volumes/SP16USB", err)
-            self.assertIn("sp16emu usb unmount", err)
+            self.assertIn("./sp16 usb unmount", err)
         self.assertEqual(self.tool_calls, [])
 
 

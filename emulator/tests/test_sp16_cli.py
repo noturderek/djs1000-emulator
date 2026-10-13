@@ -1,4 +1,4 @@
-"""The sp16emu command line and the Makefile: argument mapping, defaults, help coverage and drift against the tools."""
+"""The ./sp16 command line and the Makefile: argument mapping, defaults, help coverage and drift against the tools."""
 import ast
 import hashlib
 import importlib.util
@@ -93,7 +93,7 @@ class CliCase(unittest.TestCase):
         return path
 
     def argv(self, command, *args):
-        """The tool command line sp16emu would run (after the interpreter) and the notes it prints."""
+        """The tool command line ./sp16 would run (after the interpreter) and the notes it prints."""
         run = cli.BY_NAME[command]
         head, tail = cli.split_tail(list(args))
         plan = run.handler(self.ctx, run.parser().parse_args(head), tail)
@@ -239,7 +239,7 @@ class BuildTests(CliCase):
         self.assertIn("firmware import", plan.after[0])
         self.make_library(self.build / "library")
         plan = cli.BY_NAME["build"].handler(self.ctx, cli.BY_NAME["build"].parser().parse_args(["--name", "x"]), [])
-        self.assertIn("Next: sp16emu run --name x", plan.after[0])
+        self.assertIn("Next: ./sp16 run --name x", plan.after[0])
         cli.execute(self.ctx, plan)
         self.assertIn("Next:", self.ctx.err.getvalue())
 
@@ -289,9 +289,9 @@ class RunTests(CliCase):
 
     def test_a_missing_build_names_the_command_that_creates_it(self):
         self.make_build("other")
-        with self.assertRaisesRegex(cli.CliError, r"sp16emu build --name nope.*existing builds: other"):
+        with self.assertRaisesRegex(cli.CliError, r"./sp16 build --name nope.*existing builds: other"):
             self.argv("run", "--name", "nope")
-        with self.assertRaisesRegex(cli.CliError, r"there is no build.*sp16emu build --name sp16"):
+        with self.assertRaisesRegex(cli.CliError, r"there is no build.*./sp16 build --name sp16"):
             shutil.rmtree(self.build / "other")
             self.argv("run")
 
@@ -363,7 +363,7 @@ class FirmwareTests(CliCase):
     def test_unknown_action_and_missing_build(self):
         with self.assertRaises(cli.UsageError):
             cli.BY_NAME["firmware"].parser().parse_args(["frobnicate"])
-        with self.assertRaisesRegex(cli.CliError, "sp16emu build --name sp16"):
+        with self.assertRaisesRegex(cli.CliError, "./sp16 build --name sp16"):
             self.argv("firmware", "list")
 
 
@@ -420,7 +420,7 @@ class OtherCommandTests(CliCase):
 
     def test_ctl_without_a_session(self):
         self.make_build("sp16-dev", research=True)
-        with self.assertRaisesRegex(cli.CliError, "no running research session.*sp16emu run --name sp16-dev"):
+        with self.assertRaisesRegex(cli.CliError, "no running research session.*./sp16 run --name sp16-dev"):
             self.argv("ctl", "metrics")
         argv, _ = self.argv("ctl", "--runtime", "r.json", "press", "play", "0.2")
         self.assertEqual(argv[2:], ["--runtime", "r.json", "press", "play", "0.2"])
@@ -654,7 +654,7 @@ class HelpTests(CliCase):
             for form in (["help", command.name], [command.name, "--help"]):
                 code, out, _ = self.main(*form)
                 self.assertEqual(code, 0)
-                self.assertIn(f"sp16emu {command.name}:", out)
+                self.assertIn(f"./sp16 {command.name}:", out)
                 self.assertIn("Examples:", out)
                 for opt in command.opts:
                     for flag in opt.flags:
@@ -673,7 +673,7 @@ class HelpTests(CliCase):
         code, _, err = self.main("run", "--name", "nope")
         self.assertEqual(code, 1)
         self.assertEqual(len(err.strip().splitlines()), 1)
-        self.assertTrue(err.startswith("sp16emu: "))
+        self.assertTrue(err.startswith("sp16: "))
 
     def test_source_is_python_39_syntax(self):
         ast.parse((TOOLS / "sp16emu.py").read_text(), feature_version=(3, 9))
@@ -717,7 +717,7 @@ class DriftTests(unittest.TestCase):
         tool = self.flags_of(str(TOOLS / "native.py"), "build")
         handled = self.reachable("build") | {"--output", "--decoupled", "--profile"}
         legacy = {"--rootfs", "--mod", "--app-arg", "--no-persistence"}  # private builds only; reachable after `--`
-        self.assertEqual(tool - handled - legacy, set(), "native.py build has options sp16emu does not know")
+        self.assertEqual(tool - handled - legacy, set(), "native.py build has options ./sp16 does not know")
 
     def test_native_build_choices(self):
         text = subprocess.run([sys.executable, str(TOOLS / "native.py"), "build", "--help"], capture_output=True,

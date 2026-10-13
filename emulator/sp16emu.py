@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""sp16emu: one command to build, run and manage the SP-16 compatible emulator.
+"""sp16: one command to build, run and manage the SP-16 compatible emulator.
 
 A thin wrapper over the tools in this folder (native.py build|launch|firmware|diagnostics, fwdev.py, hwsuite.py,
 sessionctl.py). It adds defaults that remove friction (one shared firmware library, automatic QEMU reuse, one folder per
 build under build/) and passes every option of those tools through. It runs on the Python 3.9 that ships with the Xcode
 Command Line Tools; the build tools themselves run on the first Python 3.12 or later it finds.
 
-    ./sp16emu help                  every command
-    ./sp16emu help build            options and examples of one command
-    ./sp16emu --dry-run build       print the exact tool commands instead of running them
+    ./sp16 help                  every command
+    ./sp16 help build            options and examples of one command
+    ./sp16 --dry-run build       print the exact tool commands instead of running them
 """
 from __future__ import annotations
 
@@ -111,10 +111,10 @@ class Parser(argparse.ArgumentParser):
 
     def error(self, message):
         command = self.prog.split()[-1]
-        raise UsageError(f"{command}: {message}; see: sp16emu help {command}")
+        raise UsageError(f"{command}: {message}; see: ./sp16 help {command}")
 
     def parse_args(self, args=None, namespace=None):
-        if self.intermixed:  # options and positionals in any order (sp16emu usb add a.wav --to kicks b.wav)
+        if self.intermixed:  # options and positionals in any order (./sp16 usb add a.wav --to kicks b.wav)
             return self.parse_intermixed_args(args, namespace)
         return super().parse_args(args, namespace)
 
@@ -131,7 +131,7 @@ class Command:
         self.intermixed = intermixed
 
     def parser(self):
-        parser = Parser(prog=f"sp16emu {self.name}", add_help=False, allow_abbrev=False)
+        parser = Parser(prog=f"./sp16 {self.name}", add_help=False, allow_abbrev=False)
         parser.intermixed = self.intermixed
         for pos in self.positionals:
             kwargs = {"choices": pos.choices, "metavar": pos.metavar}
@@ -206,7 +206,7 @@ class Context:
     # output
     def say(self, text):
         for line in str(text).splitlines() or [""]:
-            print(f"sp16emu: {line}", file=self.err)
+            print(f"sp16: {line}", file=self.err)
 
     def tool(self, name):
         return str(self.tools / name)
@@ -387,7 +387,7 @@ def running_pids(ctx, path):
 
 
 def build_hint(name, extra=""):
-    return f"sp16emu build --name {name}{(' ' + extra) if extra else ''}"
+    return f"./sp16 build --name {name}{(' ' + extra) if extra else ''}"
 
 
 def pick_build(ctx, name=None, need_research=False, prefer=(DEFAULT_NAME,), allow_incomplete=False):
@@ -403,7 +403,7 @@ def pick_build(ctx, name=None, need_research=False, prefer=(DEFAULT_NAME,), allo
             tail = f" (existing builds: {', '.join(others)})" if others else ""
             raise CliError(f"{ctx.display(ctx.build / name)} does not exist; create it with: {build_hint(name, extra)}{tail}")
         if found.complete and not found.decoupled:
-            raise CliError(f"{ctx.display(found.path)} is not a firmware-free build, which sp16emu does not manage")
+            raise CliError(f"{ctx.display(found.path)} is not a firmware-free build, which ./sp16 does not manage")
         chosen = found
     else:
         pool = [b for b in usable if b.research] if need_research else usable
@@ -542,7 +542,7 @@ def preflight_build(ctx, name, need_qemu_toolchain):
                             "brew install ninja pkgconf glib pixman")
     problems += git_problems(ctx, name)
     if problems:
-        raise CliError("cannot build yet:\n  - " + "\n  - ".join(problems) + "\nRun `sp16emu doctor` for the full check.")
+        raise CliError("cannot build yet:\n  - " + "\n  - ".join(problems) + "\nRun `./sp16 doctor` for the full check.")
 
 
 def is_apple_silicon(ctx):
@@ -571,10 +571,10 @@ BUILD_OPTS = [
     Opt("--audio", "Audio: file records each stream to a WAV in the session folder (silent); coreaudio plays "
         "through the Mac's output (AUDIBLE); both. Default: silent, nothing recorded.", "MODE", choices=("file", "coreaudio", "both")),
     Opt("--audio-device", "With coreaudio or both: the output device by CoreAudio UID (list them with "
-        "`sp16emu audio devices`; default: the system output). offline:<wav>[:rate[:ppm[:block]]] renders the "
+        "`./sp16 audio devices`; default: the system output). offline:<wav>[:rate[:ppm[:block]]] renders the "
         "output to a file on a software clock instead (verification; opens no device).", "UID"),
-    Opt("--research", "Add the owner-only research socket (events, raw frames, snapshots), used by `sp16emu ctl`, "
-        "`sp16emu mod` and `sp16emu hwsuite`.", flag=True),
+    Opt("--research", "Add the owner-only research socket (events, raw frames, snapshots), used by `./sp16 ctl`, "
+        "`./sp16 mod` and `./sp16 hwsuite`.", flag=True),
     Opt("--trace", "Research only: strace (syscall trace in console.txt), gdb (stub on port 1234, blocks the app "
         "until attached) or pcmtap (records 4 s of each playback stream into console.txt; no host audio).", "MODE",
         choices=("strace", "gdb", "pcmtap")),
@@ -604,8 +604,8 @@ def plan_build(ctx, args, tail):
     previous = BuildInfo(name, out, read_assets(out))
     notes = []
     if previous.complete and not args.rebuild:
-        raise CliError(f"{ctx.display(out)} already exists; run it with `sp16emu run --name {name}`, rebuild it in "
-                       f"place (keeps firmware and data) with `sp16emu build --name {name} --rebuild`, or pick "
+        raise CliError(f"{ctx.display(out)} already exists; run it with `./sp16 run --name {name}`, rebuild it in "
+                       f"place (keeps firmware and data) with `./sp16 build --name {name} --rebuild`, or pick "
                        "another --name")
     if previous.complete and running_pids(ctx, out):
         raise CliError(f"{ctx.display(out)} is running; quit it first (stop only its own process ids: "
@@ -640,11 +640,11 @@ def plan_build(ctx, args, tail):
         setup.append(lambda: ensure_build_root(ctx))
         if ctx.preflight and not args.no_preflight:
             setup.append(lambda: preflight_build(ctx, name, donor_path is None))
-    run_hint = "sp16emu run" + ("" if name == DEFAULT_NAME else f" --name {name}")
+    run_hint = "./sp16 run" + ("" if name == DEFAULT_NAME else f" --name {name}")
     if library_imports(library):
         after = [f"built {ctx.display(out)}. Next: {run_hint}"]
     else:
-        after = [f"built {ctx.display(out)}. Next: import your firmware with `sp16emu firmware import --build {name} "
+        after = [f"built {ctx.display(out)}. Next: import your firmware with `./sp16 firmware import --build {name} "
                  f"--update FILE.UPD --gpl-archive PART1 PART2` (or --key-file KEY), then `{run_hint}`"]
     return Plan([Step(argv)], notes, setup, after)
 
@@ -652,15 +652,15 @@ def plan_build(ctx, args, tail):
 # -------------------------------------------------------------------------------------------------------- run
 RUN_OPTS = [
     Opt(("--name", "--build"), "The build to launch (default: build/sp16, else the only build).", "NAME", emit=False),
-    Opt("--firmware", "Firmware id from the library (see `sp16emu firmware list`); default: the selected one.", "ID"),
+    Opt("--firmware", "Firmware id from the library (see `./sp16 firmware list`); default: the selected one.", "ID"),
     Opt("--usb-image", "Attach this raw image as a virtual USB stick (created sparse if missing and formatted FAT32 "
-        "on first attach). Cold attach: chosen at launch. Default: build/stick.img when it exists (see `sp16emu usb`).",
+        "on first attach). Cold attach: chosen at launch. Default: build/stick.img when it exists (see `./sp16 usb`).",
         "PATH", path=True),
     Opt("--no-usb", "Do not attach build/stick.img (it is attached automatically when it exists and no --usb-image "
         "is given).", flag=True, emit=False),
     Opt("--ephemeral", "Use a disposable data image for this session (nothing persists; no lock on the firmware's "
         "data, so a second app can run the same firmware).", flag=True),
-    Opt("--dev-overlay", "Research builds: share this mod folder into the guest (see `sp16emu mod`).", "DIR", path=True),
+    Opt("--dev-overlay", "Research builds: share this mod folder into the guest (see `./sp16 mod`).", "DIR", path=True),
 ]
 
 
@@ -670,7 +670,7 @@ def plan_run(ctx, args, tail):
     library = info.library
     if library is not None and not library_imports(library):
         notes.append("the firmware library is empty: the app opens its import screen, or import first with "
-                     "`sp16emu firmware import --update FILE.UPD --key-file KEY`")
+                     "`./sp16 firmware import --update FILE.UPD --key-file KEY`")
     if args.usb_image and args.no_usb:
         raise UsageError("run: --usb-image and --no-usb contradict each other; give one")
     stick, stick_notes = stick_for_run(ctx, args)
@@ -726,7 +726,7 @@ def plan_firmware(ctx, args, tail):
             if path and not Path(path).expanduser().exists():
                 raise CliError(f"{label}: {path} does not exist")
     elif action in ("show", "check", "select", "rename", "remove", "profile") and not args.id:
-        raise UsageError(f"firmware {action}: --id ID is required (list ids with: sp16emu firmware list)")
+        raise UsageError(f"firmware {action}: --id ID is required (list ids with: ./sp16 firmware list)")
     if action == "rename" and not args.name:
         raise UsageError("firmware rename: --name TEXT is required")
     argv = [ctx.python(), ctx.tool("native.py"), "firmware", action, "--output", str(info.path)]
@@ -1096,7 +1096,7 @@ def find_runtime(ctx, build_name):
         if socket_path and os.path.exists(socket_path):
             return folder / "runtime.json"
     raise CliError(f"no running research session in {ctx.display(info.path)}; start one with: "
-                   f"sp16emu run --name {info.name}")
+                   f"./sp16 run --name {info.name}")
 
 
 def plan_ctl(ctx, args, tail):
@@ -1259,7 +1259,7 @@ def run_audio(ctx, args, tail):
         ctx.out.write(f"{'UID'.ljust(width)}  NAME\n")
         for uid, name in devices:
             ctx.out.write(f"{uid.ljust(width)}  {name}\n")
-        ctx.out.write("\nPlay a build through one: sp16emu build --audio coreaudio --audio-device UID "
+        ctx.out.write("\nPlay a build through one: ./sp16 build --audio coreaudio --audio-device UID "
                       "(without --audio-device it uses the system output)\n")
         return 0
     if ctx.dry_run:
@@ -1304,7 +1304,7 @@ def run_builds(ctx, args, tail):
         ctx.out.write(json.dumps(rows, indent=2) + "\n")
         return 0
     if not rows:
-        ctx.out.write(f"No builds in {ctx.display(ctx.build)}. Create one with: sp16emu build\n")
+        ctx.out.write(f"No builds in {ctx.display(ctx.build)}. Create one with: ./sp16 build\n")
         return 0
     header = ("NAME", "STATE", "AUDIO", "RESEARCH", "PADS", "ID SUFFIX", "FIRMWARE", "LIBRARY", "BUILT")
     table = [header]
@@ -1447,7 +1447,7 @@ def doctor_checks(ctx):
     if not ctx.which("tesseract"):
         optional.append("tesseract (brew install tesseract)")
     if optional:
-        add("warn", "hardware suite extras (only for `sp16emu hwsuite`)", "missing: " + ", ".join(optional))
+        add("warn", "hardware suite extras (only for `./sp16 hwsuite`)", "missing: " + ", ".join(optional))
     else:
         add("ok", "hardware suite extras", "pillow, numpy, tesseract")
     return checks
@@ -1466,7 +1466,7 @@ def run_doctor(ctx, args, tail):
     if failed:
         ctx.out.write(f"\n{failed} problem(s) to fix before building (see the fix lines above).\n")
         return 1
-    ctx.out.write("\nReady." + (f" ({warned} optional item(s) missing.)" if warned else "") + " Next: sp16emu build\n")
+    ctx.out.write("\nReady." + (f" ({warned} optional item(s) missing.)" if warned else "") + " Next: ./sp16 build\n")
     return 0
 
 
@@ -1512,7 +1512,7 @@ def run_clean(ctx, args, tail):
     if args.everything:
         held = [m for root in usb_mount_roots(ctx) if root.is_dir() for m in sorted(root.iterdir()) if os.path.ismount(str(m))]
         if held:
-            raise CliError(f"the USB stick is mounted on this Mac at {held[0]}; release it first with: sp16emu usb unmount")
+            raise CliError(f"the USB stick is mounted on this Mac at {held[0]}; release it first with: ./sp16 usb unmount")
     for pid_owner in ([ctx.build] if args.everything else [b.path for b in list_builds(ctx) if args.all or b.name == args.name]):
         pids = running_pids(ctx, pid_owner)
         if pids:
@@ -1533,7 +1533,7 @@ def run_clean(ctx, args, tail):
     else:
         names = [b for b in list_builds(ctx) if args.all or b.name == args.name]
         if args.name and not names:
-            raise CliError(f"{ctx.display(ctx.build / args.name)} does not exist; see: sp16emu builds")
+            raise CliError(f"{ctx.display(ctx.build / args.name)} does not exist; see: ./sp16 builds")
         targets = []
         for info in names:
             targets += [p for p in sorted(info.path.iterdir()) if p.name not in CLEAN_KEEP]
@@ -1696,7 +1696,7 @@ def check_idle(ctx, image, action):
     for device, mounts in attachments(ctx, image):
         where = f" at {mounts[0]}" if mounts else ""
         raise CliError(f"usb {action}: {ctx.display(image)} is already attached to this Mac as {device}{where}; "
-                       "release it with: sp16emu usb unmount")
+                       "release it with: ./sp16 usb unmount")
 
 
 def require_macos():
@@ -1722,7 +1722,7 @@ def hdiutil_attach(ctx, image, options):
                            f"that folder ({reason}); move the repository out of it (for example ~/src/sp16-emulator) or "
                            "give your terminal app Full Disk Access, then repeat")
         raise CliError(f"cannot attach {ctx.display(image)}: {reason}. If it holds no FAT32 file system, recreate "
-                       "it with: sp16emu usb create --force")
+                       "it with: ./sp16 usb create --force")
     for line in out.splitlines():
         token = line.split()[:1]
         if token and re.fullmatch(r"/dev/disk\d+", token[0]):
@@ -1740,8 +1740,8 @@ def hdiutil_detach(ctx, device):
         time.sleep(1)
     code, _, err = ctx.run_tool(["hdiutil", "detach", "-force", device])
     if code:
-        raise CliError(f"cannot detach {device} ({reason or 'busy'}); close anything using it, then run: sp16emu usb unmount")
-    ctx.say(f"{device} was busy and had to be detached with force; check the stick with: sp16emu usb ls")
+        raise CliError(f"cannot detach {device} ({reason or 'busy'}); close anything using it, then run: ./sp16 usb unmount")
+    ctx.say(f"{device} was busy and had to be detached with force; check the stick with: ./sp16 usb ls")
 
 
 def protected_folder(path, home):
@@ -1911,7 +1911,7 @@ def usb_dry_run(ctx, args, image, files):
         "mount": ["hdiutil attach ... -mountpoint MOUNTPOINT IMAGE (stays mounted)"],
         "unmount": ["delete the ._* and .DS_Store files macOS added", "hdiutil detach /dev/diskN"],
     }[args.action]
-    ctx.out.write(f"sp16emu usb {args.action} on {ctx.display(image)} would:\n" + "".join(f"  {l}\n" for l in lines))
+    ctx.out.write(f"./sp16 usb {args.action} on {ctx.display(image)} would:\n" + "".join(f"  {l}\n" for l in lines))
     return 0
 
 
@@ -2140,7 +2140,7 @@ def usb_create(ctx, image, args):
         image.unlink()
     create_image(ctx, image, size)
     ctx.out.write(f"Created {ctx.display(image)}: {human(size)} FAT32 (volume {STICK_LABEL}) with {STICK_FOLDER}/"
-                  f"{STICK_SAMPLES}. Add samples with: sp16emu usb add FILES...; sp16emu run then attaches it.\n")
+                  f"{STICK_SAMPLES}. Add samples with: ./sp16 usb add FILES...; ./sp16 run then attaches it.\n")
     return 0
 
 
@@ -2152,7 +2152,7 @@ def usb_copy(ctx, image, groups, total):
         free = usage.free
         if total > free:
             raise CliError(f"the files need {human(total)} but the stick has {human(free)} free; nothing was copied. "
-                           f"Make a larger stick with: sp16emu usb create --size {suggest_size(usage.used + total)} --force (this "
+                           f"Make a larger stick with: ./sp16 usb create --size {suggest_size(usage.used + total)} --force (this "
                            "replaces the stick), or add --image PATH to use a new one")
         count = sum(len(items) for items, _ in groups)
         number = 0
@@ -2175,7 +2175,7 @@ def usb_copy(ctx, image, groups, total):
 
 def usb_add(ctx, image, args, files):
     if not files and not args.tree:
-        raise UsageError("usb add: give the sample files to copy, for example: sp16emu usb add ~/samples/*.wav "
+        raise UsageError("usb add: give the sample files to copy, for example: ./sp16 usb add ~/samples/*.wav "
                          "(or a whole folder with --tree DIR)")
     if args.dest and args.to:
         raise UsageError("usb add: --dest and --to exclude each other; --dest PATH is relative to PIONEER DJ SAMPLER, "
@@ -2193,13 +2193,13 @@ def usb_add(ctx, image, args, files):
     usb_copy(ctx, image, [(items, folder)], total)
     where = f"{STICK_FOLDER}/{folder}"
     ctx.out.write(f"Added {len(items)} file(s) ({human(total)}) to {where} on {ctx.display(image)}"
-                  + (f"; skipped {skipped}" if skipped else "") + ". Next: sp16emu run\n")
+                  + (f"; skipped {skipped}" if skipped else "") + ". Next: ./sp16 run\n")
     return 0
 
 
 def usb_ls(ctx, image):
     if stick_state(ctx, image) == "missing":
-        raise CliError(f"{ctx.display(image)} does not exist; create it with: sp16emu usb create")
+        raise CliError(f"{ctx.display(image)} does not exist; create it with: ./sp16 usb create")
     check_idle(ctx, image, "ls")
     lines, count, used = [], 0, 0
     with mounted_stick(ctx, image, writable=False) as point:
@@ -2222,19 +2222,19 @@ def usb_ls(ctx, image):
 
 def usb_mount(ctx, image):
     if stick_state(ctx, image) == "missing":
-        raise CliError(f"{ctx.display(image)} does not exist; create it with: sp16emu usb create")
+        raise CliError(f"{ctx.display(image)} does not exist; create it with: ./sp16 usb create")
     here = stable_mountpoint(ctx, image)
     attached = attachments(ctx, image)
     if attached and not image_holders(ctx, image) and any(
             os.path.realpath(m) == os.path.realpath(str(here)) for _, mounts in attached for m in mounts):
         ctx.out.write(f"{here}\n")
-        ctx.say("already mounted; unmount it before starting the emulator: sp16emu usb unmount")
+        ctx.say("already mounted; unmount it before starting the emulator: ./sp16 usb unmount")
         return 0
     check_idle(ctx, image, "mount")
     with mounted_stick(ctx, image, keep=True, mountpoint=here):
         pass
     ctx.out.write(f"{here}\n")
-    ctx.say("mounted; do not start the emulator until you unmount it: sp16emu usb unmount")
+    ctx.say("mounted; do not start the emulator until you unmount it: ./sp16 usb unmount")
     return 0
 
 
@@ -2284,7 +2284,7 @@ def run_usb(ctx, args, tail):
 
 
 def stick_for_run(ctx, args):
-    """(path, notes): the default stick to attach to `sp16emu run`, or None with the reason in the notes."""
+    """(path, notes): the default stick to attach to `./sp16 run`, or None with the reason in the notes."""
     if args.usb_image or args.no_usb:
         return None, []
     stick = default_stick(ctx)
@@ -2302,10 +2302,10 @@ def stick_for_run(ctx, args):
                           "USB stick"]
         for device, mounts in attachments(ctx, stick):
             return None, [f"{ctx.display(stick)} is mounted on this Mac ({mounts[0] if mounts else device}); launching "
-                          "without a USB stick. Release it with: sp16emu usb unmount"]
+                          "without a USB stick. Release it with: ./sp16 usb unmount"]
     except CliError as error:
         return None, [f"{error}; launching without a USB stick"]
-    return str(stick), [f"attaching the USB stick {ctx.display(stick)} (sp16emu run --no-usb skips it)"]
+    return str(stick), [f"attaching the USB stick {ctx.display(stick)} (./sp16 run --no-usb skips it)"]
 
 
 # ------------------------------------------------------------------------------------------------- bootstrap
@@ -2319,7 +2319,7 @@ BOOTSTRAP_OPTS = [
     Opt("--name", "The build folder name: build/NAME (default: sp16).", "NAME"),
     Opt("--audio", "Audio of the build: coreaudio plays through the Mac's output (AUDIBLE, the default), file records "
         "WAVs and stays silent (use it for tests), both.", "MODE", choices=BOOTSTRAP_AUDIO),
-    Opt("--audio-device", "With coreaudio or both: the output device by CoreAudio UID (`sp16emu audio devices`).", "UID"),
+    Opt("--audio-device", "With coreaudio or both: the output device by CoreAudio UID (`./sp16 audio devices`).", "UID"),
     Opt("--rebuild", "Rebuild an existing build in place (needed when its audio mode differs from --audio); the "
         "firmware library and data are kept.", flag=True),
     Opt("--reuse-qemu-from", "Copy the verified QEMU from this existing build folder (inside this repository) instead of "
@@ -2673,7 +2673,7 @@ def run_bootstrap(ctx, args, tail):
     boot = plan_bootstrap(ctx, args)
     total = len(boot.steps)
     name = boot.name
-    ctx.out.write(f"sp16emu bootstrap: {total} steps"
+    ctx.out.write(f"./sp16 bootstrap: {total} steps"
                   + (" (dry run: nothing is changed)" if ctx.dry_run else "") + "\n")
     update_path = boot.update
     number = 0
@@ -2733,7 +2733,7 @@ def run_bootstrap(ctx, args, tail):
                 entry = library_entry_for(boot.library, sha)
                 if not entry:
                     raise CliError("the firmware import finished but the update is not in the library; run "
-                                   "`sp16emu firmware list` and read the import report above")
+                                   "`./sp16 firmware list` and read the import report above")
             if ctx.dry_run:
                 boot_dry_tool(ctx, boot.info.path, FIRMWARE_COMMAND, ["firmware", "select"], ["select", "--id", entry or "<imported id>"])
                 continue
@@ -2765,7 +2765,7 @@ def run_bootstrap(ctx, args, tail):
                 return code
     if ctx.dry_run:
         return 0
-    again = "sp16emu run" + ("" if name == DEFAULT_NAME else f" --name {name}")
+    again = "./sp16 run" + ("" if name == DEFAULT_NAME else f" --name {name}")
     if args.no_run:
         ctx.out.write(f"\nDone. Start the emulator with: {again}\n")
     else:
@@ -2801,13 +2801,13 @@ def make_commands():
         return command
 
     add("help", "Start here", "Show this overview, or the options and examples of one command",
-        "With no argument, lists every command. `sp16emu help COMMAND` (or `sp16emu COMMAND --help`) shows its "
+        "With no argument, lists every command. `./sp16 help COMMAND` (or `./sp16 COMMAND --help`) shows its "
         "options and examples.", positionals=[Pos("topic", "a command name", nargs="?", metavar="COMMAND")],
-        examples=["sp16emu help build", "sp16emu run --help"], usage="sp16emu help [COMMAND]", direct=True)
+        examples=["./sp16 help build", "./sp16 run --help"], usage="./sp16 help [COMMAND]", direct=True)
     add("doctor", "Start here", "Check that this Mac can build and run the emulator, and print the fix for each problem",
         "Checks the Mac (Apple silicon, macOS 13+), Xcode Command Line Tools, Python 3.12+, QEMU build tools, Docker, "
         "free disk space and the git set-up. Exits non-zero when something blocks a build.",
-        examples=["sp16emu doctor"], usage="sp16emu doctor", direct=True)
+        examples=["./sp16 doctor"], usage="./sp16 doctor", direct=True)
     add("bootstrap", "Start here", "Set up everything in one go: check, build, import firmware, fill the USB stick, run",
         "From a fresh clone to a running emulator with audio, the firmware you choose and a USB stick with samples and "
         "demo projects. Steps, in order: doctor (stops with the fixes), build build/NAME with --audio coreaudio, import "
@@ -2817,14 +2817,14 @@ def make_commands():
         "the same command can be run again after an interruption; --dry-run lists every step and changes nothing. "
         "Nothing is downloaded without --yes or your answer, and only from the official firmware server.",
         opts=BOOTSTRAP_OPTS,
-        usage="sp16emu bootstrap [--update FILE | --download-firmware VERSION] [--key-file KEY | --gpl-archive PART...] "
+        usage="./sp16 bootstrap [--update FILE | --download-firmware VERSION] [--key-file KEY | --gpl-archive PART...] "
               "[--samples DIR|ZIP]... [--projects DIR|ZIP]... [--audio MODE] [--no-run]",
-        examples=["sp16emu bootstrap --update ~/Downloads/SP16.UPD --gpl-archive ~/Downloads/gpl-1.zip ~/Downloads/gpl-2.zip "
+        examples=["./sp16 bootstrap --update ~/Downloads/SP16.UPD --gpl-archive ~/Downloads/gpl-1.zip ~/Downloads/gpl-2.zip "
                   "--samples ~/Samples --projects ~/Downloads/Projects.zip",
-                  "sp16emu bootstrap --download-firmware 1.60 --key-file KEY --samples ~/Samples",
-                  "sp16emu bootstrap --audio file --no-run --update FILE.UPD --key-file KEY    # silent, do not launch",
-                  "sp16emu --dry-run bootstrap --update FILE.UPD --key-file KEY --samples ~/Samples",
-                  "sp16emu bootstrap --samples ~/more-samples --no-run                       # later: top up the stick"],
+                  "./sp16 bootstrap --download-firmware 1.60 --key-file KEY --samples ~/Samples",
+                  "./sp16 bootstrap --audio file --no-run --update FILE.UPD --key-file KEY    # silent, do not launch",
+                  "./sp16 --dry-run bootstrap --update FILE.UPD --key-file KEY --samples ~/Samples",
+                  "./sp16 bootstrap --samples ~/more-samples --no-run                       # later: top up the stick"],
         notes=["Already done is skipped: an existing build with the same audio, a firmware that is already in the "
                "library, files that the stick already holds (same path and size). A build made with another audio mode "
                "is not touched unless you add --rebuild.",
@@ -2839,28 +2839,28 @@ def make_commands():
         "Builds a firmware-free app into build/NAME (default sp16). All builds share one firmware library "
         "(build/library) and reuse QEMU from any existing build, so a later build skips compiling QEMU and the "
         "firmware you imported is already there. The first build downloads and compiles QEMU and needs Docker.",
-        opts=BUILD_OPTS, usage="sp16emu build [--name NAME] [options] [-- NATIVE_BUILD_ARGS...]",
-        examples=["sp16emu build                                   # silent app in build/sp16",
-                  "sp16emu build --audio file                      # record each audio stream to WAV files, silent",
-                  "sp16emu audio devices && sp16emu build --name loud --audio coreaudio --audio-device UID",
-                  "sp16emu build --name sp16-dev --research --audio file --bundle-suffix dev",
-                  "sp16emu build --rebuild --audio file            # rebuild build/sp16 in place, keeps firmware",
-                  "sp16emu --dry-run build                         # show the exact tool command and stop"],
-        notes=["Everything after `--` goes unchanged to `native.py build` (see `sp16emu build -- --help`); every "
+        opts=BUILD_OPTS, usage="./sp16 build [--name NAME] [options] [-- NATIVE_BUILD_ARGS...]",
+        examples=["./sp16 build                                   # silent app in build/sp16",
+                  "./sp16 build --audio file                      # record each audio stream to WAV files, silent",
+                  "./sp16 audio devices && ./sp16 build --name loud --audio coreaudio --audio-device UID",
+                  "./sp16 build --name sp16-dev --research --audio file --bundle-suffix dev",
+                  "./sp16 build --rebuild --audio file            # rebuild build/sp16 in place, keeps firmware",
+                  "./sp16 --dry-run build                         # show the exact tool command and stop"],
+        notes=["Everything after `--` goes unchanged to `native.py build` (see `./sp16 build -- --help`); every "
                "option the tool has is listed above.",
                "Builds live in build/ (owner-only, git-ignored). The shared firmware library is never deleted by "
-               "--rebuild or `sp16emu clean`.",
-               "Firmware is not part of a build: import it once with `sp16emu firmware import`."],
+               "--rebuild or `./sp16 clean`.",
+               "Firmware is not part of a build: import it once with `./sp16 firmware import`."],
         handler=plan_build)
     RUN_COMMAND = add(
         "run", "Build and run", "Launch a built emulator app",
         "Opens build/NAME with `open -n`; close the window to stop the emulator. The first boot of each firmware "
         "creates a 1 GB data image for it in the library; projects and settings persist there.",
-        opts=RUN_OPTS, usage="sp16emu run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR]",
-        examples=["sp16emu run", "sp16emu run --name sp16-dev --firmware ID",
-                  "sp16emu run --usb-image ~/sticks/other.img", "sp16emu run --no-usb", "sp16emu run --ephemeral"],
-        notes=["If the build does not exist, the error names the `sp16emu build` command that creates it.",
-               "When build/stick.img exists (see `sp16emu usb`) it is attached as the virtual USB stick unless you give "
+        opts=RUN_OPTS, usage="./sp16 run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR]",
+        examples=["./sp16 run", "./sp16 run --name sp16-dev --firmware ID",
+                  "./sp16 run --usb-image ~/sticks/other.img", "./sp16 run --no-usb", "./sp16 run --ephemeral"],
+        notes=["If the build does not exist, the error names the `./sp16 build` command that creates it.",
+               "When build/stick.img exists (see `./sp16 usb`) it is attached as the virtual USB stick unless you give "
                "--usb-image or --no-usb, or another running emulator or this Mac already holds it (then a note says so "
                "and the emulator starts without it).",
                "Two apps cannot use the same firmware's data image at once; give the second one --ephemeral."],
@@ -2868,10 +2868,10 @@ def make_commands():
     add("builds", "Build and run", "List the builds in build/ with the options each was built with",
         "Shows each build's state (built, running with its process ids, incomplete), audio mode, research socket, "
         "pad calibration, bundle id suffix, firmware count, library and build time.",
-        opts=[Opt("--json", "Print JSON instead of a table.", flag=True)], usage="sp16emu builds [--json]",
-        examples=["sp16emu builds"], direct=True)
+        opts=[Opt("--json", "Print JSON instead of a table.", flag=True)], usage="./sp16 builds [--json]",
+        examples=["./sp16 builds"], direct=True)
     add("usb", "Build and run", "Prepare the virtual USB stick on the Mac: create, add samples, ls, mount, unmount",
-        "The stick is one raw FAT32 image, build/stick.img by default; `sp16emu run` attaches it when it exists. "
+        "The stick is one raw FAT32 image, build/stick.img by default; `./sp16 run` attaches it when it exists. "
         "`create` makes and formats it without booting (volume SP16USB, no partition table, the layout the emulated "
         "machine produces itself) and adds the PIONEER DJ SAMPLER/Samples folder. `add FILES...` creates the image if "
         "missing, copies the files into Samples (or a folder under it with --to; a folder argument is copied with its name and "
@@ -2882,14 +2882,14 @@ def make_commands():
         "Documents or iCloud Drive) and `unmount` releases it. Every command that mounts or writes refuses while a "
         "running emulator has the image or this Mac has it attached elsewhere. Needs macOS (hdiutil, newfs_msdos).",
         positionals=[Pos("action", "what to do", choices=USB_ACTIONS), Pos("files", "usb add: the sample files or folders", nargs="*", metavar="FILES")],
-        opts=USB_OPTS, usage="sp16emu usb create | add FILES... | ls | mount | unmount [--image PATH] [options]",
-        examples=["sp16emu usb add ~/samples/*.wav            # creates build/stick.img the first time",
-                  "sp16emu usb add kick.wav snare.wav --to drums", "sp16emu usb create --size 8G --force",
-                  "sp16emu usb add --tree ~/SamplePack --to Pack     # a whole folder tree, structure kept",
-                  "sp16emu usb ls", "sp16emu usb mount && sp16emu usb unmount",
-                  "sp16emu usb add loop.wav --image ~/sticks/gig.img"],
+        opts=USB_OPTS, usage="./sp16 usb create | add FILES... | ls | mount | unmount [--image PATH] [options]",
+        examples=["./sp16 usb add ~/samples/*.wav            # creates build/stick.img the first time",
+                  "./sp16 usb add kick.wav snare.wav --to drums", "./sp16 usb create --size 8G --force",
+                  "./sp16 usb add --tree ~/SamplePack --to Pack     # a whole folder tree, structure kept",
+                  "./sp16 usb ls", "./sp16 usb mount && ./sp16 usb unmount",
+                  "./sp16 usb add loop.wav --image ~/sticks/gig.img"],
         notes=["Never mount the stick while the emulator runs: the emulated machine and the Mac would both write to "
-               "one FAT file system and corrupt it. Quit the emulator, then run `sp16emu usb ...`.",
+               "one FAT file system and corrupt it. Quit the emulator, then run `./sp16 usb ...`.",
                "Supported sample format: PCM 16- or 24-bit 44.1 kHz WAV, mono or stereo (what the factory sample pack uses). "
                "Other sample rates, float or compressed audio are copied with one warning per kind.",
                "Sizes: the default stick is 1G; --size goes up to 32G (sparse, so it costs no disk space until used). "
@@ -2900,22 +2900,22 @@ def make_commands():
         direct=True, intermixed=True)
     add("audio", "Build and run", "List CoreAudio output devices for --audio-device (devices); run the audio self-test",
         "`audio devices` compiles the audio tool on first use (into build/.cache, a few seconds) and prints each "
-        "output device with the UID that `sp16emu build --audio-device` takes. `audio selftest` runs the audio "
+        "output device with the UID that `./sp16 build --audio-device` takes. `audio selftest` runs the audio "
         "output self-test (virtual-time `test` by default; `live`, `graph`); none of it plays sound.",
         positionals=[Pos("action", "devices | selftest", choices=AUDIO_ACTIONS)],
-        usage="sp16emu audio devices | sp16emu audio selftest [-- test|live|graph|devices]",
-        examples=["sp16emu audio devices", "sp16emu audio selftest"], direct=True)
+        usage="./sp16 audio devices | ./sp16 audio selftest [-- test|live|graph|devices]",
+        examples=["./sp16 audio devices", "./sp16 audio selftest"], direct=True)
     FIRMWARE_COMMAND = add(
-        "firmware", "Firmware", "Import, list, show, check, select, rename, remove, audit firmware; make a candidate profile",
+        "firmware", "Firmware", "Import, download, list, show, check, select, rename, remove, audit firmware; make a candidate profile",
         "Works on the shared firmware library through a build (import needs a build's guest to unpack the update). "
         "You download the update and the GPL source archive yourself from the official pages (see the README); "
         "the key is read in memory and never written, printed or logged.",
         positionals=[Pos("action", "what to do", choices=FIRMWARE_CHOICES)], opts=FIRMWARE_OPTS,
-        usage="sp16emu firmware ACTION [--build NAME] [options]",
-        examples=["sp16emu firmware import --update ~/Downloads/SP16.UPD --gpl-archive ~/Downloads/gpl-1.zip ~/Downloads/gpl-2.zip",
-                  "sp16emu firmware import --update FILE.UPD --key-file KEY", "sp16emu firmware list",
-                  "sp16emu firmware check --id ID", "sp16emu firmware select --id ID",
-                  "sp16emu firmware profile --id ID > emulator/profiles/sp16-VERSION.json"],
+        usage="./sp16 firmware ACTION [--build NAME] [options]",
+        examples=["./sp16 firmware import --update ~/Downloads/SP16.UPD --gpl-archive ~/Downloads/gpl-1.zip ~/Downloads/gpl-2.zip",
+                  "./sp16 firmware import --update FILE.UPD --key-file KEY", "./sp16 firmware list",
+                  "./sp16 firmware check --id ID", "./sp16 firmware select --id ID",
+                  "./sp16 firmware profile --id ID > emulator/profiles/sp16-VERSION.json"],
         notes=["import: --update plus --key-file or --gpl-archive. list needs no id; show, check, select, rename, "
                "remove and profile need --id; rename needs --name.",
                "audit scans the build for firmware files, key material and vendor assets (exit 1 on a hit)."],
@@ -2924,8 +2924,8 @@ def make_commands():
         "diagnostics", "Maintenance", "Collect logs and system facts into one redacted zip for a bug report",
         "Writes sp16-diagnostics-<time>.zip (Desktop, else the build folder). Nothing is uploaded. Firmware, updates, "
         "key files and data images are never included; paths, account and host names and e-mail addresses are redacted.",
-        opts=DIAGNOSTICS_OPTS, usage="sp16emu diagnostics [--build NAME] [options]",
-        examples=["sp16emu diagnostics", "sp16emu diagnostics --sessions 5 --include-audio --out ~/Desktop/bug.zip"],
+        opts=DIAGNOSTICS_OPTS, usage="./sp16 diagnostics [--build NAME] [options]",
+        examples=["./sp16 diagnostics", "./sp16 diagnostics --sessions 5 --include-audio --out ~/Desktop/bug.zip"],
         handler=plan_diagnostics)
     MOD_COMMAND = add(
         "mod", "Develop and test", "Develop firmware mods: new, check, run, test, sdk, package",
@@ -2947,9 +2947,9 @@ def make_commands():
         + "\n  ".join(help_ctl_lines()),
         positionals=[Pos("ctl_command", "a session command", choices=CTL_COMMANDS, metavar="COMMAND"),
                      Pos("ctl_args", "its arguments", nargs=argparse.REMAINDER, metavar="ARGS")],
-        opts=CTL_OPTS, usage="sp16emu ctl [--build NAME | --runtime FILE] COMMAND [ARGS...]",
-        examples=["sp16emu ctl press play", "sp16emu ctl turn knob1 -3", "sp16emu ctl snapshot home.png",
-                  "sp16emu ctl metrics"],
+        opts=CTL_OPTS, usage="./sp16 ctl [--build NAME | --runtime FILE] COMMAND [ARGS...]",
+        examples=["./sp16 ctl press play", "./sp16 ctl turn knob1 -3", "./sp16 ctl snapshot home.png",
+                  "./sp16 ctl metrics"],
         notes=["The session must run from a build made with --research.",
                "NAME is a control: pad1..pad16, step1..step16, bar1..bar4, knob1..knob6, selector, strip, or a button "
                "such as play, rec, stop, shift, home, back (the full list is CONTROL_IDS in panel_map.py)."],
@@ -2960,22 +2960,22 @@ def make_commands():
         "strip, audio clock, USB, storage, power). Needs a build made with --research --audio file, an optional "
         "--uncalibrated control build sharing the library, and pillow, numpy and tesseract. Quit other emulators "
         "first: the suite starts and stops its own sessions.",
-        opts=HWSUITE_OPTS, usage="sp16emu hwsuite [--build NAME] [--control NAME] [--profile VERSION] [options]",
-        examples=["sp16emu hwsuite --smoke", "sp16emu hwsuite --profile 1.60 --tier core",
-                  "sp16emu hwsuite --tier full --mark-verified"],
+        opts=HWSUITE_OPTS, usage="./sp16 hwsuite [--build NAME] [--control NAME] [--profile VERSION] [options]",
+        examples=["./sp16 hwsuite --smoke", "./sp16 hwsuite --profile 1.60 --tier core",
+                  "./sp16 hwsuite --tier full --mark-verified"],
         notes=["Exit codes: 0 pass, 1 fail, 2 blocked (missing profile data), 3 environment, 4 session lost.",
                "Only a full-tier run in which every check passes can mark a profile verified."],
         handler=plan_hwsuite)
     add("test", "Develop and test", "Run the firmware-free unit tests",
         "Runs the project's unit tests with the build tools' Python. They need no firmware and no running emulator.",
-        usage="sp16emu test [-- UNITTEST_ARGS...]", examples=["sp16emu test", "sp16emu test -- -k panel -v"],
+        usage="./sp16 test [-- UNITTEST_ARGS...]", examples=["./sp16 test", "./sp16 test -- -k panel -v"],
         handler=plan_test)
     add("clean", "Maintenance", "Delete build outputs; keeps the firmware library and data images",
         "`--name NAME` or `--all` remove each build's app, QEMU, guest image and logs but keep any library and data "
         "folder and the shared build/library. `--everything --yes` empties build/ completely, firmware included. "
         "Nothing outside build/ is ever deleted, and a running build is refused.",
-        opts=CLEAN_OPTS, usage="sp16emu clean (--name NAME | --all | --everything [--yes])",
-        examples=["sp16emu clean --all", "sp16emu clean --name sp16-dev", "sp16emu --dry-run clean --everything"],
+        opts=CLEAN_OPTS, usage="./sp16 clean (--name NAME | --all | --everything [--yes])",
+        examples=["./sp16 clean --all", "./sp16 clean --name sp16-dev", "./sp16 --dry-run clean --everything"],
         direct=True)
     return commands
 
@@ -2991,8 +2991,8 @@ Environment: SP16EMU_BUILD_DIR (build folder, default <repository>/build), SP16E
 
 
 def overview(ctx):
-    lines = ["sp16emu: build, run and manage the SP-16 compatible emulator", "",
-             "Usage: sp16emu [--dry-run] [--verbose] [--python PATH] COMMAND [options]", ""]
+    lines = ["sp16: build, run and manage the SP-16 compatible emulator", "",
+             "Usage: ./sp16 [--dry-run] [--verbose] [--python PATH] COMMAND [options]", ""]
     order = ["Start here", "Build and run", "Firmware", "Develop and test", "Maintenance"]
     for group in order:
         lines.append(group + ":")
@@ -3000,13 +3000,13 @@ def overview(ctx):
             if command.group == group:
                 lines.append(f"  {command.name.ljust(12)}{command.summary}")
         lines.append("")
-    lines += ["First time: sp16emu bootstrap --help (or: sp16emu doctor; build; firmware import ...; run)",
-              "Details: sp16emu help COMMAND   (also: sp16emu COMMAND --help)", "", GLOBAL_HELP]
+    lines += ["First time: ./sp16 bootstrap --help (or: ./sp16 doctor; build; firmware import ...; run)",
+              "Details: ./sp16 help COMMAND   (also: ./sp16 COMMAND --help)", "", GLOBAL_HELP]
     return "\n".join(lines) + "\n"
 
 
 def command_help(command):
-    lines = [f"sp16emu {command.name}: {command.summary}", "", "Usage:", f"  {command.usage or 'sp16emu ' + command.name}", ""]
+    lines = [f"./sp16 {command.name}: {command.summary}", "", "Usage:", f"  {command.usage or './sp16 ' + command.name}", ""]
     for part in command.description.split("\n"):
         lines += textwrap.wrap(part, 100, subsequent_indent="    " if part.startswith("  ") else "") or [""]
     lines.append("")
@@ -3059,7 +3059,7 @@ def run_help(ctx, args, tail):
 
 def unknown_command(name):
     close = difflib.get_close_matches(name, list(BY_NAME), n=1)
-    return f"unknown command '{name}'" + (f" (did you mean '{close[0]}'?)" if close else "") + "; run `sp16emu help` for the list"
+    return f"unknown command '{name}'" + (f" (did you mean '{close[0]}'?)" if close else "") + "; run `./sp16 help` for the list"
 
 
 DIRECT = {"help": run_help, "doctor": run_doctor, "builds": run_builds, "audio": run_audio, "clean": run_clean,
@@ -3112,7 +3112,7 @@ def parse_global(argv):
         elif flag.startswith("--python="):
             options["python"] = flag.split("=", 1)[1]
         else:
-            raise UsageError(f"unknown option {flag}; global options go before the command (see: sp16emu help)")
+            raise UsageError(f"unknown option {flag}; global options go before the command (see: ./sp16 help)")
     return options, rest
 
 
@@ -3140,11 +3140,11 @@ def main(argv=None, ctx=None):
             return DIRECT[command.name](ctx, args, tail)
         return execute(ctx, command.handler(ctx, args, tail))
     except CliError as error:
-        print(f"sp16emu: {error}", file=sys.stderr)
+        print(f"sp16: {error}", file=sys.stderr)
         return error.code
     except KeyboardInterrupt:
         return 130
-    except BrokenPipeError:  # `sp16emu usb ls | head`
+    except BrokenPipeError:  # `./sp16 usb ls | head`
         try:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())  # no second error when Python flushes
         except (OSError, ValueError, AttributeError):
