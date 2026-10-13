@@ -296,6 +296,7 @@ class LibraryTests(unittest.TestCase):
         self.assertFalse(report["verified"])
         self.assertEqual(report["status"], "unverified")
         self.assertIn("no compatibility profile", report["reason"])
+        self.assertEqual((report["profile"], report["boot"]), ("sp16-1.60", {"profile": "sp16-1.60", "source": "reference"}))
         summary = self.library.summary(entry_id)
         self.assertEqual((summary["status"], summary["profile"]), ("unverified", None))
         # The image is still re-verified before every boot: a changed image is refused, verified or not.
@@ -310,7 +311,7 @@ class LibraryTests(unittest.TestCase):
         (entry_id, report), _ = self.import_synthetic(
             lambda meta, image: guest_manifest(app_sha="d" * 64, version=meta["trailer_version"], crc=meta["crc32"],
                                                image=image))
-        self.assertEqual((report["boots"], report["status"], report["profile"]), (True, "unverified", None))
+        self.assertEqual((report["boots"], report["status"], report["profile"]), (True, "unverified", "sp16-1.60"))
         self.assertEqual(self.library.manifest(entry_id)["kind"], "stock")
 
     def test_version_mismatch_and_candidate_profiles_are_unverified(self):
@@ -351,7 +352,7 @@ class LibraryTests(unittest.TestCase):
         manifest = self.library.manifest(entry_id)
         self.assertEqual((manifest["kind"], manifest["mod"]["verified"]), ("mod", False))
         self.assertTrue(manifest["mod"]["reason"])
-        self.assertEqual((report["boots"], report["status"], report["profile"]), (True, "unverified", None))
+        self.assertEqual((report["boots"], report["status"], report["profile"]), (True, "unverified", "sp16-1.60"))
         self.assertIn("does not verify", report["reason"])
         # an unverified mod is matched by its own application hash, never by a base it did not prove
         self.assertEqual(firmware.base_app_sha256(manifest), manifest["app_sha256"])
@@ -409,6 +410,20 @@ class LibraryTests(unittest.TestCase):
         names = [item["check"] for item in report["checks"]]
         self.assertTrue(any("ioctl" in n for n in names) and any("panel MCU" in n for n in names))
         self.assertTrue(all(item["result"] in ("pass", "warn", "fail") for item in report["checks"]))
+
+    def test_compatibility_check_label_is_plain_and_detail_names_the_profile(self):
+        def profile_item(report):
+            return next(item for item in report["checks"] if item["check"] == "compatibility profile")
+        unverified = firmware.check_report(self.library.manifest(self.import_synthetic(
+            lambda meta, image: guest_manifest(app_sha="e" * 64, version=meta["trailer_version"], crc=meta["crc32"],
+                                               image=image), version=b"1.50")[0][0]))
+        self.assertEqual((profile_item(unverified)["result"], unverified["profile"]), ("warn", "sp16-1.60"))
+        self.assertEqual(profile_item(unverified)["detail"], "unverified: runs on the reference measurements of sp16-1.60 "
+                         "(no compatibility profile for this firmware)")
+        verified = firmware.check_report(self.library.manifest(self.import_synthetic()[0][0]))
+        self.assertEqual((verified["status"], verified["profile"], verified["boot"]["source"]),
+                         ("verified", "sp16-1.60", "verified"))
+        self.assertEqual(profile_item(verified), {"check": "compatibility profile", "result": "pass", "detail": "sp16-1.60"})
 
 
 class DecoupledBuildTests(unittest.TestCase):

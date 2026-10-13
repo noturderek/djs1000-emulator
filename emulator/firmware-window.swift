@@ -42,11 +42,24 @@ enum FirmwareTool {
         return result
     }
 
+    /// A non-empty string from a JSON value; a missing key or JSON null (NSNull) is absent.
+    static func text(_ value: Any?) -> String? {
+        guard let string = value as? String, !string.isEmpty else { return nil }
+        return string
+    }
+
     static func describe(_ result: [String: Any]) -> String {
         var lines: [String] = []
         if let error = result["error"] as? String { lines.append(error) }
         if let report = result["report"] as? [String: Any] {
-            lines.append("Status: \(report["status"] ?? "?")  Profile: \(report["profile"] ?? "none")")
+            let status = text(report["status"]) ?? "?"
+            if status == "verified" {
+                lines.append("Status: verified  Profile: \(text(report["profile"]) ?? "none")")
+            } else if let boot = report["boot"] as? [String: Any], let runs = text(boot["profile"]) {
+                lines.append("Status: \(status)  Runs on: \(runs) (\(text(boot["source"]) ?? "?"))")
+            } else {
+                lines.append("Status: \(status)  Profile: \(text(report["profile"]) ?? "none")")
+            }
             if let reason = report["reason"] as? String, !reason.isEmpty { lines.append("Reason: \(reason)") }
             for item in report["checks"] as? [[String: Any]] ?? [] {
                 lines.append("[\(item["result"] ?? "?")] \(item["check"] ?? "")")

@@ -410,6 +410,8 @@ def verify_image(library, entry_id):
 def check_report(manifest, library=None):
     """The compatibility report (M5): what the import found against the shim, the panel and the profiles."""
     status = boot_status(manifest, library)
+    # The profile the boot really uses: guest-firmware.py asks profiles.active for the same base application.
+    boot_source, booted = profiles.active(base_app_sha256(manifest))
     # Panel revisions are compared with the matched profile, else with the 1.60 panel model the shim implements.
     reference = profiles.for_app(base_app_sha256(manifest))
     if reference is None:
@@ -425,9 +427,9 @@ def check_report(manifest, library=None):
         {"check": "key decrypts the update", "result": "pass"},
         {"check": "update layout (the product's layers)", "result": "pass"},
         {"check": "SP-16 application present", "result": "pass", "detail": manifest["app_path"]},
-        {"check": "compatibility profile (unverified firmware still boots on the reference measurements)",
+        {"check": "compatibility profile",
          "result": "pass" if status["status"] == "verified" else "warn",
-         "detail": status["reason"] or status["profile"]},
+         "detail": status["profile"] if status["status"] == "verified" else unverified_detail(status, boot_source, booted)},
         {"check": "device nodes known to the shim",
          "result": "pass" if not compat.get("devices_unknown") else "warn",
          "detail": {"found": compat.get("devices_found"), "unknown": compat.get("devices_unknown")}},
@@ -448,8 +450,16 @@ def check_report(manifest, library=None):
                       "detail": {"base": manifest["mod"].get("base_id"), "recipes": manifest["mod"].get("recipes"),
                                  "reason": manifest["mod"].get("reason")}})
     return {"firmware": manifest["id"], "version": manifest["update"]["trailer_version"], "kind": manifest["kind"],
-            "boots": True, "verified": status["status"] == "verified", "status": status["status"], "profile": status["profile"],
+            "boots": True, "verified": status["status"] == "verified", "status": status["status"],
+            "profile": status["profile"] or booted["id"], "boot": {"profile": booted["id"], "source": boot_source},
             "reason": status["reason"], "checks": items}
+
+
+def unverified_detail(status, boot_source, booted):
+    """The compatibility detail of an unverified boot: which profile it runs on and why it is not verified."""
+    if boot_source == "reference":
+        return f"unverified: runs on the reference measurements of {booted['id']} ({status['reason']})"
+    return f"unverified: runs on profile {booted['id']} ({status['reason']})"
 
 
 def candidate_profile(manifest, from_profile=None):
