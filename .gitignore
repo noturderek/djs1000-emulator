@@ -13,3 +13,23 @@ diagnostics-*.zip
 __pycache__/
 *.pyc
 .DS_Store
+
+# Copyrighted content (sample packs, projects, firmware updates, keys, GPL archives, firmware images) is never committed
+# to this repository. The user supplies it at run time. Case variants matter on case-sensitive volumes.
+*.WAV
+*.aif
+*.aiff
+*.AIF
+*.AIFF
+*.prj
+*.PRJ
+*.zip
+*.ZIP
+*.tar.gz
+*.tgz
+*.sfs
+*.mot
+*.ISO
+*.IMG
+*.KEY
+PIONEER DJ SAMPLER/
