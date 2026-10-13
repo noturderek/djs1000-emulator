@@ -26,6 +26,29 @@ from that update; this repository contains none of it.
 
 ## Quick start
 
+### The fast way: bootstrap
+
+Ask your agent (Claude Code, Codex or another) to **run the `sp16-bootstrap` skill** ([.agents/skills/sp16-bootstrap/SKILL.md](.agents/skills/sp16-bootstrap/SKILL.md)).
+It checks your Mac, asks which firmware version you want (and offers to fetch the official update from the official
+server, or points you to the download), tells you where to get the key source and the factory samples and demo
+projects, then builds the emulator with audio, imports and selects your firmware, fills a virtual USB stick and starts
+it. Or run the one command yourself, with files you downloaded:
+
+```sh
+make bootstrap UPD=~/Downloads/TORAIZSP16.UPD GPL="~/Downloads/gpl-part-1.zip ~/Downloads/gpl-part-2.zip" \
+  SAMPLES="~/Downloads/LOOPMASTERS_SAMPLE_PACK" PROJECTS=~/Downloads/TORAIZ_SP-16_Factory_Projects-B.zip
+# or have it download the official firmware (it shows the file, source and size first; YES=1 skips the question):
+make bootstrap VERSION=1.60 KEY=~/keys/update.key SAMPLES=~/Samples
+# the same without make:  ./sp16emu bootstrap --update FILE.UPD --gpl-archive PART1 PART2 --samples DIR|ZIP --projects DIR|ZIP
+```
+
+`SAMPLES` and `PROJECTS` take folders or `.zip` files (a folder keeps its name under `PIONEER DJ SAMPLER/Samples`;
+projects go to `PIONEER DJ SAMPLER/Projects`). Audio defaults to your Mac's output (`AUDIO=file` records silently).
+`./sp16emu --dry-run bootstrap ...` lists every step first. Every step skips what is already done, so the same command
+can be run again after an interruption or to add more samples. For problems after that, the
+[`sp16-emulator-setup`](.agents/skills/sp16-emulator-setup/SKILL.md) skill covers troubleshooting, modded firmware and the
+hardware suite. The steps below are the same thing by hand.
+
 ### 1. Build
 
 ```sh
@@ -55,7 +78,12 @@ Download both yourself:
 
 - **Firmware update.** The official firmware page:
   <https://support.alphatheta.com/en-us/articles/4405128836121>. Download the latest update (1.60), unzip it and
-  keep the `.UPD` file. Version 1.50 is also supported if you have its update file.
+  keep the `.UPD` file. Version 1.50 is also supported if you have its update file. The direct official downloads are
+  `https://downloads.support.alphatheta.com/firmwares/music-production/TORAIZ_SP-16/TORAIZSP16_ver160.zip` (also
+  `ver150`, `ver140`, `ver131`). Or let the tool fetch it: `./sp16emu firmware download --version 1.60` shows the
+  file name, the URL and the size and asks first (`--info` only shows them, `--yes` agrees); it downloads only from
+  that official host, over https, checks the zip, the version, the CRC and (for 1.50 and 1.60) the SHA-256 the
+  profiles pin, and keeps the `.UPD` in `build/downloads/`. It never downloads the key or the GPL archive.
 - **GPL source archive.** The official open source page:
   <https://www.pioneerdj.com/en/support/open-source-code-distribution/gnu-open-source-license/>. Download the
   TORAIZ SP-16 source archive (two zip parts). Keep both parts, in order.
@@ -112,7 +140,8 @@ your samples on it before you start the emulator, then run as usual:
   sample rate or codec (float, compressed) are copied with one warning per kind, never converted; convert them first if the sampler will not load them. Files that are not WAV or AIFF are
   skipped with a warning unless you add `--any`.
 - **Where they go:** the firmware's own `PIONEER DJ SAMPLER/Samples` folder on the stick (`--to kicks` copies into a
-  folder `kicks` under it). `./sp16emu usb ls` lists what is on the stick, including projects the sampler saved to
+  folder `kicks` under it; `--dest Projects` copies any file type into another folder under `PIONEER DJ SAMPLER`, for
+  example demo projects, and cannot leave that folder). `./sp16emu usb ls` lists what is on the stick, including projects the sampler saved to
   it. macOS's `._*` and `.DS_Store` files are removed again after each copy.
 - **Whole folders and big packs:** a folder passed to `usb add` is copied with its name and its structure;
   `./sp16emu usb add --tree ~/SamplePack --to Pack` copies what is inside the folder, at any depth, into
@@ -164,10 +193,12 @@ examples. `./sp16emu --dry-run <command> ...` prints the exact tool commands ins
 | `doctor` | Check your Mac (Apple silicon, macOS, Command Line Tools, Python, Docker, disk space, git) and print the fixes |
 | `build` | Build the app into `build/<name>`: `--audio`, `--audio-device`, `--research`, `--trace`, `--uncalibrated`, `--pad-calibration-value`, `--bundle-suffix`, `--library`, `--reuse-qemu-from`, `--rebuild` |
 | `run` | Launch a build: `--firmware`, `--usb-image` (default `build/stick.img` when it exists), `--no-usb`, `--ephemeral`, `--dev-overlay` |
-| `usb create\|add\|ls\|mount\|unmount` | Prepare the virtual USB stick on the Mac without booting: load samples, list, mount (see [Load your own samples](#5-load-your-own-samples-optional)) |
+| `bootstrap` | Everything in one go: `doctor`, build with audio, import and select firmware (`--update` or `--download-firmware`), fill the stick (`--samples`, `--projects`, folders or zips), launch; skips what is done, `--dry-run` lists the steps |
+| `usb create\|add\|ls\|mount\|unmount` | Prepare the virtual USB stick on the Mac without booting: load samples (`add --dest Projects` for project files), list, mount (see [Load your own samples](#5-load-your-own-samples-optional)) |
 | `builds` | List builds and the options each was built with |
 | `audio devices` | List audio output devices (UIDs for `--audio-device`) |
 | `firmware import\|list\|show\|check\|select\|rename\|remove\|profile\|audit` | Manage the shared firmware library |
+| `firmware download --version 1.60` | Fetch the official firmware update from the official server (asks first; `--info`, `--yes`) |
 | `mod new\|check\|run\|test\|sdk\|package` | Develop and test firmware mods |
 | `ctl` | Drive a running research session (buttons, encoders, LCD) |
 | `hwsuite` | Run the hardware conformance suite |
@@ -181,6 +212,7 @@ it); no shell files are touched.
 
 | Target | Builds or runs |
 |---|---|
+| `make bootstrap UPD=... GPL="p1 p2" SAMPLES=... PROJECTS=...` | Everything: build with audio (`AUDIO=file` for silent), import firmware (`VERSION=1.60 YES=1 KEY=...` downloads it), fill the stick, run |
 | `make build` | `build/sp16`, silent (`AUDIO=file` to record; `REBUILD=1` rebuilds in place) |
 | `make build-audio` / `make build-record` | `build/sp16-audio` (audible) / `build/sp16-record` (WAV files) |
 | `make build-dev` / `make build-control` | `build/sp16-dev` (research socket, WAV files) and `build/sp16-dev-uncal` for the hardware suite |
@@ -300,7 +332,7 @@ sp16emu, Makefile    the command line (`./sp16emu help`) and the ready-made buil
 emulator/            sp16emu.py (the command), build tool, firmware importer, Linux guest base, hardware shim, panel model, macOS app,
                      compatibility profiles, example recipe, developer tools, hardware suite, unit tests
 docs/                architecture, modding guide, hardware suite, profile reference
-.agents/skills/      an agent skill that walks you through setup, import, run and troubleshooting
+.agents/skills/      agent skills: sp16-bootstrap (fresh clone to a running emulator) and sp16-emulator-setup (setup details, mods, troubleshooting)
 ```
 
 Run the firmware-free unit tests with `./sp16emu test` (or `make test`); it runs

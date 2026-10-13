@@ -27,9 +27,15 @@ import stat
 import struct
 import subprocess
 import sys
+import ssl
 import tempfile
 import textwrap
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+import zlib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -41,6 +47,7 @@ SUFFIX_RE = re.compile(r"[a-z0-9-]{1,32}")
 MIN_TOOL_PYTHON = (3, 12)
 MIN_CLI_PYTHON = (3, 9)
 MIN_FREE_BYTES = 3 * 1024 ** 3
+DOWNLOAD_VERSIONS = ("1.60", "1.50", "1.40", "1.31")  # the official firmware downloads (see the download section)
 PROFILE_BUNDLE_ID = "local.sp16-compatible.emulator.fullpanel"
 AUDIO_SOURCES = ("audio-selftest.swift", "audio-output.swift", "audio-sink.swift")
 AUDIO_SWIFT_FLAGS = ("-O", "-parse-as-library", "-framework", "AVFoundation", "-framework", "CoreAudio")
@@ -69,7 +76,7 @@ class Opt:
     """One option, described once: the parser, the help text and the tool command line all come from it."""
 
     def __init__(self, flags, help, metavar=None, nargs=None, flag=False, emit=True, required=False, choices=None,
-                 path=False):
+                 path=False, append=False):
         self.flags = (flags,) if isinstance(flags, str) else tuple(flags)
         self.help = help
         self.metavar = metavar
@@ -79,6 +86,7 @@ class Opt:
         self.required = required
         self.choices = choices
         self.path = path
+        self.append = append
         self.dest = self.flags[0].lstrip("-").replace("-", "_")
 
     @property
@@ -135,6 +143,8 @@ class Command:
             if opt.flag:
                 kwargs["action"] = "store_true"
             else:
+                if opt.append:
+                    kwargs["action"] = "append"
                 kwargs["metavar"] = opt.metavar or opt.dest.upper()
                 if opt.nargs:
                     kwargs["nargs"] = opt.nargs
@@ -166,8 +176,9 @@ class Step:
 
 
 class Plan:
-    def __init__(self, steps=(), notes=(), setup=(), after=()):
+    def __init__(self, steps=(), notes=(), setup=(), after=(), func=None):
         self.steps, self.notes, self.setup, self.after = list(steps), list(notes), list(setup), list(after)
+        self.func = func  # a command the CLI runs itself instead of a tool command line; returns the exit code
 
 
 # --------------------------------------------------------------------------------------------------- context
@@ -244,6 +255,10 @@ class Context:
 
     def which(self, name):
         return shutil.which(name, path=self.env.get("PATH"))
+
+    def open_url(self, url, method="GET", headers=None):
+        """An open response for an official firmware URL; the only network access the tool has."""
+        return open_official(url, method, headers)
 
     # tool interpreter
     def python(self, strict=True):
@@ -668,6 +683,7 @@ def plan_run(ctx, args, tail):
 
 # ---------------------------------------------------------------------------------------------------- firmware
 FIRMWARE_ACTIONS = ("import", "list", "show", "check", "select", "rename", "remove", "profile", "audit")
+FIRMWARE_CHOICES = FIRMWARE_ACTIONS + ("download",)  # download is sp16emu's own: it needs no build
 FIRMWARE_OPTS = [
     Opt("--build", "The build whose library and guest do the work (default: build/sp16, else the only build).", "NAME",
         emit=False),
@@ -678,11 +694,27 @@ FIRMWARE_OPTS = [
     Opt("--id", "show, check, select, rename, remove, profile: the firmware id (see `list`).", "ID"),
     Opt("--name", "import, rename: a display name.", "TEXT"),
     Opt("--from-profile", "profile: the profile whose measurements to start from (default: the product reference).", "ID"),
+    Opt("--version", "download: the official firmware version to fetch (1.60 is the latest; 1.50 is also verified; 1.40 "
+        "and 1.31 run as unverified).", "VERSION", emit=False, choices=DOWNLOAD_VERSIONS),
+    Opt("--to", "download: the folder to put the update in (default: build/downloads, git-ignored).", "DIR", emit=False),
+    Opt("--yes", "download: you (or the user) have agreed to download from the official server; skip the question.",
+        flag=True, emit=False),
+    Opt("--info", "download: only print the file name, URL and size (one HEAD request) and stop.", flag=True,
+        emit=False),
 ]
 
 
 def plan_firmware(ctx, args, tail):
     action = args.action
+    if action == "download":
+        if not args.version:
+            raise UsageError("firmware download: --version is required, one of " + ", ".join(DOWNLOAD_VERSIONS))
+        if any((args.update, args.key_file, args.gpl_archive, args.id, args.name, args.from_profile, args.build)):
+            raise UsageError("firmware download: takes only --version, --to, --yes and --info")
+        return Plan(func=lambda: run_firmware_download(ctx, args))
+    for flag, given in (("--version", args.version), ("--to", args.to), ("--yes", args.yes), ("--info", args.info)):
+        if given:
+            raise UsageError(f"firmware {action}: {flag} is only for firmware download")
     info = pick_build(ctx, args.build)
     if action == "import":
         if not args.update:
@@ -700,6 +732,299 @@ def plan_firmware(ctx, args, tail):
     argv = [ctx.python(), ctx.tool("native.py"), "firmware", action, "--output", str(info.path)]
     argv += FIRMWARE_COMMAND.emit(args) + list(tail)
     return Plan([Step(argv)])
+
+
+# ------------------------------------------------------------------------------------- official firmware download
+# The only download this tool ever makes: the firmware update zip from the maker's official download server. The URL is
+# built from the version here, never taken from the command line, and every redirect is checked against the same rule.
+DOWNLOAD_HOST = "downloads.support.alphatheta.com"
+DOWNLOAD_PATH = "/firmwares/music-production/TORAIZ_SP-16/TORAIZSP16_ver{code}.zip"
+DOWNLOAD_PATH_RE = re.compile(r"/firmwares/music-production/TORAIZ_SP-16/TORAIZSP16_ver(?:160|150|140|131)\.zip")
+DOWNLOAD_DIR = "downloads"
+MAX_DOWNLOAD_BYTES = 400 << 20       # the real zips are about 100 MB
+MAX_UPDATE_BYTES = 1 << 30
+UPDATE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\.UPD", re.IGNORECASE)
+
+
+def firmware_url(version):
+    if version not in DOWNLOAD_VERSIONS:
+        raise UsageError(f"firmware download: --version must be one of {', '.join(DOWNLOAD_VERSIONS)}")
+    return "https://" + DOWNLOAD_HOST + DOWNLOAD_PATH.format(code=version.replace(".", ""))
+
+
+def check_firmware_url(url):
+    """Refuse anything but https on the official host with the official firmware path (no port, credentials, query)."""
+    try:
+        parts = urllib.parse.urlsplit(str(url))
+        port = parts.port
+    except ValueError:
+        raise CliError(f"refusing {url!r}: not a valid URL") from None
+    if (parts.scheme != "https" or parts.hostname != DOWNLOAD_HOST or port not in (None, 443) or parts.username
+            or parts.password or parts.query or parts.fragment or not DOWNLOAD_PATH_RE.fullmatch(parts.path)):
+        raise CliError(f"refusing {url}: only https://{DOWNLOAD_HOST}/firmwares/music-production/TORAIZ_SP-16/ "
+                       "firmware files are downloaded")
+    return str(url)
+
+
+class OfficialRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only when its target passes the same URL rule."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        check_firmware_url(urllib.parse.urljoin(req.full_url, newurl))
+        return super().redirect_request(req, fp, code, msg, headers, urllib.parse.urljoin(req.full_url, newurl))
+
+
+def open_official(url, method="GET", headers=None, timeout=60):
+    """An open response for an official firmware URL (certificates verified, redirects checked)."""
+    check_firmware_url(url)
+    request = urllib.request.Request(url, method=method, headers=dict(headers or {}, **{"User-Agent": "sp16emu"}))
+    opener = urllib.request.build_opener(OfficialRedirects(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+    try:
+        return opener.open(request, timeout=timeout)
+    except urllib.error.HTTPError as error:
+        raise CliError(f"{DOWNLOAD_HOST} answered {error.code} {error.reason} for {url}") from None
+    except (urllib.error.URLError, OSError) as error:
+        reason = getattr(error, "reason", error)
+        raise CliError(f"cannot reach {DOWNLOAD_HOST} ({reason}); check the internet connection, or download the "
+                       "update yourself from the official page in the README") from None
+
+
+def pinned_update_sha(ctx, version):
+    """The update SHA-256 a compatibility profile pins for this version, or None."""
+    try:
+        data = json.loads((ctx.tools / "profiles" / f"sp16-{version}.json").read_text())
+        value = data["firmware"]["upd_sha256"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) else None
+
+
+def firmware_module(ctx):
+    """The importer's own update checks (trailer, version, CRC), loaded from the tools folder."""
+    keep = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        if str(ctx.tools) not in sys.path:
+            sys.path.insert(0, str(ctx.tools))
+        import firmware
+        return firmware
+    finally:
+        sys.dont_write_bytecode = keep
+
+
+def verify_update_file(ctx, path, version):
+    """The importer's checks plus the version and the profile pin: returns {sha256, bytes, pinned}; CliError if not."""
+    firmware = firmware_module(ctx)
+    try:
+        meta = firmware.inspect_update(path)
+    except firmware.FirmwareError as error:
+        raise CliError(f"{path}: {error}") from None
+    if meta["kind"] != "stock" or meta["trailer_version"] != version:
+        raise CliError(f"{path} is the update for {meta['trailer_version']} ({meta['kind']}), not {version}")
+    pin = pinned_update_sha(ctx, version)
+    if pin and meta["sha256"] != pin:
+        raise CliError(f"{path}: the update's SHA-256 differs from the one the {version} profile pins; it is not the "
+                       "verified update. Nothing was kept")
+    return {"sha256": meta["sha256"], "bytes": meta["bytes"], "pinned": bool(pin)}
+
+
+def safe_member_name(name):
+    """True for a zip member path that stays inside the folder it is extracted to."""
+    if not name or "\0" in name or "\\" in name or name.startswith("/") or re.match(r"[A-Za-z]:", name):
+        return False
+    return not any(part == ".." for part in name.split("/"))
+
+
+def zip_member_is_symlink(info):
+    return ((info.external_attr >> 16) & 0o170000) == 0o120000
+
+
+def zip_junk(name):
+    parts = name.split("/")
+    return parts[0] == "__MACOSX" or parts[-1] == ".DS_Store" or parts[-1].startswith("._")
+
+
+def extract_update_member(zip_path, folder):
+    """Extract the one .UPD of an official zip into folder (never extractall, never a path from the zip); returns the
+    path. CliError for a zip that is damaged, unsafe, or does not hold exactly one .UPD."""
+    try:
+        archive = zipfile.ZipFile(str(zip_path))
+    except (zipfile.BadZipFile, OSError) as error:
+        raise CliError(f"{Path(zip_path).name} is not a valid zip file ({error}); download it again") from None
+    with archive:
+        members = [i for i in archive.infolist() if not i.filename.endswith("/") and not zip_junk(i.filename)]
+        for info in members:
+            if not safe_member_name(info.filename) or zip_member_is_symlink(info):
+                raise CliError(f"{Path(zip_path).name} holds an unsafe entry ({info.filename!r}); nothing was extracted")
+        updates = [i for i in members if i.filename.lower().endswith(".upd")]
+        if len(updates) != 1:
+            raise CliError(f"{Path(zip_path).name} must hold exactly one .UPD file, and it holds {len(updates)}")
+        info = updates[0]
+        name = info.filename.rsplit("/", 1)[-1]
+        if not UPDATE_NAME_RE.fullmatch(name):
+            raise CliError(f"the update's file name {name!r} is not a plain name")
+        if not 0 < info.file_size <= MAX_UPDATE_BYTES:
+            raise CliError(f"the update's size ({info.file_size} bytes) is not plausible")
+        target = Path(folder) / name
+        part = Path(folder) / (name + ".part")
+        written = 0
+        try:
+            fd = os.open(str(part), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "wb") as out, archive.open(info) as source:
+                for chunk in iter(lambda: source.read(1 << 20), b""):
+                    written += len(chunk)
+                    if written > info.file_size:
+                        raise CliError("the update is larger than its zip entry says; nothing was kept")
+                    out.write(chunk)
+            if written != info.file_size:
+                raise CliError("the update is shorter than its zip entry says; nothing was kept")
+            os.replace(str(part), str(target))
+        except (zipfile.BadZipFile, OSError, zlib.error) as error:
+            raise CliError(f"cannot extract the update ({error}); download it again") from None
+        finally:
+            if part.exists():
+                part.unlink()
+    return target
+
+
+def download_folder(ctx, given, version):
+    if given:
+        base = Path(os.path.abspath(os.path.expanduser(given)))
+    else:
+        if not ctx.dry_run:
+            ensure_build_root(ctx)
+        base = ctx.build / DOWNLOAD_DIR
+    if base.is_symlink():
+        raise CliError(f"{ctx.display(base)} is a symlink; choose a real folder with --to")
+    folder = base / ("ver" + version.replace(".", ""))
+    return base, folder
+
+
+def existing_update(ctx, folder, version):
+    """(path, verification) of an update already downloaded into the folder and still verifying; else (None, None).
+    A file that no longer verifies is removed (it is ours and can be fetched again)."""
+    if not folder.is_dir():
+        return None, None
+    for path in sorted(folder.glob("*.UPD")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            return path, verify_update_file(ctx, path, version)
+        except CliError as error:
+            ctx.say(f"{error}; removing it and downloading again")
+            path.unlink()
+    return None, None
+
+
+def confirm_download(ctx, yes, text):
+    if yes:
+        return
+    if not ctx.interactive:
+        raise CliError(text + " This needs the user's confirmation: ask them, then repeat with --yes")
+    ctx.out.write(text + " Download it? [y/N] ")
+    ctx.out.flush()
+    if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+        raise CliError("not confirmed; nothing was downloaded")
+
+
+def fetch_zip(ctx, url, part, size):
+    """Download url into part (resuming a partial file when the server allows it), with progress."""
+    have = part.stat().st_size if part.is_file() and not part.is_symlink() else 0
+    if size is not None and have > size:
+        part.unlink()
+        have = 0
+    headers = {"Range": f"bytes={have}-"} if have else {}
+    response = ctx.open_url(url, "GET", headers)
+    status = getattr(response, "status", 200)
+    mode = "ab" if have and status == 206 else "wb"
+    done = have if mode == "ab" else 0
+    fd = os.open(str(part), os.O_WRONLY | os.O_CREAT | (os.O_APPEND if mode == "ab" else os.O_TRUNC) | os.O_NOFOLLOW, 0o600)
+    next_mark = 10
+    try:
+        with os.fdopen(fd, mode) as out:
+            for chunk in iter(lambda: response.read(1 << 20), b""):
+                done += len(chunk)
+                if done > MAX_DOWNLOAD_BYTES:
+                    raise CliError(f"the download is larger than {human(MAX_DOWNLOAD_BYTES)}; stopped")
+                out.write(chunk)
+                if size and done * 100 // size >= next_mark:
+                    ctx.say(f"downloaded {human(done)} of {human(size)} ({done * 100 // size}%)")
+                    next_mark = done * 100 // size // 10 * 10 + 10
+    except OSError as error:
+        raise CliError(f"the download was interrupted ({error}); run the same command again to resume") from None
+    finally:
+        response.close()
+    if size is not None and done != size:
+        raise CliError(f"the download stopped at {human(done)} of {human(size)}; run the same command again to resume")
+
+
+def fetch_official_firmware(ctx, version, to=None, yes=False, info_only=False):
+    """Download, verify and extract the official update for a version. Returns the result record. Idempotent: an
+    update already in the folder that still verifies is reused. Never fetches a key or the GPL archive."""
+    url = check_firmware_url(firmware_url(version))
+    file_name = url.rsplit("/", 1)[-1]
+    base, folder = download_folder(ctx, to, version)
+    record = {"version": version, "source": url, "file": file_name, "folder": str(folder)}
+    existing, check = existing_update(ctx, folder, version)
+    if existing is not None:
+        ctx.say(f"{ctx.display(existing)} is already downloaded and verified; skipping the download")
+        return dict(record, status="firmware_downloaded", update=str(existing), reused=True, **check)
+    head = ctx.open_url(url, "HEAD", None)
+    try:
+        length = head.headers.get("Content-Length")
+    finally:
+        head.close()
+    size = int(length) if length and length.isdigit() else None
+    if size is not None and not 0 < size <= MAX_DOWNLOAD_BYTES:
+        raise CliError(f"{file_name} reports {human(size)}, which is not a firmware update download; stopped")
+    record["bytes"] = size
+    description = (f"Official firmware {version}: {file_name} from {url} ({human(size) if size else 'size unknown'}).")
+    if info_only:
+        ctx.say(description)
+        return dict(record, status="firmware_download_info")
+    confirm_download(ctx, yes, description)
+    ensure_private_folder(base)
+    ensure_private_folder(folder)
+    part = folder / (file_name + ".part")
+    zip_path = folder / file_name
+    try:
+        fetch_zip(ctx, url, part, size)
+        os.replace(str(part), str(zip_path))
+        update = extract_update_member(zip_path, folder)
+        try:
+            check = verify_update_file(ctx, update, version)
+        except CliError:
+            update.unlink()
+            raise
+    finally:
+        for leftover in (zip_path,):
+            if leftover.exists():
+                leftover.unlink()
+    note = "matches the SHA-256 the profile pins" if check["pinned"] else \
+        f"no profile pins version {version}; SHA-256 {check['sha256']}"
+    ctx.say(f"downloaded {ctx.display(update)} ({human(check['bytes'])}); trailer and CRC valid; {note}")
+    return dict(record, status="firmware_downloaded", update=str(update), reused=False, **check)
+
+
+def ensure_private_folder(path):
+    path = Path(path)
+    if not path.exists():
+        path.mkdir(mode=0o700, parents=True)
+    elif not path.is_dir() or path.is_symlink():
+        raise CliError(f"{path} exists but is not a folder; move it away")
+
+
+def run_firmware_download(ctx, args):
+    if ctx.dry_run:
+        url = firmware_url(args.version)
+        _, folder = download_folder(ctx, args.to, args.version)
+        ctx.out.write(f"would ask {DOWNLOAD_HOST} for the size of {url.rsplit('/', 1)[-1]} (HEAD), ask for confirmation, "
+                      f"download it to {ctx.display(folder)}, extract the one .UPD, and check trailer, version, CRC "
+                      "and the pinned hash\n")
+        return 0
+    result = fetch_official_firmware(ctx, args.version, args.to, args.yes, args.info)
+    ctx.out.write(json.dumps(result, indent=2) + "\n")
+    return 0
 
 
 # ----------------------------------------------------------------------------------------------- diagnostics
@@ -1267,6 +1592,9 @@ USB_OPTS = [
         "DIR", emit=False),
     Opt("--any", "add: also copy files that are not WAV or AIFF audio (they are skipped with a warning otherwise).",
         flag=True, emit=False),
+    Opt("--dest", "add: a folder under PIONEER DJ SAMPLER to copy into instead of Samples (created if missing), for "
+        "example Projects for project files. Outside Samples every file type is copied. Cannot go above the "
+        "PIONEER DJ SAMPLER folder; excludes --to.", "PATH", emit=False),
 ]
 
 
@@ -1523,8 +1851,8 @@ def format_image(ctx, image):
         hdiutil_detach(ctx, device)
 
 
-def make_tree(point, subdir=""):
-    target = Path(point) / STICK_FOLDER / STICK_SAMPLES
+def make_tree(point, subdir="", root=STICK_SAMPLES):
+    target = Path(point) / STICK_FOLDER / root
     if subdir:
         target = target / subdir
     target.mkdir(parents=True, exist_ok=True)
@@ -1564,6 +1892,10 @@ def stick_state(ctx, image):
     return "blank" if image_is_blank(image) else "formatted"
 
 
+def usb_dry_folder(args):
+    return check_dest(args.dest) if args.dest else STICK_SAMPLES + "/" + (args.to or "")
+
+
 def usb_dry_run(ctx, args, image, files):
     lines = {
         "create": [f"create {ctx.display(image)} ({args.size or '1G'}, sparse, mode 0600)",
@@ -1573,7 +1905,7 @@ def usb_dry_run(ctx, args, image, files):
                    f"mkdir -p '{STICK_FOLDER}/{STICK_SAMPLES}'", "hdiutil detach /dev/diskN"],
         "add": ["create and format the image first when it is missing or blank",
                 "hdiutil attach ... -mountpoint MOUNTPOINT IMAGE"]
-               + [f"cp -X {shlex.quote(f)} '{STICK_FOLDER}/{STICK_SAMPLES}/{args.to or ''}'" for f in files
+               + [f"cp -X {shlex.quote(f)} '{STICK_FOLDER}/{usb_dry_folder(args)}'" for f in files
                   + ([args.tree + "/..."] if args.tree else [])]
                + ["delete the ._* and .DS_Store files macOS added", "hdiutil detach /dev/diskN"],
         "ls": ["hdiutil attach -readonly ... IMAGE", "list the files", "hdiutil detach /dev/diskN"],
@@ -1758,6 +2090,23 @@ def suggest_size(needed):
     return "32G"
 
 
+def check_dest(text):
+    """The --dest folder as a path under the firmware's own folder on the stick ('Projects', 'Samples/kicks'); a
+    leading folder name is accepted. Anything that could leave that folder (absolute, '..', backslashes) is refused."""
+    if text is None:
+        return ""
+    raw = str(text).strip()
+    if not raw or raw.startswith(("/", "~")) or "\\" in raw or "\0" in raw:
+        raise UsageError("usb: --dest must be a relative folder under PIONEER DJ SAMPLER, for example Projects")
+    parts = [p for p in raw.split("/") if p]
+    if parts and parts[0].lower() == STICK_FOLDER.lower():
+        parts = parts[1:]
+    if not parts or any(p in (".", "..") or fat_name_problem(p) for p in parts):
+        raise UsageError("usb: --dest must be a plain folder under PIONEER DJ SAMPLER, for example Projects or "
+                         "Samples/drums (no '..', no absolute path)")
+    return "/".join(parts)
+
+
 def check_subdir(text):
     if text is None:
         return ""
@@ -1768,13 +2117,13 @@ def check_subdir(text):
 
 
 # commands ---------------------------------------------------------------------------------------------------
-def usb_prepare(ctx, image, needed=0):
+def usb_prepare(ctx, image, needed=0, size=None):
     """For usb add: make sure the image exists and holds a file system (create or format it). A new image is the
-    default 1G, or larger when the files need more."""
+    default 1G, or larger when the files need more (or `size` bytes when given)."""
     state = stick_state(ctx, image)
     if state == "missing":
         check_idle(ctx, image, "add")
-        size = max(STICK_DEFAULT_SIZE, parse_size(suggest_size(needed)))
+        size = size or max(STICK_DEFAULT_SIZE, parse_size(suggest_size(needed)))
         ctx.say(f"creating {ctx.display(image)} ({human(size)}, FAT32, sparse)")
         create_image(ctx, image, size)
     elif state == "blank":
@@ -1796,37 +2145,54 @@ def usb_create(ctx, image, args):
     return 0
 
 
-def usb_add(ctx, image, args, files):
-    if not files and not args.tree:
-        raise UsageError("usb add: give the sample files to copy, for example: sp16emu usb add ~/samples/*.wav "
-                         "(or a whole folder with --tree DIR)")
-    subdir = check_subdir(args.to)
-    items, skipped = collect_samples(ctx, files, args.any, [args.tree] if args.tree else [])
-    if not items:
-        raise CliError("nothing to add: no file passed the checks above")
-    total = sum(source.stat().st_size for source, _ in items)
-    usb_prepare(ctx, image, total)
-    check_idle(ctx, image, "add")
+def usb_copy(ctx, image, groups, total):
+    """Copy [(items, folder under PIONEER DJ SAMPLER)] groups onto the stick in one mount: the free space is checked
+    for all of them first (nothing is copied when they do not fit), and what macOS adds is removed again."""
     with mounted_stick(ctx, image) as point:
-        target = make_tree(point, subdir)
         usage = shutil.disk_usage(str(point))
         free = usage.free
         if total > free:
             raise CliError(f"the files need {human(total)} but the stick has {human(free)} free; nothing was copied. "
                            f"Make a larger stick with: sp16emu usb create --size {suggest_size(usage.used + total)} --force (this "
                            "replaces the stick), or add --image PATH to use a new one")
-        for number, (source, relative) in enumerate(items, 1):
-            destination = target / relative
-            replaced = destination.exists()
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            code, _, err = ctx.run_tool(["cp", "-X", str(source), str(destination)])
-            if code:
-                raise CliError(f"cannot copy {source}: {(err.strip().splitlines() or ['cp failed'])[-1]}")
-            if replaced:
-                ctx.say(f"replaced {relative}")
-            if len(items) > 200 and number % 250 == 0:
-                ctx.say(f"copied {number} of {len(items)} files")
-    where = f"{STICK_FOLDER}/{STICK_SAMPLES}" + (f"/{subdir}" if subdir else "")
+        count = sum(len(items) for items, _ in groups)
+        number = 0
+        for items, folder in groups:
+            root, _, rest = folder.partition("/")
+            target = make_tree(point, rest, root)
+            for source, relative in items:
+                number += 1
+                destination = target / relative
+                replaced = destination.exists()
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                code, _, err = ctx.run_tool(["cp", "-X", str(source), str(destination)])
+                if code:
+                    raise CliError(f"cannot copy {source}: {(err.strip().splitlines() or ['cp failed'])[-1]}")
+                if replaced:
+                    ctx.say(f"replaced {relative}")
+                if count > 200 and number % 250 == 0:
+                    ctx.say(f"copied {number} of {count} files")
+
+
+def usb_add(ctx, image, args, files):
+    if not files and not args.tree:
+        raise UsageError("usb add: give the sample files to copy, for example: sp16emu usb add ~/samples/*.wav "
+                         "(or a whole folder with --tree DIR)")
+    if args.dest and args.to:
+        raise UsageError("usb add: --dest and --to exclude each other; --dest PATH is relative to PIONEER DJ SAMPLER, "
+                         "--to SUBDIR to Samples")
+    subdir = check_subdir(args.to)
+    dest = check_dest(args.dest)
+    folder = dest or (STICK_SAMPLES + (f"/{subdir}" if subdir else ""))
+    outside_samples = bool(dest) and dest.split("/")[0].lower() != STICK_SAMPLES.lower()
+    items, skipped = collect_samples(ctx, files, args.any or outside_samples, [args.tree] if args.tree else [])
+    if not items:
+        raise CliError("nothing to add: no file passed the checks above")
+    total = sum(source.stat().st_size for source, _ in items)
+    usb_prepare(ctx, image, total)
+    check_idle(ctx, image, "add")
+    usb_copy(ctx, image, [(items, folder)], total)
+    where = f"{STICK_FOLDER}/{folder}"
     ctx.out.write(f"Added {len(items)} file(s) ({human(total)}) to {where} on {ctx.display(image)}"
                   + (f"; skipped {skipped}" if skipped else "") + ". Next: sp16emu run\n")
     return 0
@@ -1896,7 +2262,8 @@ def usb_unmount(ctx, image):
 def run_usb(ctx, args, tail):
     image = resolve_image(ctx, args.image)
     files = list(args.files) + list(tail)
-    for option, action in (("size", "create"), ("force", "create"), ("to", "add"), ("any", "add"), ("tree", "add")):
+    for option, action in (("size", "create"), ("force", "create"), ("to", "add"), ("any", "add"), ("tree", "add"),
+                           ("dest", "add")):
         if getattr(args, option) and args.action != action:
             raise UsageError(f"usb {args.action}: --{option} is only for usb {action}")
     if files and args.action != "add":
@@ -1942,6 +2309,472 @@ def stick_for_run(ctx, args):
     return str(stick), [f"attaching the USB stick {ctx.display(stick)} (sp16emu run --no-usb skips it)"]
 
 
+# ------------------------------------------------------------------------------------------------- bootstrap
+# One command from a fresh clone to a running emulator: check the Mac, build, get the firmware in (your file, or the
+# official download), fill the virtual USB stick with samples and projects, launch. Every step looks at what is already
+# there and skips it, so a run that stopped halfway is simply started again.
+BOOTSTRAP_AUDIO = ("file", "coreaudio", "both")
+BOOTSTRAP_TMP_PREFIX = ".bootstrap-"   # build/.bootstrap-XXXX holds the extracted zips of one run and is removed again
+BOOTSTRAP_MAX_FILES = 250000
+BOOTSTRAP_OPTS = [
+    Opt("--name", "The build folder name: build/NAME (default: sp16).", "NAME"),
+    Opt("--audio", "Audio of the build: coreaudio plays through the Mac's output (AUDIBLE, the default), file records "
+        "WAVs and stays silent (use it for tests), both.", "MODE", choices=BOOTSTRAP_AUDIO),
+    Opt("--audio-device", "With coreaudio or both: the output device by CoreAudio UID (`sp16emu audio devices`).", "UID"),
+    Opt("--rebuild", "Rebuild an existing build in place (needed when its audio mode differs from --audio); the "
+        "firmware library and data are kept.", flag=True),
+    Opt("--reuse-qemu-from", "Copy the verified QEMU from this existing build folder (inside this repository) instead of "
+        "compiling it (default: automatic, from another build in build/).", "DIR", path=True),
+    Opt("--update", "Your firmware update file (.UPD); needs --key-file or --gpl-archive unless it is already in the "
+        "library.", "FILE", path=True),
+    Opt("--download-firmware", "Instead of --update: download this official firmware version from the official "
+        "server (HEAD first, then a question unless --yes).", "VERSION", choices=DOWNLOAD_VERSIONS),
+    Opt("--key-file", "The firmware key file (read in memory, never written or printed).", "FILE", path=True),
+    Opt("--gpl-archive", "The official GPL source archive parts, in order (the key is read from them in memory).",
+        "PART", nargs="+", path=True),
+    Opt("--firmware-name", "A display name for the imported firmware.", "TEXT"),
+    Opt("--yes", "You have agreed to the download of --download-firmware; do not ask.", flag=True),
+    Opt("--samples", "A folder or .zip of samples for the stick (repeatable); a folder keeps its name under "
+        "PIONEER DJ SAMPLER/Samples.", "DIR|ZIP", append=True),
+    Opt("--projects", "A folder or .zip of demo projects for the stick (repeatable); its files go into "
+        "PIONEER DJ SAMPLER/Projects.", "DIR|ZIP", append=True),
+    Opt("--stick-size", "Size of a new build/stick.img (64M to 32G). Default: the smallest of 1G, 2G, 4G, 8G, 16G, 32G "
+        "that holds the files.", "SIZE"),
+    Opt("--no-run", "Do everything except launching the emulator.", flag=True),
+]
+
+
+def stick_size_for(needed):
+    """The stick size for a new image: the smallest of 1, 2, 4, 8, 16 and 32 GiB that holds the files plus 5%."""
+    for gib in (1, 2, 4, 8, 16, 32):
+        if needed * 1.05 <= gib << 30:
+            return gib << 30
+    raise CliError(f"the samples and projects take {human(needed)}, which does not fit the largest stick (32G); give "
+                   "fewer samples")
+
+
+def library_entry_for(library, sha):
+    """The id of the library entry that holds the update with this SHA-256, or None."""
+    try:
+        folders = sorted(p for p in Path(library).iterdir() if p.is_dir() and not p.is_symlink())
+    except OSError:
+        return None
+    for folder in folders:
+        try:
+            manifest = json.loads((folder / "manifest.json").read_text())
+            if manifest["update"]["sha256"] == sha:
+                return folder.name
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
+
+
+def library_selected(library):
+    try:
+        entry = json.loads((Path(library) / "selected.json").read_text()).get("id")
+        if isinstance(entry, str) and (Path(library) / entry / "manifest.json").is_file():
+            return entry
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def zip_check(path):
+    """(file count, uncompressed bytes) of a zip after checking every member path; CliError for an unsafe or huge one."""
+    try:
+        archive = zipfile.ZipFile(str(path))
+    except (zipfile.BadZipFile, OSError) as error:
+        raise CliError(f"{path} is not a readable zip file ({error})") from None
+    with archive:
+        files = total = 0
+        for info in archive.infolist():
+            if zip_junk(info.filename):
+                continue
+            if not safe_member_name(info.filename.rstrip("/")) or zip_member_is_symlink(info):
+                raise CliError(f"{path} holds an unsafe entry ({info.filename!r}); nothing was extracted")
+            if info.filename.endswith("/"):
+                continue
+            files += 1
+            total += info.file_size
+        if files > BOOTSTRAP_MAX_FILES or total > STICK_MAX_SIZE:
+            raise CliError(f"{path} holds {files} files and {human(total)}, more than a stick can take")
+    return files, total
+
+
+def extract_zip_safely(ctx, zip_path, dest):
+    """Unpack a zip into a new folder: member paths are checked, nothing is executed, no link is created, and nothing
+    outside dest is written."""
+    files, total = zip_check(zip_path)
+    free = shutil.disk_usage(str(dest.parent)).free
+    if total + (1 << 30) > free:
+        raise CliError(f"unpacking {Path(zip_path).name} needs {human(total)} and only {human(free)} is free in "
+                       f"{ctx.display(dest.parent)}")
+    dest.mkdir(mode=0o700)
+    root = os.path.realpath(str(dest))
+    with zipfile.ZipFile(str(zip_path)) as archive:
+        for info in archive.infolist():
+            if info.filename.endswith("/") or zip_junk(info.filename):
+                continue
+            target = Path(root) / info.filename
+            if not os.path.realpath(str(target.parent)).startswith(root):
+                raise CliError(f"{Path(zip_path).name}: {info.filename!r} would land outside the folder; stopped")
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if not os.path.realpath(str(target.parent)).startswith(root):
+                raise CliError(f"{Path(zip_path).name}: {info.filename!r} would land outside the folder; stopped")
+            try:
+                fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            except OSError as error:
+                raise CliError(f"{Path(zip_path).name}: cannot create {info.filename!r} ({error.strerror})") from None
+            written = 0
+            with os.fdopen(fd, "wb") as out, archive.open(info) as source:
+                for chunk in iter(lambda: source.read(1 << 20), b""):
+                    written += len(chunk)
+                    if written > info.file_size:
+                        raise CliError(f"{Path(zip_path).name}: {info.filename!r} is larger than its entry says; stopped")
+                    out.write(chunk)
+            if written != info.file_size:
+                raise CliError(f"{Path(zip_path).name}: {info.filename!r} is shorter than its entry says; stopped")
+    return dest
+
+
+def check_stick_source(given, what):
+    """The folder or zip a user named for --samples or --projects, checked before anything is built."""
+    path = Path(os.path.expanduser(given))
+    if path.is_dir():
+        return path, None
+    if path.is_file() and path.suffix.lower() == ".zip":
+        return path, zip_check(path)
+    if path.exists():
+        raise CliError(f"--{what}: {given} is neither a folder nor a .zip file")
+    raise CliError(f"--{what}: {given} does not exist")
+
+
+def materialize_source(ctx, path, workdir):
+    """A folder for a source: the folder itself, or the zip unpacked under workdir. A zip that holds one top-level
+    folder gives that folder (so the folder name is kept); loose files go into a folder named after the zip."""
+    if path.is_dir():
+        return path
+    stem = re.sub(r"[^A-Za-z0-9 _.-]", "_", path.stem)[:60].strip(" .") or "pack"
+    target, number = workdir / stem, 1
+    while target.exists():
+        number += 1
+        target = workdir / f"{stem}-{number}"
+    folder = extract_zip_safely(ctx, path, target)
+    entries = [e for e in folder.iterdir() if not e.name.startswith(".")]
+    if len(entries) == 1 and entries[0].is_dir():
+        return entries[0]
+    return folder
+
+
+def stick_missing(ctx, image, groups):
+    """The groups restricted to the files the stick lacks (or holds with another size). Mounts the stick read-only."""
+    check_idle(ctx, image, "bootstrap")
+    present = {}
+    with mounted_stick(ctx, image, writable=False) as point:
+        base = Path(point) / STICK_FOLDER
+        for folder in {f for _, f in groups}:
+            top = base / folder
+            for current, dirs, files in os.walk(str(top)):
+                dirs[:] = [d for d in dirs if d not in JUNK_FOLDERS]
+                for name in files:
+                    if name in JUNK_FILES or name.startswith(JUNK_PREFIX):
+                        continue
+                    full = Path(current) / name
+                    present[(folder, str(full.relative_to(top)).lower())] = full.stat().st_size
+    left = []
+    for items, folder in groups:
+        lacking = [(s, r) for s, r in items if present.get((folder, str(r).lower())) != s.stat().st_size]
+        if lacking:
+            left.append((lacking, folder))
+    return left
+
+
+class Boot:
+    """What a bootstrap run found and will do; built before anything runs so a bad input fails in seconds."""
+
+    def __init__(self):
+        self.steps = []          # (key, title, "run"|"skip", detail)
+
+    def add(self, key, title, state, detail=""):
+        self.steps.append((key, title, state, detail))
+
+
+def boot_build_state(ctx, args, name):
+    out = ctx.build / name
+    info = BuildInfo(name, out, read_assets(out))
+    wanted_audio = args.audio or "coreaudio"
+    if info.complete and not args.rebuild:
+        have = (info.assets or {}).get("audio") or ""
+        device = (info.assets or {}).get("audio_device") or ""
+        if have != wanted_audio or (args.audio_device or "") != device:
+            raise CliError(f"{ctx.display(out)} was built with audio '{have or 'silent'}'"
+                           + (f" on device {device}" if device else "") + f", not '{wanted_audio}'"
+                           + (f" on device {args.audio_device}" if args.audio_device else "")
+                           + f". Run again with --rebuild to rebuild it in place (the firmware library and data are "
+                             f"kept), with --audio {have or 'file'} to keep it as it is, or with another --name")
+    return info
+
+
+def plan_bootstrap(ctx, args):
+    """Look at the Mac and the inputs and decide each step. Raises before anything changes when an input is wrong."""
+    name = check_name(args.name or DEFAULT_NAME)
+    if args.update and args.download_firmware:
+        raise UsageError("bootstrap: give --update FILE or --download-firmware VERSION, not both")
+    if args.key_file and args.gpl_archive:
+        raise UsageError("bootstrap: give --key-file or --gpl-archive, not both")
+    if args.audio_device and (args.audio or "coreaudio") == "file":
+        raise UsageError("bootstrap: --audio-device needs --audio coreaudio or both")
+    for attr in ("update", "key_file"):
+        if getattr(args, attr):
+            setattr(args, attr, os.path.expanduser(getattr(args, attr)))
+    if args.gpl_archive:
+        args.gpl_archive = [os.path.expanduser(part) for part in args.gpl_archive]
+    boot = Boot()
+    stick_size = parse_size(args.stick_size) if args.stick_size else None
+    info = boot_build_state(ctx, args, name)
+    build_done = info.complete and not args.rebuild
+    boot.name, boot.info, boot.stick_size = name, info, stick_size
+    boot.build_done = build_done
+    boot.add("doctor", "check this Mac", "run", "")
+    if build_done:
+        boot.add("build", f"build {ctx.display(info.path)}", "skip", "already built with the same audio")
+    else:
+        boot.add("build", f"build {ctx.display(info.path)} with audio {args.audio or 'coreaudio'}", "run",
+                 "resuming an incomplete build" if info.assets is not None and not info.complete else "")
+    # firmware
+    library = info.library if info.library else resolve_library(ctx, name, None, None)[0]
+    boot.library = Path(library)
+    boot.update, boot.sha, boot.entry = None, None, None
+    if args.update:
+        path = Path(args.update)
+        if not path.is_file():
+            raise CliError(f"--update: {args.update} does not exist")
+        try:
+            boot.sha = firmware_module(ctx).inspect_update(path)["sha256"]
+        except Exception as error:  # FirmwareError (refused update) or OSError
+            raise CliError(f"--update: {error}") from None
+        boot.update = path
+    elif args.download_firmware:
+        version = args.download_firmware
+        boot.sha = pinned_update_sha(ctx, version)
+        _, folder = download_folder(ctx, None, version)
+        have = sorted(folder.glob("*.UPD")) if folder.is_dir() else []
+        if boot.sha is None and have:
+            try:
+                boot.sha = firmware_module(ctx).inspect_update(have[0])["sha256"]
+            except Exception:
+                boot.sha = None
+    if boot.sha:
+        boot.entry = library_entry_for(boot.library, boot.sha)
+    if args.update or args.download_firmware:
+        label = args.update and Path(args.update).name or f"official firmware {args.download_firmware}"
+        if boot.entry:
+            selected = library_selected(boot.library)
+            boot.add("firmware", f"firmware {label}", "skip", f"already in the library as {boot.entry}")
+            boot.add("select", f"select {boot.entry}", "skip" if selected == boot.entry else "run",
+                     "already selected" if selected == boot.entry else "")
+        else:
+            if not (args.key_file or args.gpl_archive):
+                raise UsageError("bootstrap: importing a firmware needs --key-file KEY or --gpl-archive PART1 PART2 "
+                                 "(the key is read from the official GPL archive in memory)")
+            for label_, value in [("--key-file", args.key_file)] + [("--gpl-archive", p) for p in args.gpl_archive or []]:
+                if value and not Path(value).exists():
+                    raise CliError(f"{label_}: {value} does not exist")
+            verb = "download and import" if args.download_firmware else "import"
+            boot.add("firmware", f"firmware {label}", "run", verb)
+            boot.add("select", "select the imported firmware", "run", "")
+    else:
+        if not library_imports(boot.library):
+            raise UsageError("bootstrap: the firmware library is empty; give --update FILE (or --download-firmware "
+                             "VERSION) with --key-file KEY or --gpl-archive PART1 PART2")
+        selected = library_selected(boot.library)
+        boot.add("firmware", "firmware", "skip", "no firmware given; the library already has "
+                 f"{library_imports(boot.library)} import(s)" + (f", selected: {selected}" if selected else ""))
+    # usb
+    boot.samples = [check_stick_source(p, "samples") + (p,) for p in args.samples or []]
+    boot.projects = [check_stick_source(p, "projects") + (p,) for p in args.projects or []]
+    if not boot.samples and not boot.projects:
+        boot.add("usb", "USB stick", "skip", "no --samples or --projects given")
+    else:
+        boot.add("usb", f"USB stick {ctx.display(default_stick(ctx))}", "run",
+                 "check what is on it, add what is missing" if default_stick(ctx).exists() else "create and fill it")
+    if args.no_run:
+        boot.add("run", "launch", "skip", "--no-run")
+    else:
+        pids = running_pids(ctx, info.path) if info.complete else []
+        boot.add("run", "launch the emulator", "skip" if pids else "run",
+                 f"already running (process id {', '.join(map(str, pids))})" if pids else "")
+    return boot
+
+
+def boot_header(ctx, number, total, title, state, detail):
+    mark = "skipped" if state == "skip" else "would run" if ctx.dry_run else "running"
+    ctx.out.write(f"[{number}/{total}] {title}: {mark}" + (f" ({detail})" if detail else "") + "\n")
+    ctx.out.flush()
+
+
+def boot_tool(ctx, command, tokens, tail=()):
+    """Run one of the tool commands (build, firmware, run) through its normal plan; returns the exit code."""
+    args = command.parser().parse_args(list(tokens))
+    return execute(ctx, command.handler(ctx, args, list(tail)))
+
+
+def boot_dry_tool(ctx, out, command, native, tokens):
+    """Print the tool command a later step would run, before the build it needs exists (dry run only)."""
+    args = command.parser().parse_args(list(tokens))
+    argv = [ctx.python(), ctx.tool("native.py")] + list(native) + ["--output", str(out)] + command.emit(args)
+    ctx.out.write("    + " + shlex.join(argv) + "\n")
+
+
+def boot_usb(ctx, args, boot):
+    image = resolve_image(ctx, None)
+    work = None
+    try:
+        ensure_build_root(ctx)
+        work = Path(tempfile.mkdtemp(prefix=BOOTSTRAP_TMP_PREFIX, dir=str(ctx.build)))
+        sample_folders = [materialize_source(ctx, path, work) for path, _, _ in boot.samples]
+        project_folders = [materialize_source(ctx, path, work) for path, _, _ in boot.projects]
+        groups = []
+        if sample_folders:
+            items, skipped = collect_samples(ctx, [str(f) for f in sample_folders], False)
+            groups.append((items, STICK_SAMPLES))
+        if project_folders:
+            items, skipped = collect_samples(ctx, [], True, [str(f) for f in project_folders])
+            groups.append((items, "Projects"))
+        groups = [(items, folder) for items, folder in groups if items]
+        if not groups:
+            raise CliError("nothing to add: no file in --samples or --projects passed the checks above")
+        total = sum(s.stat().st_size for items, _ in groups for s, _ in items)
+        state = stick_state(ctx, image)
+        if state == "formatted":
+            groups = stick_missing(ctx, image, groups)
+            if not groups:
+                ctx.out.write(f"    the stick {ctx.display(image)} already holds these files (same paths and sizes); "
+                              "nothing to add\n")
+                return 0
+            total = sum(s.stat().st_size for items, _ in groups for s, _ in items)
+        else:
+            usb_prepare(ctx, image, total, boot.stick_size or stick_size_for(total))
+        check_idle(ctx, image, "bootstrap")
+        usb_copy(ctx, image, groups, total)
+        count = sum(len(items) for items, _ in groups)
+        ctx.out.write(f"    added {count} file(s) ({human(total)}) to {ctx.display(image)}: "
+                      + ", ".join(f"{len(items)} in {STICK_FOLDER}/{folder}" for items, folder in groups) + "\n")
+        return 0
+    finally:
+        if work is not None and work.is_dir() and inside_build(ctx, work):
+            shutil.rmtree(str(work), ignore_errors=True)
+
+
+def run_bootstrap(ctx, args, tail):
+    if tail:
+        raise UsageError("bootstrap: takes no extra arguments after --")
+    if not ctx.dry_run:
+        require_macos()
+    boot = plan_bootstrap(ctx, args)
+    total = len(boot.steps)
+    name = boot.name
+    ctx.out.write(f"sp16emu bootstrap: {total} steps"
+                  + (" (dry run: nothing is changed)" if ctx.dry_run else "") + "\n")
+    update_path = boot.update
+    number = 0
+    for key, title, state, detail in boot.steps:
+        number += 1
+        boot_header(ctx, number, total, title, state, detail)
+        if state == "skip":
+            continue
+        if key == "doctor":
+            checks = doctor_checks(ctx)
+            marks = {"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
+            blocking = []
+            for status, text, info_, fix in checks:
+                ctx.out.write(f"    [{marks[status]}] {text}" + (f": {info_}" if info_ else "") + "\n")
+                if fix and status != "ok":
+                    ctx.out.write(f"           fix: {fix}\n")
+                if status == "fail" and not (boot.build_done and "builds only" in text):
+                    blocking.append(text)
+            if blocking and not ctx.dry_run:
+                ctx.out.write("\nFix the problems above (the fix: lines say how), then run the same bootstrap command "
+                              "again; it continues where it stopped.\n")
+                return 1
+        elif key == "build":
+            tokens = ["--name", name, "--audio", args.audio or "coreaudio"]
+            if args.audio_device:
+                tokens += ["--audio-device", args.audio_device]
+            if boot.info.complete:
+                tokens.append("--rebuild")
+            if args.reuse_qemu_from:
+                tokens += ["--reuse-qemu-from", os.path.expanduser(args.reuse_qemu_from)]
+            code = boot_tool(ctx, BUILD_COMMAND, tokens)
+            if code:
+                return code
+        elif key == "firmware":
+            if args.download_firmware:
+                if ctx.dry_run:
+                    ctx.out.write(f"    would download official firmware {args.download_firmware} from {DOWNLOAD_HOST} "
+                                  "(HEAD for the size, then ask unless --yes) into build/downloads\n")
+                    update_path = ctx.build / DOWNLOAD_DIR / ("ver" + args.download_firmware.replace(".", "")) / "<update>.UPD"
+                else:
+                    result = fetch_official_firmware(ctx, args.download_firmware, None, args.yes)
+                    update_path = Path(result["update"])
+            tokens = ["import", "--build", name, "--update", str(update_path)]
+            tokens += ["--key-file", args.key_file] if args.key_file else ["--gpl-archive"] + list(args.gpl_archive)
+            if args.firmware_name:
+                tokens += ["--name", args.firmware_name]
+            if ctx.dry_run:
+                boot_dry_tool(ctx, boot.info.path, FIRMWARE_COMMAND, ["firmware", "import"], tokens)
+                continue
+            code = boot_tool(ctx, FIRMWARE_COMMAND, tokens)
+            if code:
+                return code
+        elif key == "select":
+            entry = boot.entry
+            if not entry and not ctx.dry_run:
+                sha = firmware_module(ctx).inspect_update(update_path)["sha256"]
+                entry = library_entry_for(boot.library, sha)
+                if not entry:
+                    raise CliError("the firmware import finished but the update is not in the library; run "
+                                   "`sp16emu firmware list` and read the import report above")
+            if ctx.dry_run:
+                boot_dry_tool(ctx, boot.info.path, FIRMWARE_COMMAND, ["firmware", "select"], ["select", "--id", entry or "<imported id>"])
+                continue
+            code = boot_tool(ctx, FIRMWARE_COMMAND, ["select", "--build", name, "--id", entry])
+            if code:
+                return code
+        elif key == "usb":
+            if ctx.dry_run:
+                image = default_stick(ctx)
+                what = ("check " + ctx.display(image) + " and add the files it lacks" if image.exists()
+                        else "create " + ctx.display(image) + " (smallest of 1G to 32G that fits) and fill it")
+                ctx.out.write("    would unpack any .zip into a temporary folder under build/ (member paths checked, "
+                              "nothing executed, removed afterwards), then " + what + ":\n")
+                ctx.out.write(f"      samples  -> {STICK_FOLDER}/{STICK_SAMPLES}/<folder name>   "
+                              + (", ".join(g for _, _, g in boot.samples) or "-") + "\n")
+                ctx.out.write(f"      projects -> {STICK_FOLDER}/Projects   "
+                              + (", ".join(g for _, _, g in boot.projects) or "-") + "\n")
+            else:
+                code = boot_usb(ctx, args, boot)
+                if code:
+                    return code
+        elif key == "run":
+            if ctx.dry_run:
+                tokens = ["--usb-image", str(default_stick(ctx))] if (boot.samples or boot.projects or default_stick(ctx).exists()) else []
+                boot_dry_tool(ctx, boot.info.path, RUN_COMMAND, ["launch"], tokens)
+                continue
+            code = boot_tool(ctx, RUN_COMMAND, ["--name", name])
+            if code:
+                return code
+    if ctx.dry_run:
+        return 0
+    again = "sp16emu run" + ("" if name == DEFAULT_NAME else f" --name {name}")
+    if args.no_run:
+        ctx.out.write(f"\nDone. Start the emulator with: {again}\n")
+    else:
+        ctx.out.write("\nDone. The emulator is starting; the screen settles after about 10 seconds. Stop it by closing "
+                      f"its window. Start it again with: {again}\n")
+    return 0
+
+
 # ---------------------------------------------------------------------------------------------------- help
 def help_ctl_lines():
     return [
@@ -1976,6 +2809,31 @@ def make_commands():
         "Checks the Mac (Apple silicon, macOS 13+), Xcode Command Line Tools, Python 3.12+, QEMU build tools, Docker, "
         "free disk space and the git set-up. Exits non-zero when something blocks a build.",
         examples=["sp16emu doctor"], usage="sp16emu doctor", direct=True)
+    add("bootstrap", "Start here", "Set up everything in one go: check, build, import firmware, fill the USB stick, run",
+        "From a fresh clone to a running emulator with audio, the firmware you choose and a USB stick with samples and "
+        "demo projects. Steps, in order: doctor (stops with the fixes), build build/NAME with --audio coreaudio, import "
+        "--update (or download the official --download-firmware) and select it, create or top up build/stick.img from "
+        "--samples (folder or .zip, kept under PIONEER DJ SAMPLER/Samples/<folder name>) and --projects (into "
+        "PIONEER DJ SAMPLER/Projects), launch. Every step looks at what is already there and says when it skips it, so "
+        "the same command can be run again after an interruption; --dry-run lists every step and changes nothing. "
+        "Nothing is downloaded without --yes or your answer, and only from the official firmware server.",
+        opts=BOOTSTRAP_OPTS,
+        usage="sp16emu bootstrap [--update FILE | --download-firmware VERSION] [--key-file KEY | --gpl-archive PART...] "
+              "[--samples DIR|ZIP]... [--projects DIR|ZIP]... [--audio MODE] [--no-run]",
+        examples=["sp16emu bootstrap --update ~/Downloads/SP16.UPD --gpl-archive ~/Downloads/gpl-1.zip ~/Downloads/gpl-2.zip "
+                  "--samples ~/Samples --projects ~/Downloads/Projects.zip",
+                  "sp16emu bootstrap --download-firmware 1.60 --key-file KEY --samples ~/Samples",
+                  "sp16emu bootstrap --audio file --no-run --update FILE.UPD --key-file KEY    # silent, do not launch",
+                  "sp16emu --dry-run bootstrap --update FILE.UPD --key-file KEY --samples ~/Samples",
+                  "sp16emu bootstrap --samples ~/more-samples --no-run                       # later: top up the stick"],
+        notes=["Already done is skipped: an existing build with the same audio, a firmware that is already in the "
+               "library, files that the stick already holds (same path and size). A build made with another audio mode "
+               "is not touched unless you add --rebuild.",
+               "A zip is unpacked into a temporary folder under build/ after every member path is checked, nothing in "
+               "it is executed, and the folder is deleted again.",
+               "The key is never printed or written; --gpl-archive reads it from the official GPL archive in memory.",
+               "The emulator must not be running while the stick is changed; stop it first (by its exact process id)."],
+        direct=True)
     global BUILD_COMMAND, RUN_COMMAND, FIRMWARE_COMMAND, DIAGNOSTICS_COMMAND, MOD_COMMAND, HWSUITE_COMMAND
     BUILD_COMMAND = add(
         "build", "Build and run", "Build the emulator app (QEMU, Linux guest image, macOS app) into build/NAME",
@@ -2053,7 +2911,7 @@ def make_commands():
         "Works on the shared firmware library through a build (import needs a build's guest to unpack the update). "
         "You download the update and the GPL source archive yourself from the official pages (see the README); "
         "the key is read in memory and never written, printed or logged.",
-        positionals=[Pos("action", "what to do", choices=FIRMWARE_ACTIONS)], opts=FIRMWARE_OPTS,
+        positionals=[Pos("action", "what to do", choices=FIRMWARE_CHOICES)], opts=FIRMWARE_OPTS,
         usage="sp16emu firmware ACTION [--build NAME] [options]",
         examples=["sp16emu firmware import --update ~/Downloads/SP16.UPD --gpl-archive ~/Downloads/gpl-1.zip ~/Downloads/gpl-2.zip",
                   "sp16emu firmware import --update FILE.UPD --key-file KEY", "sp16emu firmware list",
@@ -2143,7 +3001,7 @@ def overview(ctx):
             if command.group == group:
                 lines.append(f"  {command.name.ljust(12)}{command.summary}")
         lines.append("")
-    lines += ["First time: sp16emu doctor; sp16emu build; sp16emu firmware import ...; sp16emu run",
+    lines += ["First time: sp16emu bootstrap --help (or: sp16emu doctor; build; firmware import ...; run)",
               "Details: sp16emu help COMMAND   (also: sp16emu COMMAND --help)", "", GLOBAL_HELP]
     return "\n".join(lines) + "\n"
 
@@ -2173,7 +3031,7 @@ def command_help(command):
                 lines.append(f"  {usage.ljust(26)}{wrapped[0] if wrapped else ''}")
                 lines += [" " * 28 + w for w in wrapped[1:]]
         lines.append("")
-    if command.name not in ("help", "doctor", "builds", "audio", "clean", "usb"):
+    if command.name not in ("help", "doctor", "builds", "audio", "clean", "usb", "bootstrap"):
         lines.append("  -- ARGS...                Everything after -- is passed unchanged to the underlying tool")
         lines.append("                            (its own --help works there).")
         lines.append("")
@@ -2206,13 +3064,15 @@ def unknown_command(name):
 
 
 DIRECT = {"help": run_help, "doctor": run_doctor, "builds": run_builds, "audio": run_audio, "clean": run_clean,
-          "usb": run_usb}
+          "usb": run_usb, "bootstrap": run_bootstrap}
 
 
 # ---------------------------------------------------------------------------------------------------- main
 def execute(ctx, plan):
     for note in plan.notes:
         ctx.say(note)
+    if plan.func is not None:
+        return plan.func()
     if not ctx.dry_run:
         for setup in plan.setup:
             setup()

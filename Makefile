@@ -3,6 +3,7 @@
 # Every target is a thin call to ./sp16emu, which holds all the logic (`./sp16emu help` lists every command and option).
 # Run `make` or `make help` for the targets and the variables you can override, for example:
 #   make build-record                     build with WAV recording (silent)
+#   make bootstrap UPD=~/Downloads/SP16.UPD GPL="gpl-1.zip gpl-2.zip" SAMPLES=~/Samples   everything: build, import, stick, run
 #   make import UPD=~/Downloads/SP16.UPD GPL="gpl-1.zip gpl-2.zip"
 #   make run NAME=sp16-record
 # Use `make -n <target>` to see the exact command without running it.
@@ -21,7 +22,7 @@ MAKEFLAGS += --warn-undefined-variables --no-builtin-rules
 # Lines starting with "#: " document a variable for `make help` (a trailing comment would become part of the value).
 #: NAME  build name: builds go to build/NAME (variants append -audio, -record, -dev, -dev-uncal); default sp16
 NAME ?= sp16
-#: AUDIO  `make build` only: file (record WAVs, silent), coreaudio (AUDIBLE) or both; empty = silent
+#: AUDIO  `make build`: file (record WAVs, silent), coreaudio (AUDIBLE) or both; empty = silent. `make bootstrap`: empty = coreaudio
 AUDIO ?=
 #: AUDIO_DEVICE  with coreaudio: output device UID (list them with `make audio-devices`)
 AUDIO_DEVICE ?=
@@ -31,12 +32,22 @@ FIRMWARE ?=
 USB_IMAGE ?=
 #: FILES  usb-add: the sample files (or folders) to copy onto the stick, separated by spaces
 FILES ?=
+#: DEST  usb-add: copy into this folder under PIONEER DJ SAMPLER instead of Samples, for example Projects
+DEST ?=
 #: UPD  import: your firmware update file (.UPD)
 UPD ?=
 #: KEY  import: your key file (or use GPL)
 KEY ?=
 #: GPL  import: the GPL source archive parts in order, separated by spaces (no spaces inside a path)
 GPL ?=
+#: VERSION  bootstrap (given on the command line): download this official firmware version (1.60, 1.50, 1.40 or 1.31) instead of UPD
+VERSION ?=
+#: YES  bootstrap: 1 = you agree to the VERSION download from the official server (no question asked)
+YES ?=
+#: SAMPLES  bootstrap: sample folders or .zip files for the stick, separated by spaces (no spaces inside a path)
+SAMPLES ?=
+#: PROJECTS  bootstrap: demo project folders or .zip files for the stick, separated by spaces
+PROJECTS ?=
 #: PROFILE  hwsuite-smoke: firmware version or profile file (default: the firmware's own version)
 PROFILE ?=
 #: REBUILD  1 = rebuild an existing build in place (keeps firmware and data)
@@ -63,6 +74,12 @@ FIRMWARE_FLAG      = $(if $(strip $(FIRMWARE)),--firmware "$(FIRMWARE)")
 USB_IMAGE_FLAG     = $(if $(strip $(USB_IMAGE)),--usb-image "$(USB_IMAGE)")
 USB_IMAGE_ARG      = $(if $(strip $(USB_IMAGE)),--image "$(USB_IMAGE)")
 PROFILE_FLAG       = $(if $(strip $(PROFILE)),--profile "$(PROFILE)")
+DEST_FLAG          = $(if $(strip $(DEST)),--dest "$(DEST)")
+# VERSION counts only when it is given on the command line, so a VERSION in your environment never starts a download.
+BOOT_VERSION       = $(if $(findstring command line,$(origin VERSION)),$(strip $(VERSION)))
+BOOT_FIRMWARE      = $(if $(BOOT_VERSION),--download-firmware "$(BOOT_VERSION)",$(if $(strip $(UPD)),--update "$(UPD)"))
+BOOT_KEY           = $(if $(strip $(KEY)),--key-file "$(KEY)")$(if $(strip $(GPL)), --gpl-archive $(GPL))
+BOOT_YES           = $(if $(strip $(YES)),--yes)
 # Maintenance targets use --build NAME only when you set NAME yourself; otherwise ./sp16emu picks the default build.
 BUILD_FLAG         = $(if $(or $(findstring command line,$(origin NAME)),$(findstring environment,$(origin NAME))),--build "$(NAME)")
 
@@ -73,6 +90,18 @@ $(error make import needs UPD=<your firmware update file>, plus KEY=<key file> o
 endif
 ifeq ($(strip $(KEY))$(strip $(GPL)),)
 $(error make import needs KEY=<your key file> or GPL="<GPL archive part 1> <part 2>" besides UPD)
+endif
+endif
+ifneq ($(filter bootstrap,$(MAKECMDGOALS)),)
+ifneq ($(strip $(UPD)),)
+ifneq ($(BOOT_VERSION),)
+$(error make bootstrap takes UPD=<your firmware update file> or VERSION=<1.60|1.50|1.40|1.31> (a download), not both)
+endif
+endif
+ifneq ($(strip $(UPD))$(BOOT_VERSION),)
+ifeq ($(strip $(KEY))$(strip $(GPL)),)
+$(error make bootstrap needs KEY=<your key file> or GPL="<GPL archive part 1> <part 2>" besides UPD or VERSION)
+endif
 endif
 endif
 ifneq ($(filter usb-add,$(MAKECMDGOALS)),)
@@ -86,7 +115,7 @@ $(error make clean-all deletes everything in build/, including the imported firm
 endif
 endif
 
-.PHONY: help doctor build build-audio build-record build-dev build-control run run-audio run-dev audio-devices \
+.PHONY: help doctor bootstrap build build-audio build-record build-dev build-control run run-audio run-dev audio-devices \
 	usb-create usb-add usb-ls usb-mount usb-unmount import list diagnostics hwsuite-smoke test clean clean-all \
 	install uninstall
 
@@ -104,6 +133,9 @@ help: ## Show the targets and variables
 
 doctor: ## Check this Mac for everything a build needs
 	$(SP16EMU) doctor
+
+bootstrap: ## Check, build with audio, import firmware (UPD or VERSION, plus KEY or GPL), fill the stick (SAMPLES, PROJECTS), run
+	$(SP16EMU) bootstrap --name "$(NAME)" --audio "$(or $(strip $(AUDIO)),coreaudio)" $(AUDIO_DEVICE_FLAG) $(REBUILD_FLAG) $(BOOT_FIRMWARE) $(BOOT_KEY) $(BOOT_YES) $(foreach s,$(SAMPLES),--samples "$(s)") $(foreach p,$(PROJECTS),--projects "$(p)") $(ARGS)
 
 build: ## Build build/NAME (silent unless AUDIO is set; REBUILD=1 rebuilds in place)
 	$(SP16EMU) build --name "$(NAME)" $(AUDIO_FLAG) $(AUDIO_DEVICE_FLAG) $(REBUILD_FLAG) $(ARGS)
@@ -135,8 +167,8 @@ audio-devices: ## List the Mac's audio output devices and their UIDs (for AUDIO_
 usb-create: ## Create and format the virtual USB stick (build/stick.img, or USB_IMAGE=...) without booting
 	$(SP16EMU) usb create $(USB_IMAGE_ARG) $(ARGS)
 
-usb-add: ## Copy sample files onto the stick (FILES="a.wav b.wav"), creating it if needed
-	$(SP16EMU) usb add $(FILES) $(USB_IMAGE_ARG) $(ARGS)
+usb-add: ## Copy files onto the stick (FILES="a.wav b.wav"; DEST=Projects for project files), creating it if needed
+	$(SP16EMU) usb add $(FILES) $(USB_IMAGE_ARG) $(DEST_FLAG) $(ARGS)
 
 usb-ls: ## List what is on the stick
 	$(SP16EMU) usb ls $(USB_IMAGE_ARG) $(ARGS)

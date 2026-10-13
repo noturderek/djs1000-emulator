@@ -647,7 +647,7 @@ class HelpTests(CliCase):
             self.assertRegex(out, rf"(?m)^  {command.name}\s+\S")
         self.assertEqual(cli.main([], ctx=self.make_ctx()), 0)
         wanted = {"help", "doctor", "build", "run", "firmware", "diagnostics", "hwsuite", "mod", "ctl", "audio",
-                  "builds", "doctor", "test", "clean", "usb"}
+                  "builds", "doctor", "test", "clean", "usb", "bootstrap"}
         self.assertEqual(wanted, set(cli.BY_NAME))
 
     def test_every_command_documents_every_option_and_an_example(self):
@@ -796,8 +796,8 @@ class MakefileTests(unittest.TestCase):
         for target in phony:
             self.assertRegex(text, rf"(?m)^{target}:.*## \S", f"{target} has no help comment")
             self.assertRegex(out, rf"(?m)^  {target}\s+\S")
-        for variable in ("NAME", "AUDIO", "AUDIO_DEVICE", "FIRMWARE", "USB_IMAGE", "FILES", "UPD", "KEY", "GPL",
-                         "PYTHON", "PREFIX"):
+        for variable in ("NAME", "AUDIO", "AUDIO_DEVICE", "FIRMWARE", "USB_IMAGE", "FILES", "DEST", "UPD", "KEY", "GPL",
+                         "VERSION", "YES", "SAMPLES", "PROJECTS", "PYTHON", "PREFIX"):
             self.assertRegex(out, rf"(?m)^  {variable}\s+\S")
             self.assertRegex(text, rf"(?m)^{variable} \?=")
         self.assertEqual(self.make()[1], out)  # the default goal is help
@@ -846,6 +846,8 @@ class MakefileTests(unittest.TestCase):
         self.assertEqual(shlex.split(out)[2:], ["usb", "add", "a.wav", "b/c", "d.wav"])
         out = self.make("-n", "usb-add", "FILES=a.wav", "USB_IMAGE=my stick.img", "ARGS=--to kicks")[1]
         self.assertEqual(shlex.split(out)[2:], ["usb", "add", "a.wav", "--image", "my stick.img", "--to", "kicks"])
+        out = self.make("-n", "usb-add", "FILES=Demo 1.prj", "DEST=Projects")[1]
+        self.assertEqual(shlex.split(out)[2:], ["usb", "add", "Demo", "1.prj", "--dest", "Projects"])
         for target in ("usb-create", "usb-ls", "usb-mount", "usb-unmount"):
             out = self.make("-n", target, "USB_IMAGE=/s/x.img")[1]
             self.assertEqual(shlex.split(out)[2:], ["usb", target[4:], "--image", "/s/x.img"], target)

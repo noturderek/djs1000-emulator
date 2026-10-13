@@ -5,6 +5,10 @@ description: Guide a user through setting up the SP16 Emulator on their Mac - ch
 
 # SP16 Emulator setup
 
+To take a user from a fresh clone to a running emulator with audio, firmware, samples and demo projects, use the
+[sp16-bootstrap](../sp16-bootstrap/SKILL.md) skill (`./sp16emu bootstrap`); this skill covers the details after that:
+mods, the hardware suite, diagnostics and troubleshooting.
+
 Work from the repository root. The user's README is the reference; this skill adds the order, the checks and the
 rules. Everything goes through `./sp16emu` (`./sp16emu help` lists every command; `./sp16emu help <command>` shows its
 options; `make help` lists the ready-made configurations). Commands assume the default build `build/sp16`; add
@@ -13,7 +17,9 @@ options; `make help` lists the ready-made configurations). Commands assume the d
 ## Rules (always)
 
 - **Firmware and the GPL archive are the user's to download.** Give them the two official links from the README and
-  let them download. Download for them only after they explicitly confirm, naming the file and source first.
+  let them download. Download for them only after they explicitly confirm, naming the file and source first. The
+  tool's own `./sp16emu firmware download --version 1.60 --info` (then `--yes` after their yes) fetches only the
+  official firmware update from the official server; the GPL archive and the key are never downloaded by it.
 - **Never print, copy, log or commit key bytes.** Pass key files and archives by path only. Do not `cat`, `xxd`,
   `strings` or hash-print a key file. Do not describe how the update is encrypted.
 - **Never commit** updates, keys, archives, imported libraries, data images, session folders or captures. Keep them
@@ -101,7 +107,8 @@ stopped:
 ```
 
 - Format: PCM 16- or 24-bit 44.1 kHz WAV (mono or stereo). Other WAV/AIFF files get one warning per kind, are copied, and are never converted;
-  non-audio files are skipped unless `--any`. Samples go to `PIONEER DJ SAMPLER/Samples` on the stick.
+  non-audio files are skipped unless `--any`. Samples go to `PIONEER DJ SAMPLER/Samples` on the stick; project files
+  go with `./sp16emu usb add <files> --dest Projects` (any file type; the path must stay under `PIONEER DJ SAMPLER`).
 - **Never mount the stick while an emulator runs.** The commands refuse when a running emulator names the image (they
   print its process ids; stop an emulator only by those exact ids) or when the Mac already has the image attached
   (`./sp16emu usb unmount`). Do not work around the refusal with `hdiutil` or Finder.

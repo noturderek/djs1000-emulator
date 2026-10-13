@@ -613,8 +613,8 @@ class WorkflowTests(UsbCase):
         wav = write_wav(self.samples / "kick.wav")
         real = cli.make_tree
 
-        def with_existing(point, sub=""):
-            target = real(point, sub)
+        def with_existing(point, sub="", root="Samples"):
+            target = real(point, sub, root)
             (target / "kick.wav").write_bytes(b"old")
             return target
         with mock.patch.object(cli, "make_tree", side_effect=with_existing):
@@ -913,6 +913,78 @@ class HelpCoverageTests(UsbCase):
         text = MAKEFILE.read_text()
         for target in ("usb-create", "usb-add", "usb-ls", "usb-mount", "usb-unmount"):
             self.assertRegex(text, rf"(?m)^{target}:.*## \S")
+
+
+class DestTests(UsbCase):
+    def test_dest_paths_are_checked(self):
+        for text, wanted in (("Projects", "Projects"), ("Projects/", "Projects"), ("PIONEER DJ SAMPLER/Projects", "Projects"),
+                             (cli.STICK_FOLDER.lower() + "/Projects/Demos", "Projects/Demos"), ("Samples/drums", "Samples/drums"),
+                             (None, "")):
+            self.assertEqual(cli.check_dest(text), wanted, text)
+        for text in ("", "  ", "/Projects", "~/Projects", "..", "Projects/../..", "../Projects", "a/./b", "a\\b",
+                     "PIONEER DJ SAMPLER", "PIONEER DJ SAMPLER/..", "Pro:jects", "x\0y"):
+            with self.assertRaises(cli.UsageError, msg=repr(text)):
+                cli.check_dest(text)
+
+    def test_add_dest_copies_any_file_type_under_the_firmware_folder(self):
+        self.make_stick()
+        project = self.samples / "Demo 01.prj"
+        project.write_bytes(b"project")
+        code, out, err = self.usb("add", str(project), "--dest", "Projects")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Added 1 file(s)", out)
+        self.assertIn("PIONEER DJ SAMPLER/Projects", out)
+        copies = [c[3] for c in self.tool_calls if c[0] == "cp"]
+        self.assertEqual(len(copies), 1)
+        self.assertTrue(copies[0].endswith("/PIONEER DJ SAMPLER/Projects/Demo 01.prj"))
+        self.assertNotIn("not WAV or AIFF", err)
+
+    def test_add_dest_inside_samples_still_skips_what_is_not_audio(self):
+        self.make_stick()
+        (self.samples / "notes.txt").write_text("x")
+        wav = write_wav(self.samples / "k.wav")
+        code, out, err = self.usb("add", str(self.samples / "notes.txt"), str(wav), "--dest", "Samples/kicks")
+        self.assertEqual(code, 0, err)
+        self.assertIn("skipping notes.txt", err)
+        self.assertTrue([c[3] for c in self.tool_calls if c[0] == "cp"][0].endswith("/Samples/kicks/k.wav"))
+
+    def test_add_dest_cannot_leave_the_firmware_folder(self):
+        self.make_stick()
+        project = self.samples / "p.prj"
+        project.write_bytes(b"x")
+        for dest in ("..", "../Other", "/etc", "Projects/../../x", "~"):
+            code, _, err = self.usb("add", str(project), "--dest", dest)
+            self.assertEqual(code, 2, dest)
+            self.assertIn("--dest", err)
+        self.assertEqual([c for c in self.tool_calls if c[0] == "cp"], [])
+
+    def test_dest_and_to_exclude_each_other_and_dest_is_for_add_only(self):
+        project = self.samples / "p.prj"
+        project.write_bytes(b"x")
+        code, _, err = self.usb("add", str(project), "--dest", "Projects", "--to", "x")
+        self.assertEqual(code, 2)
+        self.assertIn("exclude each other", err)
+        code, _, err = self.usb("ls", "--dest", "Projects")
+        self.assertEqual(code, 2)
+        self.assertIn("only for usb add", err)
+
+    def test_add_dest_removes_what_macos_adds(self):
+        self.make_stick()
+        project = self.samples / "p.prj"
+        project.write_bytes(b"x")
+        with mock.patch.object(cli, "remove_junk", wraps=cli.remove_junk) as junk:
+            self.assertEqual(self.usb("add", str(project), "--dest", "Projects")[0], 0)
+        self.assertEqual(junk.call_count, 1)
+        self.assertEqual(self.names()[-1], "hdiutil detach")
+
+    def test_dry_run_shows_the_destination(self):
+        project = self.samples / "p.prj"
+        project.write_bytes(b"x")
+        self.ctx.dry_run = True
+        code, out, _ = self.usb("add", str(project), "--dest", "Projects")
+        self.assertEqual(code, 0)
+        self.assertIn("'PIONEER DJ SAMPLER/Projects'", out)
+        self.assertEqual(self.tool_calls, [])
 
 
 if __name__ == "__main__":
