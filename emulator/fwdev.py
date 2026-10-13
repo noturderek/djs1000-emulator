@@ -237,13 +237,20 @@ def console_since(runtime, offset):
     return data[offset:], len(data)
 
 
+def same_overlay(runtime, folder):
+    """The session's overlay is this mod folder. The app records a standardized path (/private/tmp/... becomes
+    /tmp/...), so compare real paths."""
+    recorded = runtime.get("dev_overlay")
+    return bool(recorded) and os.path.realpath(recorded) == os.path.realpath(folder)
+
+
 def run(build, folder, firmware_id=None, timeout=90):
     """Start the build with the mod overlay, or restart only the OEM app if that session is already running.
     Returns timings: restart_ms (socket round trip) and visible_s (command start -> LCD settled after restart)."""
     folder, meta = load_mod(folder)
     started = time.monotonic()
     pid, runtime = running_session(build)
-    if pid and runtime and runtime.get("dev_overlay") == str(folder):
+    if pid and runtime and same_overlay(runtime, folder):
         sock = Socket(runtime)
         offset = console_since(runtime, 0)[1]
         reply = sock.call(op="app-restart")
@@ -267,7 +274,7 @@ def run(build, folder, firmware_id=None, timeout=90):
     deadline = started + timeout
     while time.monotonic() < deadline:
         pid, runtime = running_session(build, since=wall)
-        if runtime and runtime.get("dev_overlay") == str(folder):
+        if runtime and same_overlay(runtime, folder):
             console, _ = console_since(runtime, 0)
             if "SP16_NATIVE_READY" in console:
                 break

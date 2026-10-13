@@ -104,6 +104,13 @@ class GuestOverlayTests(unittest.TestCase):
 
 
 class FwdevHostTests(unittest.TestCase):
+    def test_overlay_match_survives_path_standardization(self):
+        # The app records /private/tmp/... as /tmp/...; both name the same mod folder.
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as folder:
+            self.assertTrue(fwdev.same_overlay({"dev_overlay": folder.replace("/private/tmp", "/tmp", 1)}, folder))
+            self.assertFalse(fwdev.same_overlay({"dev_overlay": folder + "-other"}, folder))
+            self.assertFalse(fwdev.same_overlay({}, folder))
+
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp()).resolve()
         os.chmod(self.dir, 0o700)
