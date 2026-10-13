@@ -138,6 +138,7 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | `this native HVF build currently requires an Apple Silicon Mac` | Intel Macs are not supported. |
 | `module 'hashlib' has no attribute 'file_digest'` | `python3` is too old (the Command Line Tools ship 3.9); put Python 3.12 or later first on your `PATH`. |
 | QEMU build fails | Read `build/sp16/qemu-configure.log` or `qemu-build.log`; usually a missing `ninja`, `pkgconf`, `glib` or `pixman`. |
+| QEMU link fails with `64-bit mach-o not 8-byte aligned` | A QEMU build folder configured with GNU `ar` (Homebrew `binutils` on `PATH`) from an older checkout; the build now uses Apple's `/usr/bin/ar`. Delete `build/sp16/qemu-build` and build again. |
 | Guest image build fails | Start Docker Desktop and retry; read `build/sp16/guest-build.log`. |
 | `firmware refused (no verified compatibility profile)` | The version has no verified profile (see the table above). |
 | Import: `update CRC does not match` or `not sector-aligned` | The update file is damaged or incomplete; download it again. |

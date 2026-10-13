@@ -109,14 +109,24 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def run(command, *, cwd=None, log=None):
+def run(command, *, cwd=None, log=None, env=None):
     if log:
         with Path(log).open("wb") as output:
-            result = subprocess.run(command, cwd=cwd, stdout=output, stderr=subprocess.STDOUT)
+            result = subprocess.run(command, cwd=cwd, stdout=output, stderr=subprocess.STDOUT, env=env)
         if result.returncode:
             raise RuntimeError(f"build step failed ({result.returncode}); inspect {log}")
     else:
-        subprocess.run(command, cwd=cwd, check=True)
+        subprocess.run(command, cwd=cwd, check=True, env=env)
+
+
+def apple_binutils_env():
+    """Build environment that pins Apple's archiver tools. GNU binutils on PATH (Homebrew `binutils`) write archives
+    Apple's linker rejects ("64-bit mach-o not 8-byte aligned"), which breaks the QEMU link."""
+    env = dict(os.environ)
+    for variable, tool in (("AR", "ar"), ("NM", "nm"), ("RANLIB", "ranlib"), ("STRIP", "strip")):
+        if Path("/usr/bin", tool).exists():
+            env[variable] = f"/usr/bin/{tool}"
+    return env
 
 
 def host_check():
@@ -160,7 +170,7 @@ def build_qemu(output):
                  "--disable-sdl", "--disable-gtk", "--disable-opengl", "--disable-vnc",
                  "--disable-slirp", "--disable-libssh", "--disable-gnutls", "--disable-nettle",
                  "--disable-gcrypt", "--disable-linux-user", "--disable-bsd-user", "--disable-werror"]
-        run([str(source / "configure"), *flags], cwd=build, log=output / "qemu-configure.log")
+        run([str(source / "configure"), *flags], cwd=build, log=output / "qemu-configure.log", env=apple_binutils_env())
     else:
         run([str(build / "pyvenv/bin/meson"), "configure", "-Dpvg=disabled"], cwd=build,
             log=output / "qemu-configure-refresh.log")
