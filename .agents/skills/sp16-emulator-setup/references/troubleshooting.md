@@ -18,6 +18,7 @@ Start from the evidence: the session folder (`build/<build>/sessions/native-*/`,
 | Input does nothing | `metrics.json` `input_results` and guest `events`, `unsupported`, `failed` | `unsupported` means that control has no mapping in this version's profile |
 | No lamps | `metrics.json` `lamps_live`, guest `tx_frames`, `tx_bad_crc` | report the counters; `tx_bad_crc` must be 0 |
 | Slow tempo or crackling | `uptime`; `console.txt` `speed=` lines | close other emulators (at most three); every stream should show `speed=1.00x` |
+| The app quit or crashed | `sessions/native-*/app.log` (the app's log), `qemu-stderr.txt`, and `~/Library/Logs/DiagnosticReports/SP16Emulator-*.ips` | collect diagnostics (section 8 of the skill: `native.py diagnostics --output <build>` or Help > Collect Diagnostics…) and attach the zip to a bug report |
 | App vanishes without a crash report | `log show --last 10m --predicate 'eventMessage CONTAINS "SIGPIPE"'` | report it with the console |
 | Unknown hardware use | `metrics.json` `guest.unknown_devices`, `guest.unknown_ioctls` | the firmware uses an interface the shim does not serve; report it |
 | A mod has no effect | `console.txt` `SP16_DEV` and `SP16_DEV_ERROR` lines | wrong base hash or original bytes: the recipe is refused and the firmware starts unchanged |

@@ -5,12 +5,14 @@ import Foundation
 /// window. Both drive the bundled firmware library tool (Resources/fwlib/firmware.py, the same code path as
 /// `native.py firmware`), so the key is read and sent to the import VM by that tool and never touches the app.
 enum FirmwareTool {
-    static var script: String? { Bundle.main.url(forResource: "fwlib", withExtension: nil)?.appendingPathComponent("firmware.py").path }
+    static func script(_ name: String) -> String? { Bundle.main.url(forResource: "fwlib", withExtension: nil)?.appendingPathComponent(name).path }
     static let python = "/usr/bin/python3"
 
-    /// Run the tool; `progress` gets each JSON progress line from stderr. Returns the parsed stdout document.
-    static func run(_ arguments: [String], progress: ((String) -> Void)? = nil) -> [String: Any] {
-        guard let script = script, FileManager.default.isExecutableFile(atPath: python) else {
+    /// Run a bundled tool (default: the firmware library tool; "diagnostics.py" collects the bug-report zip);
+    /// `progress` gets each JSON progress line from stderr. Returns the parsed stdout document.
+    static func run(_ arguments: [String], tool: String = "firmware.py", progress: ((String) -> Void)? = nil) -> [String: Any] {
+        guard let script = script(tool), FileManager.default.isExecutableFile(atPath: python) else {
+            AppLog.log("\(tool): Python 3 (/usr/bin/python3) is missing")
             return ["status": "error", "error": "Python 3 (/usr/bin/python3, Xcode Command Line Tools) is required to import firmware"]
         }
         let process = Process()
@@ -24,11 +26,18 @@ enum FirmwareTool {
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
             for line in text.split(separator: "\n") { progress?(String(line)) }
         }
-        do { try process.run() } catch { return ["status": "error", "error": "cannot run the firmware tool: \(error)"] }
+        do { try process.run() } catch {
+            AppLog.log("\(tool): cannot run: \(error)")
+            return ["status": "error", "error": "cannot run the firmware tool: \(error)"]
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         errors.fileHandleForReading.readabilityHandler = nil
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? ["status": "error", "error": "no result from the firmware tool"]
+        guard let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            AppLog.log("\(tool) \(arguments.first ?? ""): no result (exit \(process.terminationStatus))")
+            return ["status": "error", "error": "no result from the firmware tool"]
+        }
+        return result
     }
 
     /// Boot assets of this build (QEMU, base kernel and initramfs) from the bundled default configuration.
@@ -132,8 +141,12 @@ final class FirmwareImportWindow: NSObject, NSWindowDelegate {
         updateField.setAccessibilityLabel("Update file"); keyField.setAccessibilityLabel("Key source")
     }
 
-    func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
+    func show() {
+        AppLog.log("import window opened")
+        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+    }
     func windowWillClose(_ notification: Notification) {
+        AppLog.log("import window closed")
         // AppKit is still inside close(): detach the delegate, then let the owner drop this controller on the next
         // main-queue turn so the window is not deallocated under its own close().
         window.delegate = nil
@@ -168,8 +181,13 @@ final class FirmwareImportWindow: NSObject, NSWindowDelegate {
         importButton.isEnabled = false
         status.stringValue = "Importing… (the update is decrypted and checked inside the emulator VM)"
         report.string = ""
+        // Which files, never the key: its kind and how many parts, not its name or path.
+        AppLog.log("import started: update=\((updateField.stringValue as NSString).lastPathComponent) "
+                   + "key=\(keyKind.selectedSegment == 0 ? "key file" : "GPL archive, \(keyPaths.count) part(s)") "
+                   + "name=\(nameField.stringValue.isEmpty ? "(default)" : nameField.stringValue)")
         DispatchQueue.global(qos: .userInitiated).async {
             let result = FirmwareTool.run(arguments) { line in
+                AppLog.log("import progress: \(line.prefix(200))")
                 DispatchQueue.main.async { self.status.stringValue = "Importing… \(line)" }
             }
             DispatchQueue.main.async { self.finish(result) }
@@ -179,6 +197,12 @@ final class FirmwareImportWindow: NSObject, NSWindowDelegate {
     func finish(_ result: [String: Any]) {
         importButton.isEnabled = true
         report.string = FirmwareTool.describe(result)
+        let imported = result["report"] as? [String: Any]
+        AppLog.log("import result: \(result["status"] ?? "?") id=\(result["id"] ?? "-") "
+                   + "firmware status=\(imported?["status"] ?? "-") reason=\(imported?["reason"] ?? result["error"] ?? "-")")
+        for item in imported?["checks"] as? [[String: Any]] ?? [] where "\(item["result"] ?? "")" != "pass" {
+            AppLog.log("import check [\(item["result"] ?? "?")] \(item["check"] ?? "")")
+        }
         if result["status"] as? String == "firmware_imported", let id = result["id"] as? String {
             importedID = id
             let report = result["report"] as? [String: Any]
@@ -194,6 +218,7 @@ final class FirmwareImportWindow: NSObject, NSWindowDelegate {
 
     @objc func startEmulator() {
         guard let id = importedID else { return }
+        AppLog.log("start requested on imported firmware \(id)")
         FirmwareTool.relaunch(firmware: id)
     }
 }
@@ -245,6 +270,7 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
 
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     func windowWillClose(_ notification: Notification) {
+        AppLog.log("library window closing")
         // An open import is owned here, so take it off screen first: this controller (and with it the import
         // controller) can only be dropped by the owner after both windows have closed.
         importWindow?.window.close()
@@ -257,7 +283,7 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
     func reload() {
         let result = FirmwareTool.run(["list", "--library", library])
         entries = result["firmware"] as? [[String: Any]] ?? []
-        if let error = result["error"] as? String { status.stringValue = error }
+        if let error = result["error"] as? String { status.stringValue = error; AppLog.log("library list failed: \(error)") }
         table.reloadData()
     }
 
@@ -274,6 +300,7 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
 
     @objc func startSelected() {
         guard let entry = selected, let id = entry["id"] as? String else { return }
+        AppLog.log("library: start selected \(id) (status \(entry["status"] ?? "?"))")
         _ = FirmwareTool.run(["select", "--library", library, "--id", id])
         FirmwareTool.relaunch(firmware: id)
     }
@@ -286,6 +313,7 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
         alert.accessoryView = field; alert.addButton(withTitle: "Rename"); alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let result = FirmwareTool.run(["rename", "--library", library, "--id", id, "--name", field.stringValue])
+        AppLog.log("library: rename \(id): \(result["error"] ?? "ok")")
         status.stringValue = result["error"] as? String ?? "Renamed."
         reload()
     }
@@ -298,11 +326,13 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
         alert.addButton(withTitle: "Remove"); alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let result = FirmwareTool.run(["remove", "--library", library, "--id", id])
+        AppLog.log("library: remove \(id): \(result["error"] ?? "ok")")
         status.stringValue = result["error"] as? String ?? "Removed."
         reload()
     }
 
     @objc func importFirmware() {
+        AppLog.log("library: import requested")
         let importer = FirmwareImportWindow(config: config, library: library, firstRun: false)
         importer.onClose = { [weak self] in self?.importWindow = nil; self?.reload() }
         importWindow = importer
@@ -343,8 +373,10 @@ final class FirmwareSetupApplication: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         menu.addItem(editMenuItem())
+        menu.addItem(helpMenuItem())
         NSApp.mainMenu = menu
         importer.show()
+        DiagnosticsController.shared.checkPreviousRun(current: nil)
     }
 }
 
@@ -364,8 +396,10 @@ final class FirmwareLibrarySetupApplication: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         menu.addItem(editMenuItem())
+        menu.addItem(helpMenuItem())
         NSApp.mainMenu = menu
         libraryWindow.show()
+        DiagnosticsController.shared.checkPreviousRun(current: nil)
     }
 }
 

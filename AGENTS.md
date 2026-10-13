@@ -7,6 +7,9 @@ This repository is a macOS emulator for SP-16 compatible sampler firmware. It co
 - Never download firmware or the GPL source archive for the user without their explicit confirmation. Never print,
   copy or commit key bytes. Never commit updates, keys, firmware images, imported files or session captures: they
   live only under the git-ignored `build/` and `private/` folders.
+- For a crash or bug, collect diagnostics (`python3 emulator/native.py diagnostics --output build/sp16`, or Help >
+  Collect Diagnostics… in the app) and let the user attach the zip to an issue; never attach firmware, updates, keys or
+  data images.
 - Never flash hardware or run a firmware's own update scripts. Repacked updates are for this emulator only.
 - Code lives in `emulator/`, user documentation in `docs/`. Run the unit tests with
   `python3 -m unittest discover -s emulator/tests -p 'test_sp16_*.py'` before proposing a change.

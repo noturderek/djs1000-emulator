@@ -1,0 +1,87 @@
+name: Bug report
+description: The emulator crashed, did not boot, looked wrong or behaved differently from the real hardware
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting this. Please attach the diagnostics zip: in the app choose **Help > Collect Diagnostics…**,
+        or run `python3 emulator/native.py diagnostics --output build/sp16`. See "Reporting a bug" in the README.
+
+        **Never attach firmware, update (`.UPD`) files, key files, GPL source archives or data images.** The
+        diagnostics zip contains none of them. Look through the zip before attaching it.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, including any message in the app or the terminal.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in order, starting from launching the emulator.
+      placeholder: |
+        1. Start the app with firmware 1.60
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What the real hardware does, or what you thought would happen.
+    validations:
+      required: true
+  - type: input
+    id: firmware-version
+    attributes:
+      label: Firmware version
+      description: The version in Firmware > Library (for example 1.60).
+    validations:
+      required: true
+  - type: dropdown
+    id: firmware-kind
+    attributes:
+      label: Firmware kind (Library column "Kind")
+      options:
+        - stock (an official update)
+        - mod (a repacked or modified update)
+        - not imported yet
+    validations:
+      required: true
+  - type: dropdown
+    id: firmware-status
+    attributes:
+      label: Firmware status (Library column "Status")
+      options:
+        - verified
+        - unverified
+        - not shown
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      description: For example macOS 15.1 on a MacBook Pro with an M2 chip.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you submit
+      options:
+        - label: I attached the diagnostics zip (or explain below why I could not).
+          required: false
+        - label: I did not attach firmware, an update file, a key, a GPL archive or a data image.
+          required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Other apps running, how often it happens, whether it started after a change.
+    validations:
+      required: false

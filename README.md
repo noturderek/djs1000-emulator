@@ -151,6 +151,38 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | The app's import screen says Python is missing | Install the Xcode Command Line Tools (`xcode-select --install`). |
 | Pads blink red and ignore hits | The firmware reports missing pad calibration; rebuild without `--uncalibrated`. |
 | The window is black | Read `console.txt` in the newest folder under `build/sp16/sessions/`. |
+| The app quit or crashed | Start it again: it offers to collect diagnostics. Then see [Reporting a bug](#reporting-a-bug). The newest folder under `build/sp16/sessions/` holds `app.log` (the app's log) and `qemu-stderr.txt`. |
+
+## Reporting a bug
+
+If the emulator crashes, will not boot, or behaves differently from the real hardware, collect diagnostics and attach
+them to an issue (the bug report form asks for them).
+
+1. In the app choose **Help > Collect Diagnostics…**. If the app did not shut down cleanly last time, it offers this
+   itself the next time it starts. Without the app (for example when it will not start), run
+   `python3 emulator/native.py diagnostics --output build/sp16`. Options: `--sessions N` (how many recent sessions,
+   default 3), `--include-audio` (adds the sessions' WAV captures, which can be large), `--out file.zip`.
+2. The result is one zip, `sp16-diagnostics-<time>.zip`, written to your Desktop (macOS may ask whether the app may
+   access the Desktop; if you decline, or there is no Desktop, it is written to the build folder instead). The app
+   shows it in Finder.
+3. Open an issue with the "Bug report" form and attach the zip. Look through it first: it is an ordinary zip.
+
+**Nothing is sent automatically.** The tool only writes the zip on your Mac.
+
+What is in the zip: `report.json` (emulator version, build options, macOS and Mac model, CPU, free disk, Python,
+whether Docker is installed, QEMU version, and the firmware library: name, version, kind, verified or unverified with
+the reason, the update, application and image hashes and the compatibility findings); for the last sessions the guest
+console, metrics, runtime description, the app's own log, QEMU's error output and the last screen picture; the app logs
+and build logs (the last 500 lines of each); and macOS crash reports of the last 14 days for the app and QEMU.
+
+What is never in it: firmware, updates (`.UPD`), key files or GPL archives, the firmware image, or your data image
+(projects and settings). The tool refuses any file named `*.key`, `*.upd`, `*.sqfs`, `*.img`, `*.iso`, `*.sfs` or
+`*.mot`. Text files are redacted: your home folder becomes `~`, your account name `<user>`, your Mac's name
+`<host>`, your full name `<name>` and e-mail addresses `<email>`. Add `--key-file <your key file>` to the command to
+also prove that the key does not occur anywhere in the zip (the key is never printed). Paths outside your home folder,
+such as an external drive's name, are kept.
+
+**Never attach firmware, update files, key files or data images to an issue**, whatever a maintainer asks.
 
 ## Repository layout
 

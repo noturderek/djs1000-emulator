@@ -27,10 +27,11 @@ profile ([profiles.md](profiles.md)).
 |---|---|
 | Build, launch and firmware commands | `native.py` |
 | Firmware library and importer, host side (stdlib only) | `firmware.py`, `profiles.py`, `recipes.py`, `fwpack.py` |
+| Diagnostics for bug reports (stdlib only; the app bundles a copy) | `diagnostics.py` |
 | Linux guest base image | `Dockerfile.native-base`, `pack-guest.sh`, `guest-init.sh`, `guest-firmware.py` (import and repack in the guest), `guest-bridge.py`, `enter.py`, `input.py` |
 | Hardware shim (ARM preload library) | `hardware_stub.c` |
 | Panel model and wire protocol | `panel.py`, `panel_map.py`, `protocol.py` |
-| macOS app | `native-window.swift`, `panel-view.swift`, `panel-layout.json`, `firmware-window.swift`, `firmware-library.swift`, `data-image.swift`, `audio-sink.swift`, `audio-output.swift`, `make-icon.swift` |
+| macOS app | `native-window.swift`, `panel-view.swift`, `panel-layout.json`, `firmware-window.swift`, `firmware-library.swift`, `app-diagnostics.swift`, `data-image.swift`, `audio-sink.swift`, `audio-output.swift`, `make-icon.swift` |
 | Developer tools | `fwdev.py`, `sessionctl.py`, `e2e-screen.py`, `pcm-tap-analyze.py`, `arm-contracts.sh` |
 | Hardware conformance suite | `hwsuite.py` |
 | Data | `profiles/*.json`, `profiles/products/sp16.json`, `mods/utility-label.json` |
@@ -47,6 +48,23 @@ profile ([profiles.md](profiles.md)).
    application with `qemu-arm-static` and the hardware shim preloaded.
 4. The bridge connects the shim to the host over virtio-serial ports: panel frames, lamps, touch, audio, USB and
    control messages. The app draws the panel and the LCD and plays or records audio.
+
+## Logs and diagnostics
+
+The app is started through LaunchServices, so its own output is lost; it writes its own log instead. Everything is in
+the build folder, owner-only:
+
+| File | Holds |
+|---|---|
+| `sessions/native-<id>/app.log` (+ `.1`) | timestamped app events: launch configuration, firmware chosen and its status, import and library actions, window open and close, QEMU start and exit status, bridge connect and disconnect, notices shown. 2 MB, one rotation. No key or firmware content exists in the app. |
+| `logs/app-<time>-<pid>.log` | the same for the time before a session exists (import screen, library window); the newest 20 are kept |
+| `sessions/native-<id>/qemu-stderr.txt` | the last 200 lines of QEMU's stderr and its exit status (also still copied into `console.txt`) |
+| `sessions/native-<id>/clean-exit` | written when the app quits normally; `app.pid` tells a later launch whether a session without it is still running |
+
+At launch the app looks at the previous session: no `clean-exit` and no live process, or a new macOS crash report
+(`~/Library/Logs/DiagnosticReports/SP16Emulator-*.ips`) naming this app, shows a non-blocking notice that offers to
+collect diagnostics, once per finding. Help > Collect Diagnostics… (and `native.py diagnostics`) runs the bundled
+`diagnostics.py`, which writes one redacted zip; see "Reporting a bug" in the README for what it contains.
 
 ## Import
 

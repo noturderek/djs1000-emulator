@@ -88,6 +88,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     var frameCount = 0
     var lastMetrics = 0.0
     var log: FileHandle?
+    var stderrCapture: StderrCapture?
     var audioSink: AudioSink?
     var txLog: FileHandle?
     var lastCapture = 0.0
@@ -126,21 +127,42 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         window.center(); window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(panel)
         NSApp.activate(ignoringOtherApps: true)
-        if let notice = unverifiedNotice { UnverifiedNotice.showOnce(key: notice.key, text: notice.text) }
+        AppLog.log("main window opened: \(window.title)")
+        DiagnosticsController.shared.checkPreviousRun(current: config.session)  // no-op unless a decoupled build set it up
+        logLaunchSummary()
+        if let notice = unverifiedNotice {
+            AppLog.log("unverified notice shown: \(notice.text.replacingOccurrences(of: "\n", with: " | "))")
+            UnverifiedNotice.showOnce(key: notice.key, text: notice.text)
+        }
         let console = config.session + "/console.txt"
         FileManager.default.createFile(atPath: console, contents: nil, attributes: [.posixPermissions: 0o600])
         log = try? FileHandle(forWritingTo: URL(fileURLWithPath: console))
         process.executableURL = URL(fileURLWithPath: config.qemu)
         process.arguments = config.arguments
-        process.standardOutput = log; process.standardError = log
+        process.standardOutput = log
+        if config.firmware == nil {
+            process.standardError = log
+        } else {
+            // Decoupled builds: QEMU's stderr still reaches console.txt, and its tail and exit status are kept for bug reports.
+            let capture = StderrCapture(console: log, file: config.session + "/qemu-stderr.txt")
+            process.standardError = capture.pipe
+            stderrCapture = capture
+        }
         process.terminationHandler = { [weak self] process in
+            AppLog.log("QEMU exited: status \(process.terminationStatus), "
+                       + (process.terminationReason == .exit ? "exit" : "uncaught signal"))
+            self?.stderrCapture?.terminated(status: process.terminationStatus, reason: process.terminationReason)
             DispatchQueue.main.async {
                 self?.panel.releaseAll()
                 self?.panel.setStatus("QEMU stopped (\(process.terminationStatus)). See console.txt.")
             }
         }
         do { try process.run() }
-        catch { panel.setStatus("Cannot start QEMU: \(error.localizedDescription)"); return }
+        catch {
+            AppLog.log("cannot start QEMU: \(error)")
+            panel.setStatus("Cannot start QEMU: \(error.localizedDescription)"); return
+        }
+        AppLog.log("QEMU started pid=\(process.processIdentifier)")
         panel.setStatus("Starting native QEMU…")
         if let audio = config.audio {
             // "file" (M4b1): a WAV per playback stream. "coreaudio" (M4b2): host output only. "both": the two.
@@ -163,6 +185,16 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         }
     }
 
+    /// Decoupled builds: the launch configuration for the app log (no key material exists in the app; paths are redacted).
+    func logLaunchSummary() {
+        guard config.firmware != nil else { return }
+        AppLog.log("launch: variant=\(config.variant ?? "?") profile=\(config.profile ?? "") research=\(config.research == true) "
+                   + "audio=\(config.audio ?? "off") firmware=\(config.firmwareID ?? "?") name=\(config.firmwareName ?? "?")")
+        AppLog.log("launch: library=\(config.firmware?.library ?? "?") qemu=\(config.qemu) session=\(config.session)")
+        AppLog.log("launch: qemu arguments: " + config.arguments.joined(separator: " "))
+        if let overlay = config.devOverlay { AppLog.log("launch: developer overlay \(overlay)") }
+    }
+
     func installMenus() {
         let menu = NSMenu()
         let appItem = NSMenuItem(); menu.addItem(appItem)
@@ -179,6 +211,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             library.target = self
             firmwareMenu.addItem(library)
             firmwareItem.submenu = firmwareMenu
+            menu.addItem(helpMenuItem())
         }
         let inputItem = NSMenuItem(); menu.addItem(inputItem)
         let inputMenu = NSMenu(title: "Input")
@@ -194,8 +227,9 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     var libraryWindow: FirmwareLibraryWindow?
     @objc func showFirmwareLibrary() {
         guard let firmware = config.firmware else { return }
+        AppLog.log("library window opened")
         let window = libraryWindow ?? FirmwareLibraryWindow(config: config, library: firmware.library, current: config.firmwareID)
-        window.onClose = { [weak self] in self?.libraryWindow = nil }
+        window.onClose = { [weak self] in AppLog.log("library window closed"); self?.libraryWindow = nil }
         libraryWindow = window
         window.reload()
         window.show()
@@ -244,7 +278,11 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             if rc == 0 { connected = true; break }
             Thread.sleep(forTimeInterval: 0.1)
         }
-        guard connected else { Darwin.close(fd); return }
+        guard connected else {
+            AppLog.log("bridge: never connected (\(process.isRunning ? "timed out after 120 s" : "QEMU is not running"))")
+            Darwin.close(fd); return
+        }
+        AppLog.log("bridge: connected")
         lock.lock(); socketFD = fd; lock.unlock()
         defer {
             writeQueue.sync {
@@ -261,6 +299,8 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                 try handle(body)
             }
         } catch {
+            lock.lock(); let quitting = stopping; lock.unlock()
+            AppLog.log("bridge: disconnected (\(quitting ? "app is quitting" : "\(error)"))")
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, !self.stopping else { return }
                 self.panel.releaseAll()
@@ -628,9 +668,10 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     // MARK: Lifecycle
 
     func windowDidResignKey(_ notification: Notification) { panel.releaseAll() }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { NSApp.terminate(nil); return false }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { AppLog.log("main window closed: quitting"); NSApp.terminate(nil); return false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AppLog.log("quit requested (VM \(process.isRunning ? "running" : "not running"))")
         panel.releaseAll()
         lock.lock(); stopping = true
         // With a data image the UI socket stays open until the guest confirms its unmount: closing it makes the
@@ -646,6 +687,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                 // Guest stops the OEM app, syncs and unmounts the data filesystem; bounded, then proceed.
                 let clean = DataImage.requestCleanStop(socketPath: controlPath, timeout: 5)
                 self.log?.write(Data("SP16_HOST_CLEAN_STOP clean=\(clean ? "yes" : "no")\n".utf8))
+                AppLog.log("guest clean stop: \(clean ? "yes" : "no")")
             }
             self.lock.lock(); if self.socketFD >= 0 { shutdown(self.socketFD, SHUT_RDWR) }; self.lock.unlock()
             self.process.terminate()
@@ -662,6 +704,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AppLog.markCleanExit("quit")
         audioSink?.stop()
         audioSink?.output?.stop()
         // Only the launcher-created IPC directory; diagnostic session files persist.
@@ -673,6 +716,8 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
 func refuse(_ message: String) -> Never {
     fputs("SP16 Emulator: \(message)\n", stderr)
+    AppLog.log("refused to start: \(message)")
+    AppLog.markCleanExit("refused")
     let alert = NSAlert()
     let neutral = Bundle.main.bundleIdentifier?.hasPrefix("local.sp16-compatible.") == true
     alert.messageText = neutral ? "SP-16 Compatible Emulator cannot start" : "SP16 Emulator cannot start"
@@ -731,6 +776,9 @@ func resolveFirmware(_ defaults: Configuration, requested: String?) -> Configura
         try FirmwareLibrary.verifyImage(entry)
         try FileManager.default.createDirectory(atPath: entry.dataDirectory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
+        AppLog.log("firmware chosen: id=\(entry.id) name=\(entry.name) version=\(entry.version) kind=\(entry.kind) "
+                   + "status=\(entry.status) profile=\(entry.profile ?? "none") reason=\(entry.reason) "
+                   + "app=\(entry.appSHA256) image=\(entry.imageSHA256)")
         if entry.status != "verified" {
             unverifiedNotice = (entry.id + ":" + entry.imageSHA256, FirmwareLibrary.unverifiedNotice(entry))
         }
@@ -803,7 +851,16 @@ func configuration() -> Configuration? {
           let url = Bundle.main.url(forResource: "default-config", withExtension: "json"),
           let data = try? Data(contentsOf: url),
           let decoded = try? JSONDecoder().decode(Configuration.self, from: data) else { return nil }
+    if decoded.firmware != nil {
+        // Decoupled builds: the app log and the diagnostics button work from here on (legacy builds are unchanged).
+        let build = URL(fileURLWithPath: decoded.session).deletingLastPathComponent().path
+        AppLog.start(buildDirectory: build)
+        DiagnosticsController.shared.buildDirectory = build
+        if arguments.count > 1 { AppLog.log("arguments: " + arguments.dropFirst().joined(separator: " ")) }
+    }
     if let firmware = decoded.firmware, requestedFirmware == nil, FirmwareLibrary.selected(library: firmware.library) == nil {
+        AppLog.log("no firmware selected in \(firmware.library): showing the "
+                   + (FirmwareLibrary.ids(library: firmware.library).isEmpty ? "import screen" : "library window"))
         firmwareSetup = (decoded, firmware.library)
         return nil
     }
@@ -820,6 +877,7 @@ func configuration() -> Configuration? {
                                                attributes: [.posixPermissions: 0o700])
         try FileManager.default.createDirectory(atPath: socketDirectory, withIntermediateDirectories: false,
                                                attributes: [.posixPermissions: 0o700])
+        AppLog.attach(session: session)
         let socket = socketDirectory + "/ui.sock"
         let config = attachData(Configuration(qemu: defaults.qemu,
                                    arguments: defaults.arguments.map { $0.replacingOccurrences(of: defaults.socket, with: socket) },
@@ -838,7 +896,10 @@ func configuration() -> Configuration? {
         try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
             .write(to: URL(fileURLWithPath: session + "/runtime.json"), options: .atomic)
         return config
-    } catch { return nil }
+    } catch {
+        AppLog.log("cannot create the session: \(error)")
+        return nil
+    }
 }
 
 @main

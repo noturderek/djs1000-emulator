@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build once, then launch the native macOS SP-16 app without Docker/browser."""
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -18,6 +19,7 @@ import urllib.request
 
 from prepare import EXPECTED_APP, REPO, guest_file, private_path
 from app_identity import FIRMWARE, identity, patch_utility, validate_identity
+import diagnostics
 import firmware
 import profiles
 
@@ -34,7 +36,7 @@ BASE_GUEST_FILES = ("Dockerfile.native-base", "hardware_stub.c", "guest-init.sh"
                     "prepare.py", "guest-firmware.py", "profiles/sp16-1.60.json",
                     "profiles/products/sp16.json")
 SWIFT_SOURCES = ("native-window.swift", "panel-view.swift", "data-image.swift", "audio-sink.swift",
-                "audio-output.swift", "firmware-library.swift", "firmware-window.swift")
+                "audio-output.swift", "firmware-library.swift", "firmware-window.swift", "app-diagnostics.swift")
 ICON_TOOL = "make-icon.swift"
 ICON_LOGO = "assets/legacy-logo.svg"
 ICON_FILE = "sp16-emulator"
@@ -50,7 +52,7 @@ DECOUPLED_BUNDLE_ID = "local.sp16-compatible.emulator"
 DECOUPLED_RESOURCES = ("panel-layout.json",)
 NEUTRAL_ICON = "assets/neutral-pads.svg"
 DECOUPLED_ICON_FILE = "sp16-compatible-emulator"
-FWLIB_FILES = ("firmware.py", "profiles.py", "recipes.py", "fwpack.py")
+FWLIB_FILES = ("firmware.py", "profiles.py", "recipes.py", "fwpack.py", "diagnostics.py")
 # Legacy builds (the whole prepared firmware rootfs inside the guest image) need files that only the private
 # repository has. Without them (the public copy) the CLI offers decoupled builds only and hides the legacy options.
 LEGACY_AVAILABLE = (TOOLS / "Dockerfile.native-guest").is_file()
@@ -388,6 +390,10 @@ def bundle(output, qemu, guest, variant="stock", profile=None, research=False, a
         for source in sorted((TOOLS / "profiles/products").glob("*.json")):
             profiles.product(source.stem)
             shutil.copy2(source, fwlib / "profiles/products" / source.name)
+        # Where this app came from, for bug reports (Help > Collect Diagnostics reads it).
+        (resources / "build-info.json").write_text(json.dumps(
+            {"git_commit": diagnostics.git_commit(TOOLS),
+             "built": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}, indent=2) + "\n")
         notices = resources / "ThirdParty"
         shutil.rmtree(notices, ignore_errors=True)
         notices.mkdir(mode=0o700)
@@ -749,6 +755,17 @@ def firmware_command(args):
     return 0
 
 
+def diagnostics_command(args):
+    """native.py diagnostics: one redacted zip for a bug report (nothing is uploaded); prints one JSON document."""
+    try:
+        result = diagnostics.collect(args.output, args.sessions, args.include_audio, args.out, args.key_file)
+    except diagnostics.KeyFound as error:
+        print(json.dumps({"status": "diagnostics_refused", "error": str(error)}))
+        return 1
+    print(json.dumps({"status": "diagnostics_written", **result}, indent=2))
+    return 0
+
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -823,6 +840,14 @@ def main():
     fw.add_argument("--id", help="firmware id (show, check, rename, remove, select)")
     fw.add_argument("--name", help="import/rename: display name")
     fw.add_argument("--from-profile", help="profile: measurements to start from (default: the product's reference)")
+    diag = commands.add_parser("diagnostics", help="collect logs, session files and system facts into one redacted zip "
+                                                    "for a bug report (nothing is uploaded)")
+    diag.add_argument("--output", required=True, help="the build folder")
+    diag.add_argument("--sessions", type=int, default=diagnostics.DEFAULT_SESSIONS, metavar="N",
+                      help="how many recent sessions to include (default %(default)s)")
+    diag.add_argument("--include-audio", action="store_true", help="also include the sessions' WAV captures (can be large)")
+    diag.add_argument("--out", metavar="ZIP", help="zip to write (default ~/Desktop/sp16-diagnostics-<time>.zip, else the build folder)")
+    diag.add_argument("--key-file", help="also prove this key file's key is absent from the zip (never printed)")
     args = parser.parse_args()
     if args.command == "build" and not LEGACY_AVAILABLE and (
             args.rootfs or args.mod or args.app_arg or args.no_persistence or args.profile != "fullpanel"):
@@ -837,6 +862,8 @@ def main():
                   allow_unverified=args.allow_unverified)
         elif args.command == "firmware":
             return firmware_command(args)
+        elif args.command == "diagnostics":
+            return diagnostics_command(args)
         else:
             launch(args.output, args.ephemeral, args.usb_image, args.firmware, args.dev_overlay)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:

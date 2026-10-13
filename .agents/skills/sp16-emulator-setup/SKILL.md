@@ -1,6 +1,6 @@
 ---
 name: sp16-emulator-setup
-description: Guide a user through setting up the SP16 Emulator on their Mac - check prerequisites, build, have the user download the firmware update and GPL source archive themselves, import, run, load a modified firmware (recipes, developer overlay, repacked update), run the hardware conformance suite, and troubleshoot. Use for "set up the emulator", "build it", "import my firmware", "it won't boot", "load my mod", "run the hardware suite".
+description: Guide a user through setting up the SP16 Emulator on their Mac - check prerequisites, build, have the user download the firmware update and GPL source archive themselves, import, run, load a modified firmware (recipes, developer overlay, repacked update), run the hardware conformance suite, and troubleshoot, and collect diagnostics for a bug report. Use for "set up the emulator", "build it", "import my firmware", "it won't boot", "it crashed", "file a bug", "load my mod", "run the hardware suite".
 ---
 
 # SP16 Emulator setup
@@ -123,6 +123,28 @@ Exit 0 pass, 1 fail, 2 blocked (missing profile data), 3 environment, 4 session 
 check passing can mark a profile verified (`--mark-verified`). Run it on an idle Mac. Details:
 `docs/hardware-suite.md`; adding a version: `docs/architecture.md#adding-a-firmware-version`.
 
-## 8. Troubleshooting
+## 8. Collect diagnostics and file a bug
+
+When the emulator crashes, will not boot or misbehaves, collect one zip for the bug report:
+
+```sh
+python3 emulator/native.py diagnostics --output build/sp16          # --sessions N, --include-audio, --out <zip>
+```
+
+The app does the same from Help > Collect Diagnostics…, and offers it on the next start after an unclean exit. Read
+the JSON result: `diagnostics_written` with the zip path (Desktop, or the build folder when the Desktop is not
+writable). Then:
+
+1. Tell the user what is inside: the report (versions, macOS, Mac model, firmware library summary), the last sessions'
+   logs and screen picture, build logs, macOS crash reports. Text is redacted (home folder, account name, Mac name,
+   e-mail addresses); firmware, updates, keys and data images are never included. Nothing is sent anywhere.
+2. Suggest they look through the zip, then open an issue with the "Bug report" form and attach it. The form asks for
+   the firmware version, kind and status from Firmware > Library and the macOS version.
+3. To also prove the key is absent from the zip, add `--key-file <path>` (the key is not printed).
+
+Do not attach, upload or post the zip yourself unless the user explicitly asks. Never attach or request firmware,
+`.UPD` files, key files or data images; the tool refuses to include them.
+
+## 9. Troubleshooting
 
 See [references/troubleshooting.md](references/troubleshooting.md).
