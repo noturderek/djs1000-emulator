@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import difflib
+import errno
 import hashlib
 import json
 import os
@@ -1495,7 +1496,19 @@ def remove_path(ctx, path):
     elif path.is_symlink() or path.is_file():
         path.unlink()
     elif path.is_dir():
-        shutil.rmtree(str(path))
+        # Finder (a window open on build/) can write a .DS_Store into a folder while it is being emptied, so the
+        # final rmdir fails with "Directory not empty" although the rest is gone: try again a few times.
+        for attempt in range(5):
+            try:
+                shutil.rmtree(str(path))
+                return
+            except OSError as error:
+                if error.errno == errno.ENOTEMPTY and attempt < 4:
+                    time.sleep(0.2)
+                    continue
+                raise CliError(f"cannot delete {ctx.display(path)}: {error.strerror or error}"
+                               + ("; close any Finder window on build/ and try again"
+                                  if error.errno == errno.ENOTEMPTY else "")) from None
 
 
 def run_clean(ctx, args, tail):

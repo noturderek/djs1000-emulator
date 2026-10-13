@@ -1,5 +1,6 @@
 """The ./sp16 command line and the Makefile: argument mapping, defaults, help coverage and drift against the tools."""
 import ast
+import errno
 import hashlib
 import importlib.util
 import io
@@ -524,6 +525,32 @@ class CleanTests(CliCase):
         self.main("clean", "--name", "other")
         self.assertFalse((other / "assets.json").exists())
         self.assertTrue((folder / "assets.json").exists())
+
+    def test_clean_retries_when_finder_refills_a_folder(self):
+        folder, _, _ = self.populate()
+        other = self.make_build("other")
+        for build in (folder, other):  # a QEMU source tree: removed with rmtree, where the race happens
+            (build / "qemu-10.2.1").mkdir()
+            (build / "qemu-10.2.1/configure").write_text("x")
+        real_rmtree = cli.shutil.rmtree
+        calls = []
+
+        def finder_race(path, *args, **kwargs):
+            calls.append(path)
+            if len(calls) == 1:  # the first attempt finds a .DS_Store that appeared meanwhile
+                raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
+            return real_rmtree(path, *args, **kwargs)
+
+        with mock.patch.object(cli.shutil, "rmtree", side_effect=finder_race), mock.patch.object(cli.time, "sleep"):
+            code, _, _ = self.main("clean", "--name", "other")
+        self.assertEqual(code, 0)
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertFalse((other / "assets.json").exists())
+        with mock.patch.object(cli.shutil, "rmtree", side_effect=OSError(errno.ENOTEMPTY, "Directory not empty")), \
+                mock.patch.object(cli.time, "sleep"):
+            code, _, err = self.main("clean", "--name", "sp16")
+        self.assertEqual(code, 1)
+        self.assertIn("close any Finder window", err)
 
     def test_everything_needs_confirmation_and_stays_inside_build(self):
         self.populate()
