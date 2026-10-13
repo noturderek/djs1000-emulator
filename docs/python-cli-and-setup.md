@@ -15,9 +15,8 @@ tags:
 
 ## Command layout
 
-Run the emulator CLI from a checkout with `./sp16`. The root `sp16` entrypoint is a symlink to the Python launcher at
-`scripts/sp16emu`. The launcher locates the checkout and imports the command implementation from
-`emulator/sp16emu.py`, so it works when invoked through the root link or through `make install`.
+Run the emulator CLI from a checkout with `./sp16`. The root `sp16` file is the Python launcher. It locates the checkout and imports the command implementation from
+`emulator/sp16emu.py`, so it also works through the `make install` link.
 
 To make `sp16` available as a command in your shell, install a link into `~/.local/bin`:
 

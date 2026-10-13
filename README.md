@@ -222,7 +222,7 @@ it); no shell files are touched.
 | `make list`, `doctor`, `diagnostics`, `test`, `hwsuite-smoke`, `audio-devices` | Information, checks and tests |
 | `make clean` / `make clean-all CONFIRM=1` | Delete build outputs / everything in `build/` including firmware |
 
-The `./sp16` launcher is linked from `scripts/sp16emu` and dispatches to `emulator/sp16emu.py`. That CLI calls
+The root `sp16` Python launcher dispatches to `emulator/sp16emu.py`. That CLI calls
 `emulator/native.py` (`build`, `launch`, `firmware`, `diagnostics`), `emulator/fwdev.py`, `emulator/hwsuite.py` and
 `emulator/sessionctl.py`; any option those tools have that is not listed in `./sp16 help` can be passed after `--`.
 
@@ -328,7 +328,7 @@ such as an external drive's name, are kept.
 ## Repository layout
 
 ```text
-sp16, scripts/sp16emu, Makefile    the command line (`./sp16 help`) and the ready-made build configurations (`make help`)
+sp16, Makefile    the command line (`./sp16 help`) and the ready-made build configurations (`make help`)
 emulator/            sp16emu.py (the command), build tool, firmware importer, Linux guest base, hardware shim, panel model, macOS app,
                      compatibility profiles, example recipe, developer tools, hardware suite, unit tests
 docs/                Python CLI/setup, architecture, modding guide, hardware suite, profile reference
