@@ -99,6 +99,8 @@ final class FirmwareImportWindow: NSObject, NSWindowDelegate {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 460), styleMask: [.titled, .closable],
                           backing: .buffered, defer: false)
         super.init()
+        // Created in code: the controller owns the window, so AppKit must not also release it on close.
+        window.isReleasedWhenClosed = false
         window.title = firstRun ? "Import SP-16 firmware" : "Import firmware"
         window.delegate = self
         let intro = NSTextField(wrappingLabelWithString: firstRun
@@ -131,7 +133,13 @@ final class FirmwareImportWindow: NSObject, NSWindowDelegate {
     }
 
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
-    func windowWillClose(_ notification: Notification) { onClose?() }
+    func windowWillClose(_ notification: Notification) {
+        // AppKit is still inside close(): detach the delegate, then let the owner drop this controller on the next
+        // main-queue turn so the window is not deallocated under its own close().
+        window.delegate = nil
+        let close = onClose
+        DispatchQueue.main.async { close?() }
+    }
 
     @objc func keyKindChanged() { keyPaths = []; keyField.stringValue = "" }
 
@@ -207,6 +215,8 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 360), styleMask: [.titled, .closable, .resizable],
                           backing: .buffered, defer: false)
         super.init()
+        // Created in code: the controller owns the window, so AppKit must not also release it on close.
+        window.isReleasedWhenClosed = false
         window.title = "Firmware library"
         window.delegate = self
         for (id, title, width) in [("name", "Name", 220.0), ("version", "Version", 70.0), ("kind", "Kind", 60.0),
@@ -234,7 +244,15 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
     }
 
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
-    func windowWillClose(_ notification: Notification) { onClose?() }
+    func windowWillClose(_ notification: Notification) {
+        // An open import is owned here, so take it off screen first: this controller (and with it the import
+        // controller) can only be dropped by the owner after both windows have closed.
+        importWindow?.window.close()
+        // Same teardown as FirmwareImportWindow: the owner drops this controller only after close() has returned.
+        window.delegate = nil
+        let close = onClose
+        DispatchQueue.main.async { close?() }
+    }
 
     func reload() {
         let result = FirmwareTool.run(["list", "--library", library])

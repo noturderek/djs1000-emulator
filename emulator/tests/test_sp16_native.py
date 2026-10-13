@@ -12,6 +12,7 @@ import protocol
 import native
 import panel
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -237,6 +238,24 @@ class BundleIdentityTests(unittest.TestCase):
         branch = main.split("if config.firmware != nil {", 1)[1].split("}", 1)[0]
         self.assertIn("editMenuItem()", branch)  # decoupled only; legacy menus unchanged
         self.assertEqual(main.count("editMenuItem()"), 1)
+
+    def test_code_created_windows_are_not_released_on_close(self):
+        # A programmatic NSWindow/NSPanel is released by AppKit on close unless told otherwise, while the Swift
+        # controller still owns it: every construction must clear isReleasedWhenClosed before the next construction.
+        constructions = 0
+        for name in native.SWIFT_SOURCES:
+            source = (TOOLS / name).read_text()
+            for match in re.finditer(r"(\w+) = NS(?:Window|Panel)\(", source):
+                constructions += 1
+                flag = re.compile(rf"\b{match.group(1)}\.isReleasedWhenClosed = false").search(source, match.end())
+                self.assertIsNotNone(flag, f"{name}: {match.group(0)} lacks isReleasedWhenClosed = false")
+                self.assertIsNone(re.compile(r"NS(?:Window|Panel)\(").search(source, match.end(), flag.start()),
+                                  f"{name}: a second window is constructed before its isReleasedWhenClosed line")
+        self.assertGreaterEqual(constructions, 4)  # main window, import, library, unverified-firmware notice
+        # Closing the library must take an open import window off screen before the library controller can go.
+        window = (TOOLS / "firmware-window.swift").read_text()
+        library = window.split("final class FirmwareLibraryWindow", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("importWindow?.window.close()", library.split("func windowWillClose", 1)[1].split("}", 1)[0])
 
     def test_qemu_source_filter_skips_only_absolute_links(self):
         import tarfile

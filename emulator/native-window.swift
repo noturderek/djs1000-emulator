@@ -118,6 +118,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.title = title
         window.contentMinSize = NSSize(width: 960, height: 640)
         window.contentView = panel
@@ -849,11 +850,12 @@ enum Launcher {
                 if FirmwareLibrary.ids(library: setup.library).isEmpty {
                     let delegate = FirmwareSetupApplication(config: setup.config, library: setup.library)
                     application.delegate = delegate
-                    application.run()
+                    // NSApplication.delegate is weak: keep the delegate, and so the windows it owns, alive for run().
+                    withExtendedLifetime(delegate) { application.run() }
                 } else {
                     let delegate = FirmwareLibrarySetupApplication(config: setup.config, library: setup.library)
                     application.delegate = delegate
-                    application.run()
+                    withExtendedLifetime(delegate) { application.run() }
                 }
                 exit(0)
             }
@@ -871,6 +873,6 @@ enum Launcher {
         let application = NSApplication.shared
         let delegate = NativeApplication(config)
         application.delegate = delegate
-        application.run()
+        withExtendedLifetime(delegate) { application.run() }
     }
 }
