@@ -323,7 +323,9 @@ and build logs (the last 500 lines of each); and macOS crash reports of the last
 What is never in it: firmware, updates (`.UPD`), key files or GPL archives, the firmware image, or your data image
 (projects and settings). The tool refuses any file named `*.key`, `*.upd`, `*.sqfs`, `*.img`, `*.iso`, `*.sfs` or
 `*.mot`. Text files are redacted: your home folder becomes `~`, your account name `<user>`, your Mac's name
-`<host>`, your full name `<name>` and e-mail addresses `<email>`. Add `--key-file <your key file>` to the command to
+`<host>`, your full name `<name>` and e-mail addresses `<email>`; the machine identifiers macOS writes into crash
+reports are blanked, and an audio output device you chose is reported only as `<set>` (its UID can contain a serial
+number). Add `--key-file <your key file>` to the command to
 also prove that the key does not occur anywhere in the zip (the key is never printed). Paths outside your home folder,
 such as an external drive's name, are kept.
 
