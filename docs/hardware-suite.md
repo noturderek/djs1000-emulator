@@ -40,13 +40,12 @@ Only a full-tier run can mark a profile verified.
 The suite needs a research build that records audio to files (it never plays sound):
 
 ```sh
-python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --output build/sp16-dev --bundle-suffix dev
-python3 emulator/native.py firmware import --output build/sp16-dev --update <your .UPD> --gpl-archive <part 1> <part 2>
+./sp16emu build --name sp16-dev --research --audio file --bundle-suffix dev     # or: make build-dev
+./sp16emu firmware import --update <your .UPD> --gpl-archive <part 1> <part 2>   # once; every build shares the library
 # the control build: the same build without pad calibration, sharing the firmware library (check HW-24)
-python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --uncalibrated --library build/sp16-dev/library \
-  --output build/sp16-dev-uncal --bundle-suffix dev-uncal
-python3 emulator/hwsuite.py --profile emulator/profiles/sp16-1.60.json --build-dir build/sp16-dev \
-  --firmware <library id> --control-build build/sp16-dev-uncal --smoke      # or --tier core, or no tier for full
+./sp16emu build --name sp16-dev-uncal --research --audio file --uncalibrated --bundle-suffix dev-uncal   # or: make build-control
+./sp16emu hwsuite --profile 1.60 --firmware <library id> --smoke      # or --tier core, or no tier for full
+# --build / --control name other builds; without --profile the version of the selected firmware is used
 ```
 
 The suite starts and stops its own emulator sessions (by exact process id), so quit the research builds before you

@@ -1,5 +1,6 @@
 """Hardware conformance suite runner (hwsuite.py): pure logic only, no VM, no firmware, synthetic data."""
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import struct
@@ -259,6 +260,7 @@ class FakeSession:
         return Image.new("RGB", (16, 16))
 
 
+@unittest.skipUnless(importlib.util.find_spec("PIL"), "pillow is only needed for the hardware suite")
 class RecipeTests(unittest.TestCase):
     def run_recipe(self, steps, texts, params=None):
         session = FakeSession()
@@ -290,6 +292,7 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(log[0]["observed"], "12")
 
 
+@unittest.skipUnless(importlib.util.find_spec("PIL"), "pillow is only needed for the hardware suite")
 class ImageTests(unittest.TestCase):
     def test_confined_and_highlight(self):
         from PIL import Image, ImageDraw

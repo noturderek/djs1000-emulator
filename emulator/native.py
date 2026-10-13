@@ -802,7 +802,8 @@ def main():
                               "Off (silent) by default")
     builder.add_argument("--audio-device", metavar="UID",
                          help="with --audio coreaudio|both: output device by stable CoreAudio UID (list them with "
-                              "`audio-selftest devices`, see docs/architecture.md); default is the system default output. "
+                              "`sp16emu audio devices`, which compiles and runs the audio tool); default is the system "
+                              "default output. "
                               "offline:<wav>[:rate[:ppm[:block]]] renders the output graph to a file on a software clock "
                               "instead (verification; never opens a device)")
     builder.add_argument("--decoupled", action="store_true", default=not LEGACY_AVAILABLE,

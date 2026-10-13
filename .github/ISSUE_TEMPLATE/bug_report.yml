@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thank you for reporting this. Please attach the diagnostics zip: in the app choose **Help > Collect Diagnostics…**,
-        or run `python3 emulator/native.py diagnostics --output build/sp16`. See "Reporting a bug" in the README.
+        or run `./sp16emu diagnostics`. See "Reporting a bug" in the README.
 
         **Never attach firmware, update (`.UPD`) files, key files, GPL source archives or data images.** The
         diagnostics zip contains none of them. Look through the zip before attaching it.

@@ -6,7 +6,9 @@ description: Guide a user through setting up the SP16 Emulator on their Mac - ch
 # SP16 Emulator setup
 
 Work from the repository root. The user's README is the reference; this skill adds the order, the checks and the
-rules. Commands assume `build/sp16` as the build; use the user's paths if they differ.
+rules. Everything goes through `./sp16emu` (`./sp16emu help` lists every command; `./sp16emu help <command>` shows its
+options; `make help` lists the ready-made configurations). Commands assume the default build `build/sp16`; add
+`--name <name>` for another. `./sp16emu --dry-run <command>` prints the exact tool command without running it.
 
 ## Rules (always)
 
@@ -17,39 +19,35 @@ rules. Commands assume `build/sp16` as the build; use the user's paths if they d
 - **Never commit** updates, keys, archives, imported libraries, data images, session folders or captures. Keep them
   in `build/` or `private/` (both git-ignored; create with `mkdir -m 700`).
 - **Never flash hardware**, run a firmware's own scripts, or distribute a repacked update.
-- **Audio:** when you launch to test, use builds made with `--audio file` (silent, records WAVs). Use
-  `--audio coreaudio` only when the user wants to hear it.
+- **Audio:** when you launch to test, use builds made with `--audio file` (silent, records WAVs; `make build-record`).
+  Use `--audio coreaudio` only when the user wants to hear it; `./sp16emu audio devices` lists output devices.
 - **Stopping:** stop an emulator only by its exact process id, found from its build path
   (`ps -axo pid,command | grep -F "<build dir>/"`), then confirm its `qemu-system-aarch64` child exits. Never quit by
   bundle id, never `pkill` or `killall`. Each running emulator uses about 3 CPU cores; keep at most three.
 
 ## 1. Check prerequisites
 
-Run and report each; stop at the first missing item and tell the user how to fix it:
-
 ```sh
-uname -sm                                  # Darwin arm64 (Apple silicon required)
-sw_vers -productVersion                    # 13 or later
-xcode-select -p && swiftc --version        # Xcode Command Line Tools
-/usr/bin/python3 --version                 # used by the app's import screen
-python3 --version                          # 3.12 or later for the build tool
-command -v ninja pkg-config && brew list glib pixman   # QEMU build dependencies
-docker info --format '{{.ServerVersion}}'  # Docker Desktop running (first build only)
-git rev-parse --show-toplevel              # a git clone (the build checks git-ignore rules)
+./sp16emu doctor
 ```
 
-Missing tools: `xcode-select --install`, `brew install python@3.12 ninja pkgconf glib pixman`, start Docker Desktop.
+It checks Apple silicon and macOS 13+, the Xcode Command Line Tools (`swiftc`, `codesign`, `/usr/bin/python3`), a
+Python 3.12+ for the build tools, the QEMU build tools (`ninja`, `pkgconf`, `glib`, `pixman`), Docker running (builds
+only), free disk space, and the git set-up (a clone whose `build/` is git-ignored). Report each `FAIL` with its `fix:`
+line and stop until they are fixed. Typical fixes: `xcode-select --install`,
+`brew install python@3.12 ninja pkgconf glib pixman`, start Docker Desktop.
 
 ## 2. Build
 
 ```sh
-mkdir -m 700 -p build && umask 077
-python3 emulator/native.py build --audio file --output build/sp16
+./sp16emu build --audio file          # or: make build-record  (build/sp16-record, silent, records WAVs)
 ```
 
-The first build takes a few minutes (QEMU from source, then the Docker guest image). On failure read the log the
-error names in `build/sp16/` (`qemu-configure.log`, `qemu-build.log`, `guest-build.log`, `swift-build.log`).
-A rebuild into the same folder reuses the QEMU source; `--reuse-qemu-from <other build>` copies a verified QEMU.
+`./sp16emu` creates `build/` owner-only. The first build takes a few minutes (QEMU from source, then the Docker guest
+image). On failure read the log the error names in `build/<name>/` (`qemu-configure.log`, `qemu-build.log`,
+`guest-build.log`, `swift-build.log`). Later builds reuse QEMU from an existing build automatically and share one
+firmware library (`build/library`); `./sp16emu builds` lists them. An existing build is never overwritten:
+`--rebuild` rebuilds it in place and keeps the firmware library and data images.
 
 ## 3. Firmware: the user downloads it
 
@@ -63,12 +61,12 @@ Ask where they saved them. Check the paths exist (`ls -l`), nothing more.
 ## 4. Import
 
 ```sh
-python3 emulator/native.py firmware import --output build/sp16 --update <path to .UPD> \
-  --gpl-archive <part 1 zip> <part 2 zip>        # or: --key-file <key file>
+./sp16emu firmware import --update <path to .UPD> --gpl-archive <part 1 zip> <part 2 zip>   # or: --key-file <key file>
+# or: make import UPD=<.UPD> GPL="<part 1 zip> <part 2 zip>"   (KEY=<key file> instead of GPL)
 ```
 
 Read the JSON result: `firmware_imported` with an id and a report, or `firmware_refused` with the reason. Then
-`python3 emulator/native.py firmware list --output build/sp16`. Typical refusals:
+`./sp16emu firmware list`. Typical refusals:
 
 | Reason | Meaning |
 |---|---|
@@ -84,7 +82,7 @@ unverified (title "(unverified)", library status, a one-time notice); see sectio
 ## 5. Run
 
 ```sh
-python3 emulator/native.py launch --output build/sp16      # or --firmware <id>
+./sp16emu run                     # or: make run;  --firmware <id>, --usb-image <file>, --ephemeral
 ```
 
 Confirm it booted: the newest `build/sp16/sessions/native-*/console.txt` contains `SP16_NATIVE_READY`. The window
@@ -95,16 +93,14 @@ shows the panel; the LCD settles on the home screen after about 10 seconds.
 Follow `docs/modding.md`. Short version, with a research build:
 
 ```sh
-python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file \
-  --output build/sp16-dev --bundle-suffix dev
-python3 emulator/native.py firmware import --output build/sp16-dev --update <.UPD> --gpl-archive <parts>
-python3 emulator/native.py firmware select --output build/sp16-dev --id <1.60 id>   # the example targets 1.60
-python3 emulator/fwdev.py new  --mod private/my-mod --id my-mod --from-recipe utility-label
-python3 emulator/fwdev.py test --output build/sp16-dev --mod private/my-mod
+make build-dev                    # build/sp16-dev: research socket, WAV recording; shares build/library
+./sp16emu firmware select --id <1.60 id>      # the example targets 1.60 (import first if the library is empty)
+./sp16emu mod new  --mod private/my-mod --id my-mod --from-recipe utility-label
+./sp16emu mod test --mod private/my-mod
 ```
 
 `utility-label` makes the HOME screen's Utility tile read MOD LAB on 1.60. For a repacked update use
-`fwdev.py package --upd ... --out private/<name>.UPD` and import it; a tampered copy imports as unverified with the reason recorded.
+`./sp16emu mod package --upd ... --out private/<name>.UPD` and import it; a tampered copy imports as unverified with the reason recorded.
 
 ## 7. Hardware suite
 
@@ -113,10 +109,8 @@ sharing its library. Quit both apps first; the suite starts and stops its own se
 and `tesseract`.
 
 ```sh
-python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --uncalibrated --library build/sp16-dev/library \
-  --output build/sp16-dev-uncal --bundle-suffix dev-uncal
-python3 emulator/hwsuite.py --profile emulator/profiles/sp16-<version>.json --build-dir build/sp16-dev \
-  --firmware <library id> --control-build build/sp16-dev-uncal --smoke
+make build-dev build-control      # build/sp16-dev and build/sp16-dev-uncal
+./sp16emu hwsuite --smoke         # --profile <version>, --firmware <library id>, --tier core|full
 ```
 
 Exit 0 pass, 1 fail, 2 blocked (missing profile data), 3 environment, 4 session lost. Only `--tier full` with every
@@ -128,7 +122,7 @@ check passing can mark a profile verified (`--mark-verified`). Run it on an idle
 When the emulator crashes, will not boot or misbehaves, collect one zip for the bug report:
 
 ```sh
-python3 emulator/native.py diagnostics --output build/sp16          # --sessions N, --include-audio, --out <zip>
+./sp16emu diagnostics             # --sessions N, --include-audio, --out <zip>   (or: make diagnostics)
 ```
 
 The app does the same from Help > Collect Diagnostics…, and offers it on the next start after an unclean exit. Read

@@ -25,6 +25,7 @@ profile ([profiles.md](profiles.md)).
 
 | Part | Files (in `emulator/`) |
 |---|---|
+| One command for all of the below | `sp16emu.py` (`./sp16emu`; `make` for the common configurations) |
 | Build, launch and firmware commands | `native.py` |
 | Firmware library and importer, host side (stdlib only) | `firmware.py`, `profiles.py`, `recipes.py`, `fwpack.py` |
 | Diagnostics for bug reports (stdlib only; the app bundles a copy) | `diagnostics.py` |
@@ -96,10 +97,10 @@ updates), M7 distribution packaging.
 
 1. Import it. It is stored as `unverified` and already runs; read the compatibility report for unknown device nodes, ALSA names,
    ioctls, panel revisions and calibration markers.
-2. `python3 emulator/native.py firmware profile --output build/sp16 --id <id> > emulator/profiles/sp16-<version>.json`
+2. `./sp16emu firmware profile --id <id> > emulator/profiles/sp16-<version>.json`
    writes a `candidate` profile with this import's identity and the reference profile's measurements.
 3. Build a research variant that shares the library:
-   `python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --library build/sp16/library --output build/sp16-dev --bundle-suffix dev`.
+   `./sp16emu build --name sp16-dev --research --audio file --bundle-suffix dev` (all builds share `build/library`).
 4. Launch it, correct any measurement that differs (lamp roles, pad curve, selector window, runtime layout,
    calibration), and run the hardware suite at the full tier ([hardware-suite.md](hardware-suite.md)).
 5. Only a full-tier pass marks the profile `verified` (`hwsuite.py --mark-verified`). Until then the version
