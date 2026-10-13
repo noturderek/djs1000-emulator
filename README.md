@@ -39,6 +39,9 @@ The first build downloads and compiles QEMU (10-20 minutes) and builds the guest
 is `build/sp16/SP-16 Compatible Emulator.app`, plus the firmware library folder `build/sp16/library`. Everything
 under `build/` is ignored by git and readable only by you; the build tool refuses any other place.
 
+Further builds (a research build for modding or the hardware suite) can copy the verified QEMU from this one with
+`--reuse-qemu-from build/sp16` instead of compiling it again.
+
 Add `--audio coreaudio` to hear the emulator through your Mac's default output, or `--audio file` to record each
 audio stream to a WAV file in the session folder instead (silent). Without `--audio` it is silent.
 

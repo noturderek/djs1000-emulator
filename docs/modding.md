@@ -11,8 +11,8 @@ Everything here runs on the emulator only. Nothing flashes hardware or runs a fi
 The developer loop needs a build with the control socket:
 
 ```sh
-mkdir -m 700 build private        # once; both are git-ignored and owner-only
-python3 emulator/native.py build --research --audio file \
+mkdir -p -m 700 build private     # both are git-ignored and owner-only
+python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file \
   --output build/sp16-dev --bundle-suffix dev
 python3 emulator/native.py firmware import --output build/sp16-dev --update <your .UPD> --gpl-archive <part 1> <part 2>
 ```

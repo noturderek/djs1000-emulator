@@ -94,7 +94,7 @@ shows the panel; the LCD settles on the home screen after about 10 seconds.
 Follow `docs/modding.md`. Short version, with a research build:
 
 ```sh
-python3 emulator/native.py build --research --audio file \
+python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file \
   --output build/sp16-dev --bundle-suffix dev
 python3 emulator/native.py firmware import --output build/sp16-dev --update <.UPD> --gpl-archive <parts>
 python3 emulator/fwdev.py new  --mod private/my-mod --id my-mod --from-recipe utility-label
@@ -111,7 +111,7 @@ sharing its library. Quit both apps first; the suite starts and stops its own se
 and `tesseract`.
 
 ```sh
-python3 emulator/native.py build --research --audio file --uncalibrated --library build/sp16-dev/library \
+python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --uncalibrated --library build/sp16-dev/library \
   --output build/sp16-dev-uncal --bundle-suffix dev-uncal
 python3 emulator/hwsuite.py --profile emulator/profiles/sp16-<version>.json --build-dir build/sp16-dev \
   --firmware <library id> --control-build build/sp16-dev-uncal --smoke

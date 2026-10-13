@@ -40,10 +40,10 @@ Only a full-tier run can mark a profile verified.
 The suite needs a research build that records audio to files (it never plays sound):
 
 ```sh
-python3 emulator/native.py build --research --audio file --output build/sp16-dev --bundle-suffix dev
+python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --output build/sp16-dev --bundle-suffix dev
 python3 emulator/native.py firmware import --output build/sp16-dev --update <your .UPD> --gpl-archive <part 1> <part 2>
 # the control build: the same build without pad calibration, sharing the firmware library (check HW-24)
-python3 emulator/native.py build --research --audio file --uncalibrated --library build/sp16-dev/library \
+python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file --uncalibrated --library build/sp16-dev/library \
   --output build/sp16-dev-uncal --bundle-suffix dev-uncal
 python3 emulator/hwsuite.py --profile emulator/profiles/sp16-1.60.json --build-dir build/sp16-dev \
   --firmware <library id> --control-build build/sp16-dev-uncal --smoke      # or --tier core, or no tier for full
