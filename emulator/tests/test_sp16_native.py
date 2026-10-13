@@ -466,12 +466,15 @@ class DataImageSwiftTests(unittest.TestCase):
             finally:
                 holder.kill()  # kill -9: no cleanup runs, the lock file keeps a dead PID
                 holder.wait()
+                holder.stdin.close()
+                holder.stdout.close()
             again = subprocess.Popen([str(self.binary), "lock", folder], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, text=True)
             self.assertEqual(again.stdout.readline().strip(), "locked")
             self.assertEqual((Path(folder) / "session.lock").read_text().strip(), str(again.pid))
             again.stdin.close()
             again.wait()
+            again.stdout.close()
 
     def test_clean_stop_waits_for_done_and_times_out(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as folder:

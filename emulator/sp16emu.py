@@ -1183,10 +1183,7 @@ TEST_OPTS = []
 
 
 def plan_test(ctx, args, tail):
-    public = (ctx.tools / "tests").is_dir()
-    folder = ctx.tools / "tests" if public else ctx.root / "tests"
-    pattern = "test_sp16_*.py" if public else "test_sp16_*.py"
-    argv = [ctx.python(), "-m", "unittest", "discover", "-s", str(folder), "-p", pattern] + list(tail)
+    argv = [ctx.python(), "-m", "unittest", "discover", "-s", str(ctx.tools / "tests"), "-p", "test_sp16_*.py"] + list(tail)
     return Plan([Step(argv, {"PYTHONDONTWRITEBYTECODE": "1"})])
 
 
@@ -1443,7 +1440,7 @@ def doctor_checks(ctx):
     if py:
         code, _ = ctx.capture([py, "-c", "import PIL, numpy"], timeout=30)
         if code:
-            optional.append("pillow numpy (python3 -m pip install pillow numpy)")
+            optional.append(f"pillow numpy ({py} -m pip install pillow numpy)")
     if not ctx.which("tesseract"):
         optional.append("tesseract (brew install tesseract)")
     if optional:

@@ -327,10 +327,12 @@ plus this project's own scripts and hardware shim. `ThirdParty/packages.txt` lis
 source package; `ThirdParty/copyright.txt` holds each package's copyright and licence file. The corresponding sources
 are the Debian source packages of those exact versions (`https://snapshot.debian.org/`, `apt-get source`).
 
-## Written offer
+## Redistributing this app
 
-For three years from distribution, the distributor will provide the complete corresponding source code of the GPL
-components above on request (contact to be filled in by the owner before any distribution).
+This app was built on your own Mac from the project's source code. If you give a copy of it to anyone else, you
+distribute QEMU and the GPL-licensed Debian packages listed above and take on their licence obligations, for example by
+supplying their complete corresponding source code (the QEMU archive and the Debian source packages named above)
+together with the app.
 """
 
 
