@@ -26,6 +26,8 @@ from that update; this repository contains none of it.
 
 ## Quick start
 
+Run the CLI from the repository root as `./sp16`; no global installation is needed.
+
 ### The fast way: bootstrap
 
 Ask your agent (Claude Code, Codex or another) to **run the `sp16-bootstrap` skill** ([.agents/skills/sp16-bootstrap/SKILL.md](.agents/skills/sp16-bootstrap/SKILL.md)).
