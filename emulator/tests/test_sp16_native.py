@@ -228,6 +228,17 @@ class BundleIdentityTests(unittest.TestCase):
             native.main()
         self.assertEqual(build.call_args.kwargs["bundle_suffix"], "devtest")
 
+    def test_qemu_source_filter_skips_only_absolute_links(self):
+        import tarfile
+        link = tarfile.TarInfo("qemu/roms/x/IncludeHack")
+        link.type, link.linkname = tarfile.SYMTYPE, "/usr/include/X11"
+        self.assertIsNone(native.qemu_source_filter(link, "/tmp/out"))
+        regular = tarfile.TarInfo("qemu/configure")
+        self.assertEqual(native.qemu_source_filter(regular, "/tmp/out").name, "qemu/configure")
+        escape = tarfile.TarInfo("../evil")
+        with self.assertRaises(tarfile.FilterError):
+            native.qemu_source_filter(escape, "/tmp/out")
+
     def test_copy_without_legacy_files_is_decoupled_only(self):
         """The public copy (no legacy guest Dockerfile): decoupled fullpanel by default, legacy options refused."""
         import contextlib

@@ -124,6 +124,15 @@ def host_check():
         raise ValueError("this native HVF build currently requires an Apple Silicon Mac")
 
 
+def qemu_source_filter(member, path):
+    """tarfile's "data" filter, except that a member it refuses as an absolute symlink is skipped instead of failing
+    the whole extraction (the QEMU archive has one, under roms/edk2, which this build never uses)."""
+    try:
+        return tarfile.data_filter(member, path)
+    except tarfile.AbsoluteLinkError:
+        return None
+
+
 def build_qemu(output):
     archive = output / f"qemu-{QEMU_VERSION}.tar.xz"
     if not archive.exists():
@@ -135,8 +144,14 @@ def build_qemu(output):
         raise ValueError("QEMU source archive SHA-256 mismatch")
     source = output / f"qemu-{QEMU_VERSION}"
     if not source.exists():
+        # Extract next to the target and rename, so an interrupted extraction is never mistaken for a source tree.
+        partial = output / f".qemu-{QEMU_VERSION}.partial"
+        shutil.rmtree(partial, ignore_errors=True)
+        partial.mkdir(mode=0o700)
         with tarfile.open(archive) as package:
-            package.extractall(output, filter="data")
+            package.extractall(partial, filter=qemu_source_filter)
+        (partial / source.name).rename(source)
+        partial.rmdir()
     build = output / "qemu-build"
     build.mkdir(mode=0o700, exist_ok=True)
     if not (build / "build.ninja").exists():
