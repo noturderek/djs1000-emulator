@@ -162,6 +162,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             panel.setStatus("Cannot start QEMU: \(error.localizedDescription)"); return
         }
         AppLog.log("QEMU started pid=\(process.processIdentifier)")
+        startQEMUReaper()
         panel.setStatus("Starting native QEMU…")
         if let audio = config.audio {
             // "file" (M4b1): a WAV per playback stream. "coreaudio" (M4b2): host output only. "both": the two.
@@ -181,6 +182,29 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in self?.connectAndRead() }
         if config.research == true {
             DispatchQueue.global(qos: .utility).async { [weak self] in self?.serveResearchSocket() }
+        }
+    }
+
+    /// A kill -9 or crash of this app leaves no chance to run cleanup, so a small helper (qemu_reaper.py, stdlib only)
+    /// watches the app and ends QEMU when the app is gone: a guest clean stop first (persistent builds), then SIGTERM
+    /// and SIGKILL, only for the QEMU PID it was given and only while that process still belongs to this session.
+    func startQEMUReaper() {
+        guard let script = Bundle.main.url(forResource: "qemu_reaper", withExtension: "py") else {
+            AppLog.log("reaper: qemu_reaper.py missing from the app bundle; QEMU would outlive a killed app")
+            return
+        }
+        let reaper = Process()
+        reaper.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        var arguments = [script.path, "--qemu", "\(process.processIdentifier)", "--match", config.socket]
+        if config.data != nil { arguments += ["--control", config.socket + ".ctl"] }
+        reaper.arguments = arguments
+        reaper.standardOutput = FileHandle.nullDevice
+        reaper.standardError = FileHandle.nullDevice
+        do {
+            try reaper.run()
+            AppLog.log("reaper started pid=\(reaper.processIdentifier)")
+        } catch {
+            AppLog.log("reaper: cannot start: \(error)")
         }
     }
 

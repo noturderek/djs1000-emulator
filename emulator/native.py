@@ -41,7 +41,7 @@ ICON_TOOL = "make-icon.swift"
 ICON_LOGO = "assets/legacy-logo.svg"
 ICON_FILE = "sp16-emulator"
 PANEL_RESOURCES = ("panel-layout.json", "assets/legacy-logo-2.svg", "assets/legacy-logo-3.svg",
-                   "assets/legacy-logo.svg")
+                   "assets/legacy-logo.svg", "qemu_reaper.py")
 PROFILES = ("fullpanel", "testmode")
 # Decoupled builds (docs/architecture.md M7, design decision D4): neutral product name and bundle id, no vendor
 # logos, a project-made icon, the firmware library tool and third-party notices. Legacy builds keep theirs.
@@ -49,7 +49,7 @@ DECOUPLED_APP_NAME = "SP-16 Compatible Emulator.app"
 DECOUPLED_PRODUCT = "SP-16 Compatible Emulator"
 DECOUPLED_EXECUTABLE = "SP16Emulator"
 DECOUPLED_BUNDLE_ID = "local.sp16-compatible.emulator"
-DECOUPLED_RESOURCES = ("panel-layout.json",)
+DECOUPLED_RESOURCES = ("panel-layout.json", "qemu_reaper.py")
 NEUTRAL_ICON = "assets/neutral-pads.svg"
 DECOUPLED_ICON_FILE = "sp16-compatible-emulator"
 FWLIB_FILES = ("firmware.py", "profiles.py", "recipes.py", "fwpack.py", "diagnostics.py")
