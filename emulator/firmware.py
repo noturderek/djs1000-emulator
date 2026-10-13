@@ -766,7 +766,7 @@ def main(argv=None):
                                                  progress=lambda m: print(json.dumps(m), file=sys.stderr, flush=True))
             finally:
                 key = None
-            if library.selected() is None:
+            if library.selected() in (None, entry_id):  # the first import becomes the explicit selection
                 library.select(entry_id)
             result = {"status": "firmware_imported", "id": entry_id, "report": report}
         elif args.action == "list":

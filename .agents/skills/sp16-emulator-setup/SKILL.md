@@ -97,6 +97,7 @@ Follow `docs/modding.md`. Short version, with a research build:
 python3 emulator/native.py build --reuse-qemu-from build/sp16 --research --audio file \
   --output build/sp16-dev --bundle-suffix dev
 python3 emulator/native.py firmware import --output build/sp16-dev --update <.UPD> --gpl-archive <parts>
+python3 emulator/native.py firmware select --output build/sp16-dev --id <1.60 id>   # the example targets 1.60
 python3 emulator/fwdev.py new  --mod private/my-mod --id my-mod --from-recipe utility-label
 python3 emulator/fwdev.py test --output build/sp16-dev --mod private/my-mod
 ```

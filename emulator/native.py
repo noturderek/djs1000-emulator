@@ -592,7 +592,8 @@ def build_decoupled(output, *, reuse_qemu_from=None, profile=None, research=Fals
     output.mkdir(mode=0o700, exist_ok=True)
     if "," in str(output):
         raise ValueError("build path must not contain commas")
-    library = Path(library) if library else output / "library"
+    # Absolute: the app is started by LaunchServices with / as its working directory, so a relative path breaks.
+    library = Path(os.path.abspath(library)) if library else output / "library"
     firmware.Library(library, create=True)
     extra_files = []
     if reuse_qemu_from:
@@ -706,7 +707,7 @@ def firmware_command(args):
                               "report": getattr(error, "report", firmware.refusal_report(None, str(error)))}, indent=2))
             return 1
         del key
-        if library.selected() is None:
+        if library.selected() in (None, entry_id):  # the first import becomes the explicit selection
             library.select(entry_id)
         print(json.dumps({"status": "firmware_imported", "id": entry_id, "report": report}, indent=2))
         return 0

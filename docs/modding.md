@@ -65,6 +65,11 @@ wrong base hash is refused before anything changes; the firmware then starts unc
 
 ## The loop
 
+`fwdev.py` works on the library's selected firmware (`native.py firmware list --output build/sp16-dev` shows it),
+or on the one you name with `--firmware <id>`. A recipe applies only to the firmware it names: the `utility-label`
+example needs 1.60, so select it first with
+`python3 emulator/native.py firmware select --output build/sp16-dev --id <1.60 id>`.
+
 ```sh
 python3 emulator/fwdev.py check --output build/sp16-dev --mod private/my-mod   # preflight, no boot
 python3 emulator/fwdev.py run   --output build/sp16-dev --mod private/my-mod   # launch with the overlay
