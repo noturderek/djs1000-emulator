@@ -4,10 +4,27 @@
   "product": "sp16",
   "status": "verified",
   "verification": {
-    "method": "legacy-conformance",
+    "method": "hwsuite",
     "result": "pass",
-    "date": "2026-10-12",
-    "evidence": "regression guards and the 185-row panel conformance catalogue, measured on this version in the legacy full-panel build; the decoupled 1.60 import passed the same guards and the conformance smoke on 2026-10-12."
+    "date": "2026-10-13",
+    "status": "verified",
+    "firmware_version": "1.60",
+    "manifest_sha256": "2cd0ed2d51b7fb817a4e4c7880d37eadf5fe374b143047cccff61dc3c5a13545",
+    "image_sha256": "a2073e9d3b7dcdbeeb1c96c28cbc6ae2560b68789d5fb65e5bc0e205da690e6a",
+    "suite_version": "1.0.0",
+    "checks_hash": "9cabe5befcde830c8caf9fe1d138766d4cd6f95f84ea46dc27d87ec1c0b4cdb7",
+    "hardware_fingerprint": "60ee9d4e1ff7b141b0e9c37a11bb2cd3002a72d69a47ffc1364e37863c82f058",
+    "hardware_epoch": 1,
+    "run_id": "20261013-034031-abb80b",
+    "result_sha256": "958eb3a114475545a2b86d13bd77adb1fc9ec897397ec32f80c26ac35eb8d364",
+    "counts": {
+      "PASS": 45,
+      "FAIL": 0,
+      "N/A": 0,
+      "BLOCKED": 0,
+      "SKIP": 0
+    },
+    "evidence": "hwsuite full tier, 45 PASS, 0 N/A"
   },
   "firmware": {
     "version": "1.60",
@@ -200,10 +217,6 @@
       [
         1,
         0
-      ],
-      [
-        5,
-        4
       ],
       [
         5,
@@ -594,14 +607,17 @@
     },
     "tx_frame_bytes": 128,
     "rx_frame_bytes": 128,
-    "boot_timeout_s": 60
+    "boot_timeout_s": 60,
+    "tx_fps": 66.7,
+    "rx_idle_min_fps": 1,
+    "rx_held_fps": 100
   },
   "home": {
     "title_regex": "^HOME$",
     "title_box": [
       0,
       0,
-      400,
+      600,
       32
     ],
     "geometry": [
@@ -614,23 +630,47 @@
     "y": 58,
     "expect_title": "HOME > UTILITY"
   },
-  "touch_dead": null,
+  "touch_dead": {
+    "x": 450,
+    "y": 70,
+    "note": "BAR:BEAT:STEP display on HOME; a tap changes nothing"
+  },
   "screen_titles": [
     "HOME",
-    "HOME > UTILITY"
+    "HOME > UTILITY",
+    "HOME > TRACK MENU",
+    "HOME > TRACK MENU > BROWSE",
+    "HOME > UTILITY > TOUCH STRIP SETTING (USER1)"
   ],
   "nav_probe": {
-    "push": [
+    "level1": [
       {
-        "touch": [
+        "tap": [
           748,
           58
-        ],
-        "expect_title": "HOME > UTILITY"
+        ]
       }
     ],
-    "back_expect_title": "HOME",
-    "home_expect_title": "HOME"
+    "level1_title": "^HOME > UTILITY",
+    "level2": [
+      {
+        "focus_row": "USER ?1",
+        "box": [
+          20,
+          145,
+          390,
+          450
+        ],
+        "max_detents": 60,
+        "detents": -1
+      },
+      {
+        "press": "selector"
+      }
+    ],
+    "level2_title": "^HOME > UTILITY > TOUCH STRIP SETTING",
+    "back_expect_title": "^HOME > UTILITY$",
+    "home_expect_title": "^HOME$"
   },
   "selector_probe": {
     "screen": "HOME",
@@ -654,7 +694,121 @@
       "order": "track n: row (n-1)//4 from the bottom, column (n-1)%4"
     }
   },
-  "knob_columns": null,
+  "knob_columns": [
+    {
+      "knob": "knob1",
+      "name": "VOLUME",
+      "screen": "HOME",
+      "box": [
+        0,
+        400,
+        133,
+        472
+      ],
+      "value_box": [
+        12,
+        429,
+        121,
+        453
+      ]
+    },
+    {
+      "knob": "knob2",
+      "name": "PAN",
+      "screen": "HOME",
+      "box": [
+        133,
+        400,
+        266,
+        472
+      ],
+      "value_box": [
+        145,
+        429,
+        254,
+        453
+      ]
+    },
+    {
+      "knob": "knob3",
+      "name": "PITCH",
+      "screen": "HOME",
+      "box": [
+        266,
+        400,
+        400,
+        472
+      ],
+      "value_box": [
+        278,
+        429,
+        387,
+        453
+      ]
+    },
+    {
+      "knob": "knob4",
+      "name": "TIME STRETCH",
+      "screen": "HOME",
+      "box": [
+        400,
+        400,
+        533,
+        472
+      ],
+      "value_box": [
+        411,
+        429,
+        521,
+        453
+      ],
+      "also": [
+        [
+          266,
+          400,
+          400,
+          472
+        ]
+      ],
+      "also_note": "TIME STRETCH other than OFF greys out the PITCH column (firmware dependency)"
+    },
+    {
+      "knob": "knob5",
+      "name": "LOOP",
+      "screen": "HOME",
+      "box": [
+        533,
+        400,
+        666,
+        472
+      ],
+      "value_box": [
+        545,
+        429,
+        654,
+        453
+      ]
+    },
+    {
+      "knob": "knob6",
+      "name": "TRIGGER MODE",
+      "screen": "HOME",
+      "box": [
+        666,
+        400,
+        800,
+        472
+      ],
+      "value_box": [
+        678,
+        429,
+        787,
+        453
+      ],
+      "first_direction": -1,
+      "first_direction_note": "TRIGGER MODE OneShot is the upper end; -1 selects GATE"
+    }
+  ],
   "knob_probe": {
     "screen": "HOME",
     "knob": "knob1",
@@ -664,11 +818,31 @@
       405,
       800,
       480
+    ],
+    "alternating_knob": "knob2",
+    "alternating_note": "PAN starts centred (C), so fast alternating detents are not clipped at a bound",
+    "track": 16,
+    "track_note": "knob checks run on track 16 (no sample): HOME knobs edit the selected track, and its tile redraws TIME STRETCH, LOOP and TRIGGER MODE"
+  },
+  "knob_bounded_param": {
+    "knob": "knob1",
+    "name": "VOLUME",
+    "screen": "HOME",
+    "min": 0,
+    "max": 127,
+    "value_box": [
+      12,
+      429,
+      121,
+      453
     ]
   },
-  "knob_bounded_param": null,
   "rgb_known": {
-    "strike_flash": null,
+    "strike_flash": [
+      74,
+      74,
+      74
+    ],
     "playhead": [
       74,
       74,
@@ -684,40 +858,600 @@
     "tx_level_range": [
       1,
       4
+    ],
+    "level_labels": {
+      "NORMAL": 4,
+      "DIMMED 1": 3,
+      "DIMMED 2": 2,
+      "DIMMED 3": 1
+    },
+    "level_scale": {
+      "4": 1.0,
+      "3": 0.5,
+      "2": 0.333,
+      "1": 0.25
+    }
+  },
+  "shift_probe": {
+    "hold": "shift",
+    "press": "pattern",
+    "expect": {
+      "rgb_channels": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "colour": [
+        74,
+        74,
+        74
+      ]
+    },
+    "note": "SHIFT + PATTERN opens pattern-length editing: all 16 step lamps white (PATTERN alone lights only the selected pattern's step in purple)",
+    "cleanup": [
+      {
+        "press": "pattern"
+      },
+      {
+        "press": "home"
+      }
     ]
   },
-  "shift_probe": null,
   "recipes": {
-    "sample_load": null,
-    "velocity_enable": null,
-    "gate_mode": null,
-    "brightness": null,
-    "save_project": null,
-    "persist_probe": null,
-    "set_bpm": null
+    "sample_load": [
+      {
+        "press": "home"
+      },
+      {
+        "expect_title": "^HOME$"
+      },
+      {
+        "press": "selector"
+      },
+      {
+        "expect_title": "TRACK MENU$"
+      },
+      {
+        "tap": [
+          615,
+          142
+        ]
+      },
+      {
+        "expect_title": "BROWSE$"
+      },
+      {
+        "if_text": "{sample_re}",
+        "box": [
+          150,
+          145,
+          765,
+          450
+        ],
+        "else": [
+          {
+            "focus_row": "SAMPLES \\[USB\\]",
+            "box": [
+              150,
+              145,
+              765,
+              450
+            ],
+            "max_detents": 12
+          },
+          {
+            "press": "selector"
+          },
+          {
+            "wait": 1
+          }
+        ]
+      },
+      {
+        "focus_row": "{sample_re}",
+        "box": [
+          150,
+          145,
+          765,
+          450
+        ],
+        "max_detents": 20
+      },
+      {
+        "press": "selector"
+      },
+      {
+        "wait": 1.5
+      },
+      {
+        "expect_text": "{sample_re}",
+        "box": [
+          505,
+          37,
+          780,
+          85
+        ]
+      },
+      {
+        "press": "home"
+      },
+      {
+        "expect_title": "^HOME$"
+      }
+    ],
+    "velocity_enable": [
+      {
+        "press": "home"
+      },
+      {
+        "tap": [
+          536,
+          58
+        ]
+      },
+      {
+        "expect_title": "TRACK SETTING$"
+      },
+      {
+        "turn": "knob1",
+        "detents": 1
+      },
+      {
+        "expect_text": "^ON",
+        "box": [
+          12,
+          429,
+          121,
+          453
+        ]
+      },
+      {
+        "press": "home"
+      }
+    ],
+    "velocity_disable": [
+      {
+        "press": "home"
+      },
+      {
+        "tap": [
+          536,
+          58
+        ]
+      },
+      {
+        "expect_title": "TRACK SETTING$"
+      },
+      {
+        "turn": "knob1",
+        "detents": -1
+      },
+      {
+        "expect_text": "^OFF",
+        "box": [
+          12,
+          429,
+          121,
+          453
+        ]
+      },
+      {
+        "press": "home"
+      }
+    ],
+    "gate_mode": [
+      {
+        "press": "home"
+      },
+      {
+        "expect_title": "^HOME$"
+      },
+      {
+        "turn": "knob6",
+        "detents": -1
+      },
+      {
+        "expect_text": "GATE",
+        "box": [
+          678,
+          429,
+          787,
+          453
+        ]
+      }
+    ],
+    "oneshot_mode": [
+      {
+        "press": "home"
+      },
+      {
+        "expect_title": "^HOME$"
+      },
+      {
+        "turn": "knob6",
+        "detents": 1
+      },
+      {
+        "expect_text": "ONE ?SHOT",
+        "box": [
+          678,
+          429,
+          787,
+          453
+        ]
+      }
+    ],
+    "brightness": [
+      {
+        "press": "home"
+      },
+      {
+        "tap": [
+          748,
+          58
+        ]
+      },
+      {
+        "expect_title": "UTILITY$"
+      },
+      {
+        "focus_row": "BUTTON BRIGHT",
+        "box": [
+          20,
+          145,
+          390,
+          450
+        ],
+        "max_detents": 60
+      },
+      {
+        "press": "selector"
+      },
+      {
+        "wait": 0.8
+      },
+      {
+        "focus_row": "{label}$",
+        "box": [
+          395,
+          145,
+          765,
+          450
+        ],
+        "max_detents": 8,
+        "detents": -1
+      },
+      {
+        "press": "selector"
+      },
+      {
+        "wait": 0.8
+      },
+      {
+        "press": "home"
+      }
+    ],
+    "save_project": {
+      "steps": [
+        {
+          "press": "home"
+        },
+        {
+          "tap": [
+            52,
+            58
+          ]
+        },
+        {
+          "expect_title": "PROJECT$"
+        },
+        {
+          "focus_row": "^SAVE$",
+          "box": [
+            20,
+            145,
+            765,
+            450
+          ],
+          "max_detents": 12
+        },
+        {
+          "press": "selector"
+        },
+        {
+          "wait": 1.5
+        },
+        {
+          "if_text": "SAVE CURRENT PROJECT",
+          "box": [
+            110,
+            100,
+            690,
+            140
+          ],
+          "then": [
+            {
+              "tap": [
+                430,
+                394
+              ]
+            },
+            {
+              "tap": [
+                133,
+                351
+              ]
+            },
+            {
+              "wait": 0.5
+            },
+            {
+              "tap": [
+                400,
+                266
+              ]
+            },
+            {
+              "wait": 1.5
+            }
+          ]
+        },
+        {
+          "if_text": "OVERWRITE",
+          "box": [
+            110,
+            180,
+            690,
+            260
+          ],
+          "then": [
+            {
+              "tap": [
+                486,
+                302
+              ]
+            }
+          ]
+        },
+        {
+          "wait": 1.0
+        },
+        {
+          "until_gone": "SAVING",
+          "box": [
+            110,
+            180,
+            690,
+            260
+          ],
+          "timeout": 60
+        },
+        {
+          "wait": 1.0
+        },
+        {
+          "press": "home"
+        }
+      ],
+      "project_file": "PIONEER DJ SAMPLER/Projects/hw.prj",
+      "note": "an unsaved project opens the SAVE AS keyboard (name typed: hw); a saved one asks Overwrite?"
+    },
+    "persist_probe": {
+      "box": [
+        145,
+        429,
+        254,
+        453
+      ],
+      "options": [
+        {
+          "set": [
+            {
+              "press": "home"
+            },
+            {
+              "burst": "knob2",
+              "detents": -200
+            },
+            {
+              "wait": 5
+            }
+          ],
+          "regex": "^L ?64$"
+        },
+        {
+          "set": [
+            {
+              "press": "home"
+            },
+            {
+              "burst": "knob2",
+              "detents": 200
+            },
+            {
+              "wait": 5
+            }
+          ],
+          "regex": "^R ?64$"
+        }
+      ],
+      "note": "track 1 PAN at one end (L64, or R64 when already at L64), saved with the project and restored at the next boot (the firmware reopens the last project)"
+    },
+    "set_bpm": null,
+    "new_project": [
+      {
+        "press": "home"
+      },
+      {
+        "tap": [
+          52,
+          58
+        ]
+      },
+      {
+        "expect_title": "PROJECT$"
+      },
+      {
+        "focus_row": "CREATE NEW",
+        "box": [
+          20,
+          145,
+          765,
+          450
+        ],
+        "max_detents": 12
+      },
+      {
+        "press": "selector"
+      },
+      {
+        "wait": 1.5
+      },
+      {
+        "if_text": "CONTINUE",
+        "box": [
+          110,
+          180,
+          690,
+          290
+        ],
+        "then": [
+          {
+            "tap": [
+              486,
+              334
+            ]
+          },
+          {
+            "wait": 1.5
+          }
+        ]
+      },
+      {
+        "if_text": "PROJECT NAME",
+        "box": [
+          110,
+          100,
+          690,
+          140
+        ],
+        "then": [
+          {
+            "tap": [
+              430,
+              394
+            ]
+          },
+          {
+            "tap": [
+              133,
+              351
+            ]
+          },
+          {
+            "wait": 0.5
+          },
+          {
+            "tap": [
+              486,
+              266
+            ]
+          },
+          {
+            "wait": 2.5
+          }
+        ]
+      },
+      {
+        "press": "home"
+      },
+      {
+        "expect_title": "^HOME$"
+      }
+    ],
+    "click_steps": [
+      1,
+      5,
+      9,
+      13
+    ],
+    "volume_knob": {
+      "knob": "knob1",
+      "screen": "HOME",
+      "value_box": [
+        12,
+        429,
+        121,
+        453
+      ],
+      "min": 0,
+      "max": 127
+    }
   },
   "audio": {
     "alsa_streams": [
       {
         "name": "hw:ak4458audio,0",
         "direction": "playback",
-        "channels": 4,
-        "rate": null,
-        "format": "S16"
+        "access": "RW_INTERLEAVED",
+        "format": "S16_LE",
+        "channels": 16,
+        "rate": 44100,
+        "period_frames": 64,
+        "buffer_frames": 128
       },
       {
         "name": "hw:ak4452audio,0",
         "direction": "playback",
+        "access": "RW_INTERLEAVED",
+        "format": "FLOAT_LE",
         "channels": 2,
-        "rate": null,
-        "format": "FLOAT"
+        "rate": 44100,
+        "period_frames": 64,
+        "buffer_frames": 128
       },
       {
         "name": "hw:ak4452audio,1",
         "direction": "playback",
+        "access": "RW_INTERLEAVED",
+        "format": "FLOAT_LE",
         "channels": 2,
-        "rate": null,
-        "format": "FLOAT"
+        "rate": 44100,
+        "period_frames": 64,
+        "buffer_frames": 128
+      },
+      {
+        "name": "hw:ak4452audio,0",
+        "direction": "capture",
+        "access": "RW_INTERLEAVED",
+        "format": "FLOAT_LE",
+        "channels": 2,
+        "rate": 44100,
+        "period_frames": 64,
+        "buffer_frames": 128
+      },
+      {
+        "name": "hw:ak4452audio,1",
+        "direction": "capture",
+        "access": "RW_INTERLEAVED",
+        "format": "FLOAT_LE",
+        "channels": 2,
+        "rate": 44100,
+        "period_frames": 64,
+        "buffer_frames": 128
       }
     ],
     "sound_channels": {
@@ -731,7 +1465,9 @@
       74,
       74,
       74
-    ]
+    ],
+    "late_over_20ms_max": 0.25,
+    "late_over_20ms_note": "share of PCM packets that reach the host more than 20 ms late in one window: host delivery latency, which matters only for live output; measured 0 to 0.134 over 12 windows of 20-62 s (1.50 and 1.60, load 6-16, two VMs) while every window had 44100 frames/s, no gap, drop or sequence gap"
   },
   "strip": {
     "lamp_channels": [
@@ -756,7 +1492,70 @@
   "usb": {
     "layout": "PIONEER DJ SAMPLER/",
     "stop_hold_s": 2,
-    "browse_recipe": null
+    "browse_recipe": {
+      "steps": [
+        {
+          "press": "home"
+        },
+        {
+          "expect_title": "^HOME$"
+        },
+        {
+          "press": "selector"
+        },
+        {
+          "expect_title": "TRACK MENU$"
+        },
+        {
+          "tap": [
+            615,
+            142
+          ]
+        },
+        {
+          "expect_title": "BROWSE$"
+        },
+        {
+          "if_text": "HW-",
+          "box": [
+            150,
+            145,
+            765,
+            450
+          ],
+          "else": [
+            {
+              "focus_row": "SAMPLES \\[USB\\]",
+              "box": [
+                150,
+                145,
+                765,
+                450
+              ],
+              "max_detents": 12
+            },
+            {
+              "press": "selector"
+            },
+            {
+              "wait": 1
+            }
+          ]
+        }
+      ],
+      "list_box": [
+        150,
+        145,
+        765,
+        450
+      ]
+    },
+    "sample_dir": "PIONEER DJ SAMPLER/Samples",
+    "tree": [
+      "Projects",
+      "Samples",
+      "Scenes"
+    ]
   },
   "device_nodes": [
     "/dev/subucom_spi0.1",
@@ -770,19 +1569,433 @@
     "/dev/gpiodrv"
   ],
   "ioctl_set": [
-    "0x40107000",
     "0x40017001",
-    "0x40047002",
-    "0x40027003",
-    "0x40047004",
-    "0x40017005",
-    "0x40047007",
-    "0x40017008",
     "0x40017009",
-    "0x40017006",
-    "0x40047000"
+    "0x40047000",
+    "0x40047004",
+    "0x40107000",
+    "0x80017001",
+    "0x80027003",
+    "0x80047002",
+    "0x80047004"
   ],
   "hardware": {
     "absent": []
-  }
+  },
+  "button_effects": {
+    "selector": {
+      "type": "title",
+      "regex": "TRACK MENU$",
+      "post": [
+        {
+          "press": "home"
+        }
+      ]
+    },
+    "back": {
+      "type": "title",
+      "regex": "^HOME$",
+      "pre": [
+        {
+          "press": "selector"
+        },
+        {
+          "expect_title": "TRACK MENU$"
+        }
+      ]
+    },
+    "home": {
+      "type": "title",
+      "regex": "^HOME$",
+      "pre": [
+        {
+          "press": "selector"
+        },
+        {
+          "expect_title": "TRACK MENU$"
+        }
+      ]
+    },
+    "shift": {
+      "type": "shift_probe"
+    },
+    "stop": {
+      "type": "lamp",
+      "role": "stop",
+      "pre": [
+        {
+          "press": "play"
+        },
+        {
+          "wait": 1
+        }
+      ]
+    },
+    "play": {
+      "type": "lamp",
+      "role": "play",
+      "post": [
+        {
+          "press": "stop"
+        }
+      ]
+    },
+    "mode": {
+      "type": "lamp",
+      "role": "lamp_pitch",
+      "post": [
+        {
+          "press": "mode"
+        },
+        {
+          "press": "mode"
+        },
+        {
+          "press": "mode"
+        }
+      ]
+    },
+    "usb_stop": {
+      "type": "lamp",
+      "role": "usb_led",
+      "note": "a short press blinks the USB LED once (no eject)"
+    },
+    "track": {
+      "type": "lamp",
+      "role": "track",
+      "post": [
+        {
+          "press": "track"
+        }
+      ]
+    },
+    "mute": {
+      "type": "lamp",
+      "role": "mute",
+      "post": [
+        {
+          "press": "mute"
+        }
+      ]
+    },
+    "slice": {
+      "type": "lamp",
+      "role": "slice",
+      "post": [
+        {
+          "press": "slice"
+        }
+      ]
+    },
+    "scale": {
+      "type": "lamp",
+      "role": "scale",
+      "post": [
+        {
+          "press": "scale"
+        }
+      ]
+    },
+    "rec": {
+      "type": "lamp",
+      "role": "rec",
+      "post": [
+        {
+          "press": "rec"
+        }
+      ]
+    },
+    "hold": {
+      "type": "lamp",
+      "role": "hold",
+      "post": [
+        {
+          "press": "hold"
+        }
+      ]
+    },
+    "scene": {
+      "type": "lamp",
+      "role": "scene",
+      "post": [
+        {
+          "press": "scene"
+        }
+      ]
+    },
+    "pattern": {
+      "type": "lamp",
+      "role": "pattern",
+      "post": [
+        {
+          "press": "pattern"
+        }
+      ]
+    },
+    "active": {
+      "type": "lamp",
+      "role": "active",
+      "post": [
+        {
+          "press": "active"
+        }
+      ]
+    },
+    "step1": {
+      "type": "lamp",
+      "role": "step1",
+      "post": [
+        {
+          "press": "step1"
+        }
+      ]
+    },
+    "step2": {
+      "type": "lamp",
+      "role": "step2",
+      "post": [
+        {
+          "press": "step2"
+        }
+      ]
+    },
+    "step3": {
+      "type": "lamp",
+      "role": "step3",
+      "post": [
+        {
+          "press": "step3"
+        }
+      ]
+    },
+    "step4": {
+      "type": "lamp",
+      "role": "step4",
+      "post": [
+        {
+          "press": "step4"
+        }
+      ]
+    },
+    "step5": {
+      "type": "lamp",
+      "role": "step5",
+      "post": [
+        {
+          "press": "step5"
+        }
+      ]
+    },
+    "step6": {
+      "type": "lamp",
+      "role": "step6",
+      "post": [
+        {
+          "press": "step6"
+        }
+      ]
+    },
+    "step7": {
+      "type": "lamp",
+      "role": "step7",
+      "post": [
+        {
+          "press": "step7"
+        }
+      ]
+    },
+    "step8": {
+      "type": "lamp",
+      "role": "step8",
+      "post": [
+        {
+          "press": "step8"
+        }
+      ]
+    },
+    "step9": {
+      "type": "lamp",
+      "role": "step9",
+      "post": [
+        {
+          "press": "step9"
+        }
+      ]
+    },
+    "step10": {
+      "type": "lamp",
+      "role": "step10",
+      "post": [
+        {
+          "press": "step10"
+        }
+      ]
+    },
+    "step11": {
+      "type": "lamp",
+      "role": "step11",
+      "post": [
+        {
+          "press": "step11"
+        }
+      ]
+    },
+    "step12": {
+      "type": "lamp",
+      "role": "step12",
+      "post": [
+        {
+          "press": "step12"
+        }
+      ]
+    },
+    "step13": {
+      "type": "lamp",
+      "role": "step13",
+      "post": [
+        {
+          "press": "step13"
+        }
+      ]
+    },
+    "step14": {
+      "type": "lamp",
+      "role": "step14",
+      "post": [
+        {
+          "press": "step14"
+        }
+      ]
+    },
+    "step15": {
+      "type": "lamp",
+      "role": "step15",
+      "post": [
+        {
+          "press": "step15"
+        }
+      ]
+    },
+    "step16": {
+      "type": "lamp",
+      "role": "step16",
+      "post": [
+        {
+          "press": "step16"
+        }
+      ]
+    },
+    "bar1": {
+      "type": "delivered",
+      "reason": "no lamp or screen effect with the default one-bar pattern (events accounted)"
+    },
+    "bar2": {
+      "type": "delivered",
+      "reason": "no lamp or screen effect with the default one-bar pattern (events accounted)"
+    },
+    "bar3": {
+      "type": "delivered",
+      "reason": "no lamp or screen effect with the default one-bar pattern (events accounted)"
+    },
+    "bar4": {
+      "type": "delivered",
+      "reason": "no lamp or screen effect with the default one-bar pattern (events accounted)"
+    },
+    "bit_5_4": {
+      "bit": [
+        5,
+        4
+      ],
+      "type": "lamp",
+      "role": "usb_led",
+      "extra": [
+        1,
+        1
+      ],
+      "hold_s": 0.3,
+      "run_last": true,
+      "post": [
+        {
+          "usb": "attach"
+        }
+      ],
+      "note": "measured by hwsuite HW-09: a short press of RX bit (5,4) makes the firmware unmount the USB stick at once (SP16_USB unmounted_by_app=yes, LED off); USB STOP (5,6) needs a >= 2 s hold. It also latches TX extra flag 0x67 bit 0 and, until the next start, project saves hang at SAVING 0%; so it runs last. The factory BUTTON TEST page shows no name for it; no physical control known"
+    }
+  },
+  "lamp_unassigned": {
+    "mono": [
+      4
+    ],
+    "extra": [
+      0,
+      2
+    ],
+    "note": "SHIFT (mono 4) is never driven; TX extras 0x66 and 0x68 bit 0 move only in the firmware's start-up frames; no channel for strip LEDs 9-10"
+  },
+  "ioctl_set_note": "requests the firmware made and the shim accepted at run time (metrics.guest.ioctls_seen, hwsuite HW-45); the shim also serves 0x40047002, 0x40027003, 0x40017005, 0x40047007, 0x40017008 and 0x40017006, which this version never calls",
+  "lamp_extra_driven": {
+    "1": "TX 0x67 bit 0: latched on by RX bit (5,4) (see button_effects.bit_5_4); also set in start-up frames"
+  },
+  "lamp_required": [
+    "track",
+    "mute",
+    "slice",
+    "scale",
+    "rec",
+    "stop",
+    "play",
+    "scene",
+    "pattern",
+    "hold",
+    "active",
+    "usb_led",
+    "over_led",
+    "bar1",
+    "lamp_pitch",
+    "lamp_repeat",
+    "lamp_user1",
+    "lamp_user2",
+    "bar_led1",
+    "strip_led1",
+    "strip_led2",
+    "strip_led3",
+    "strip_led4",
+    "strip_led5",
+    "strip_led6",
+    "strip_led7",
+    "strip_led8",
+    "step1",
+    "step2",
+    "step3",
+    "step4",
+    "step5",
+    "step6",
+    "step7",
+    "step8",
+    "step9",
+    "step10",
+    "step11",
+    "step12",
+    "step13",
+    "step14",
+    "step15",
+    "step16",
+    "pad1",
+    "pad2",
+    "pad3",
+    "pad4",
+    "pad5",
+    "pad6",
+    "pad7",
+    "pad8",
+    "pad9",
+    "pad10",
+    "pad11",
+    "pad12",
+    "pad13",
+    "pad14",
+    "pad15",
+    "pad16"
+  ],
+  "lamp_required_note": "not required: shift (never driven), usb_stop (mono 24, never lit in any suite action), bar 2-4 and their position lamps (the default project has one bar)"
 }

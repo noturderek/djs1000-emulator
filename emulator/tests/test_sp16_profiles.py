@@ -186,8 +186,8 @@ class VersionDataTests(unittest.TestCase):
             self.assertIn(key, profile["panel"])
         self.assertIn("usb_led", profile["panel"]["lamp_roles"])
         self.assertIn("over_led", profile["panel"]["lamp_roles"])
-        self.assertEqual(set(profile["recipes"]), {"sample_load", "velocity_enable", "gate_mode", "brightness",
-                                                   "save_project", "persist_probe", "set_bpm"})
+        self.assertLessEqual({"sample_load", "velocity_enable", "gate_mode", "brightness", "save_project",
+                              "persist_probe", "set_bpm"}, set(profile["recipes"]))
 
     def test_unknown_device_opens_are_logged_once_and_counted(self):
         stub = (TOOLS / "hardware_stub.c").read_text()

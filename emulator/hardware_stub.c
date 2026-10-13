@@ -336,11 +336,33 @@ ssize_t read(int fd, void *buffer, size_t count) {
     return (ssize_t)count;
 }
 
+/* Hardware suite HW-45: the first accepted call of each request is logged once, so the run can show that every
+ * request the profile declares was served (the bridge counts these lines in metrics.guest.ioctls_seen). */
+static void note_ioctl(unsigned long request, enum device kind) {
+    static unsigned long seen[32];
+    static int count;
+    static const char *names[] = {"none", "panel", "cdc", "dac", "backlight", "media", "packet"};
+    int known = __atomic_load_n(&count, __ATOMIC_ACQUIRE);
+    for (int i=0; i<known && i<32; i++) if (__atomic_load_n(&seen[i], __ATOMIC_RELAXED)==request) return;
+    int slot = __atomic_fetch_add(&count, 1, __ATOMIC_ACQ_REL);  /* a racing duplicate line is harmless */
+    if (slot>=32) return;
+    __atomic_store_n(&seen[slot], request, __ATOMIC_RELEASE);
+    fprintf(stderr, "[sp16-ui-stub] ioctl accepted request=0x%lx device=%s\n", request, names[kind]);
+}
+
+static int device_ioctl(struct state *s, int fd, unsigned long request, void *arg);
+
 int ioctl(int fd, unsigned long request, ...) {
     if (!original_ioctl) original_ioctl=dlsym(RTLD_NEXT,"ioctl");
     va_list args; va_start(args, request); void *arg=va_arg(args, void *); va_end(args);
     struct state *s = device(fd);
     if (!s) return original_ioctl(fd, request, arg);
+    int result = device_ioctl(s, fd, request, arg);
+    if (result==0) note_ioctl(request, s->kind);
+    return result;
+}
+
+static int device_ioctl(struct state *s, int fd, unsigned long request, void *arg) {
     if (s->kind==BACKLIGHT && request==0x40047000UL) return arg?0:(errno=EFAULT,-1);
     if (s->kind!=PANEL && s->kind!=CDC && s->kind!=DAC) { errno=ENOTTY; return -1; }
     if (!arg) { errno=EFAULT; return -1; }

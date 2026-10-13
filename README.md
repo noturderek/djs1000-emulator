@@ -21,7 +21,7 @@ from that update; this repository contains none of it.
 - Docker Desktop, for the one-time build of the Linux guest base image (Debian packages and this project's code).
   The emulator does not need Docker to run.
 - About 3 GB of free disk space.
-- Optional: `brew install tesseract` for the LCD title checks of the hardware suite.
+- For the hardware conformance suite only: `python3 -m pip install pillow numpy` and `brew install tesseract`.
 
 ## Quick start
 
@@ -32,7 +32,7 @@ git clone <this repository> sp16-emulator
 cd sp16-emulator
 mkdir -m 700 build
 umask 077
-python3 emulator/native.py build --decoupled --profile fullpanel --output build/sp16
+python3 emulator/native.py build --output build/sp16
 ```
 
 The first build downloads and compiles QEMU (10-20 minutes) and builds the guest base image with Docker. The result
@@ -48,7 +48,7 @@ Download both yourself:
 
 - **Firmware update.** The official firmware page:
   <https://support.alphatheta.com/en-us/articles/4405128836121>. Download the latest update (1.60), unzip it and
-  keep the `.UPD` file.
+  keep the `.UPD` file. Version 1.50 is also supported if you have its update file.
 - **GPL source archive.** The official open source page:
   <https://www.pioneerdj.com/en/support/open-source-code-distribution/gnu-open-source-license/>. Download the
   TORAIZ SP-16 source archive (two zip parts). Keep both parts, in order.
@@ -88,13 +88,14 @@ and `check --id <id>` manage them. In the app, Firmware > Library does the same.
 
 ## Supported firmware versions
 
-A version boots only when it has a **verified** compatibility profile in `emulator/profiles/`. Any other version is
-refused with a compatibility report.
+A version boots only when it has a **verified** compatibility profile in `emulator/profiles/` (one that passed the
+full hardware conformance suite). Any other version is refused with a compatibility report. Verified today: **1.50
+and 1.60**.
 
 | Version | Profile | Status |
 |---|---|---|
 | 1.60 | `sp16-1.60.json` | verified |
-| 1.50 | `sp16-1.50.json` | candidate: imports, but normal builds refuse it until the hardware suite passes |
+| 1.50 | `sp16-1.50.json` | verified |
 
 To verify a new version, see [docs/architecture.md](docs/architecture.md#adding-a-firmware-version).
 
@@ -115,7 +116,15 @@ There are three ways, described in [docs/modding.md](docs/modding.md):
 
 `emulator/hwsuite.py` checks that the emulated hardware behaves correctly for a given firmware (panel wire protocol,
 lamps, encoders, pads, strip, audio clock, USB, storage, power, driver coverage) without testing that firmware's
-features. It needs a build made with `--research --audio file`. See [docs/hardware-suite.md](docs/hardware-suite.md).
+features. It runs against a build made with `--research --audio file` plus an `--uncalibrated` control build that
+shares its library, and starts its own sessions:
+
+```sh
+python3 emulator/hwsuite.py --profile emulator/profiles/sp16-1.60.json --build-dir build/sp16-dev \
+  --firmware <library id> --control-build build/sp16-dev-uncal --smoke
+```
+
+See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 
 ## Troubleshooting
 

@@ -51,6 +51,11 @@ DECOUPLED_RESOURCES = ("panel-layout.json",)
 NEUTRAL_ICON = "assets/neutral-pads.svg"
 DECOUPLED_ICON_FILE = "sp16-compatible-emulator"
 FWLIB_FILES = ("firmware.py", "profiles.py", "recipes.py", "fwpack.py")
+# Legacy builds (the whole prepared firmware rootfs inside the guest image) need files that only the private
+# repository has. Without them (the public copy) the CLI offers decoupled builds only and hides the legacy options.
+LEGACY_AVAILABLE = (TOOLS / "Dockerfile.native-guest").is_file()
+LEGACY_REFUSAL = ("this copy builds firmware-free apps only: import firmware with `native.py firmware import` "
+                  "instead of --rootfs, --mod, --app-arg, --no-persistence or --profile testmode")
 
 # Optional per-task suffix (e.g. a task id) so a dev build gets its own bundle ID and quitting one app by ID
 # never quits another. Without it the bundle IDs are unchanged.
@@ -460,7 +465,7 @@ def build(root, output, *, mod=None, reuse_qemu_from=None, profile=None, researc
     if allow_unverified or library:
         raise ValueError("--allow-unverified and --library apply to decoupled builds only")
     if not (TOOLS / "Dockerfile.native-guest").is_file():
-        raise ValueError("legacy builds are not part of this copy of the emulator; build --decoupled")
+        raise ValueError(LEGACY_REFUSAL)
     if root is None:
         raise ValueError("--rootfs is required (or build --decoupled)")
     persistent = resolve_persistence(profile, no_persistence)
@@ -726,19 +731,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     builder = commands.add_parser("build", help="compile QEMU/window and package guest once")
-    builder.add_argument("--rootfs", help="prepared OEM rootfs (legacy builds); omit with --decoupled")
+    legacy_help = (lambda text: text) if LEGACY_AVAILABLE else (lambda text: argparse.SUPPRESS)
+    builder.add_argument("--rootfs", help=legacy_help("prepared OEM rootfs (legacy builds); omit with --decoupled"))
     builder.add_argument("--output", required=True)
-    builder.add_argument("--mod", choices=["utility-label"], help="apply the verified UTILITY → MOD LAB patch")
+    builder.add_argument("--mod", choices=["utility-label"], help=legacy_help("apply the verified UTILITY → MOD LAB patch"))
     builder.add_argument("--reuse-qemu-from", help="copy hash-verified QEMU from an existing private build")
-    builder.add_argument("--profile", choices=PROFILES, help="separate experimental app profile/bundle ID")
-    builder.add_argument("--app-arg", choices=APP_ARGS, help="launch the OEM application with a fixed research argument")
+    builder.add_argument("--profile", choices=PROFILES, default=None if LEGACY_AVAILABLE else "fullpanel",
+                         help="separate experimental app profile/bundle ID" if LEGACY_AVAILABLE
+                         else "app profile (fullpanel, the default, is the only one in this copy)")
+    builder.add_argument("--app-arg", choices=APP_ARGS,
+                         help=legacy_help("launch the OEM application with a fixed research argument"))
     builder.add_argument("--pad-calibration-value", type=int, metavar="N",
                          help="fullpanel only: stage a synthetic padcalibration.xml with N (48..504) for all pads "
                               f"(default {DEFAULT_PAD_CALIBRATION}, not factory data)")
     builder.add_argument("--uncalibrated", action="store_true",
                          help="fullpanel only: stage no calibration file, so the OEM reports uncalibrated pads (blinking)")
     builder.add_argument("--no-persistence", action="store_true",
-                         help="fullpanel only: build without the persistent <output>/data/emmc.img block device")
+                         help=legacy_help("fullpanel only: build without the persistent <output>/data/emmc.img block device"))
     builder.add_argument("--research", action="store_true",
                          help="enable the owner-only session control socket (events, raw research frames, snapshots)")
     builder.add_argument("--trace", choices=TRACE_MODES,
@@ -756,10 +765,10 @@ def main():
                               "`audio-selftest devices`, see docs/architecture.md); default is the system default output. "
                               "offline:<wav>[:rate[:ppm[:block]]] renders the output graph to a file on a software clock "
                               "instead (verification; never opens a device)")
-    builder.add_argument("--decoupled", action="store_true",
+    builder.add_argument("--decoupled", action="store_true", default=not LEGACY_AVAILABLE,
                          help="build the app, QEMU and a guest base image with no OEM files; "
                               "firmware is imported into the build's library (native.py firmware import) and attached "
-                              "read-only at launch")
+                              "read-only at launch" + ("" if LEGACY_AVAILABLE else " (always on in this copy)"))
     builder.add_argument("--library", metavar="DIR",
                          help="with --decoupled: firmware library directory (default <output>/library)")
     builder.add_argument("--allow-unverified", action="store_true",
@@ -792,6 +801,9 @@ def main():
     fw.add_argument("--name", help="import/rename: display name")
     fw.add_argument("--from-profile", help="profile: measurements to start from (default: the product's reference)")
     args = parser.parse_args()
+    if args.command == "build" and not LEGACY_AVAILABLE and (
+            args.rootfs or args.mod or args.app_arg or args.no_persistence or args.profile != "fullpanel"):
+        parser.exit(1, f"native emulator failed: {LEGACY_REFUSAL}\n")
     try:
         if args.command == "build":
             build(args.rootfs, args.output, mod=args.mod, reuse_qemu_from=args.reuse_qemu_from,

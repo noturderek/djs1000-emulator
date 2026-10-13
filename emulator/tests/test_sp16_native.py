@@ -222,11 +222,37 @@ class BundleIdentityTests(unittest.TestCase):
 
     def test_argument_parser_accepts_bundle_suffix(self):
         from unittest import mock
-        argv = ["native.py", "build", "--rootfs", "r", "--output", "o", "--profile", "fullpanel",
+        argv = ["native.py", "build", "--output", "o", "--profile", "fullpanel", "--decoupled",
                 "--bundle-suffix", "devtest"]
         with mock.patch.object(native, "build") as build, mock.patch("sys.argv", argv):
             native.main()
         self.assertEqual(build.call_args.kwargs["bundle_suffix"], "devtest")
+
+    def test_copy_without_legacy_files_is_decoupled_only(self):
+        """The public copy (no legacy guest Dockerfile): decoupled fullpanel by default, legacy options refused."""
+        import contextlib
+        import io
+        from unittest import mock
+        with mock.patch.object(native, "LEGACY_AVAILABLE", False), mock.patch.object(native, "build") as build, \
+                mock.patch("sys.argv", ["native.py", "build", "--output", "o"]):
+            native.main()
+        self.assertTrue(build.call_args.kwargs["decoupled"])
+        self.assertEqual(build.call_args.kwargs["profile"], "fullpanel")
+        for extra in (["--rootfs", "r"], ["--mod", "utility-label"], ["--app-arg", "testmode"], ["--no-persistence"],
+                      ["--profile", "testmode"]):
+            stderr = io.StringIO()
+            with mock.patch.object(native, "LEGACY_AVAILABLE", False), mock.patch.object(native, "build") as build, \
+                    mock.patch("sys.argv", ["native.py", "build", "--output", "o", *extra]), \
+                    contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+                native.main()
+            build.assert_not_called()
+            self.assertIn("firmware-free apps only", stderr.getvalue())
+        stdout = io.StringIO()
+        with mock.patch.object(native, "LEGACY_AVAILABLE", False), mock.patch("sys.argv", ["native.py", "build", "-h"]), \
+                contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit):
+            native.main()
+        for hidden in ("--rootfs", "--mod", "--app-arg", "--no-persistence"):
+            self.assertNotIn(hidden, stdout.getvalue())
 
 
 class GuestImageTests(unittest.TestCase):

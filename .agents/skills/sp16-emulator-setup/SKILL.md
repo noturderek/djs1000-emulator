@@ -44,7 +44,7 @@ Missing tools: `xcode-select --install`, `brew install python@3.12 ninja pkgconf
 
 ```sh
 mkdir -m 700 -p build && umask 077
-python3 emulator/native.py build --decoupled --profile fullpanel --audio file --output build/sp16
+python3 emulator/native.py build --audio file --output build/sp16
 ```
 
 The first build takes 10-20 minutes (QEMU from source, then the Docker guest image). On failure read the log the
@@ -94,7 +94,7 @@ shows the panel; the LCD settles on the home screen after about 10 seconds.
 Follow `docs/modding.md`. Short version, with a research build:
 
 ```sh
-python3 emulator/native.py build --decoupled --profile fullpanel --research --audio file \
+python3 emulator/native.py build --research --audio file \
   --output build/sp16-dev --bundle-suffix dev
 python3 emulator/native.py firmware import --output build/sp16-dev --update <.UPD> --gpl-archive <parts>
 python3 emulator/fwdev.py new  --mod private/my-mod --id my-mod --from-recipe utility-label
@@ -106,11 +106,15 @@ python3 emulator/fwdev.py test --output build/sp16-dev --mod private/my-mod
 
 ## 7. Hardware suite
 
-Needs a `--research --audio file` build and a running session:
+Needs a `--research --audio file` build with the firmware imported, plus a control build made with `--uncalibrated`
+sharing its library. Quit both apps first; the suite starts and stops its own sessions. Needs `pillow`, `numpy`
+and `tesseract`.
 
 ```sh
-python3 emulator/hwsuite.py --runtime build/sp16-dev/sessions/<session>/runtime.json \
-  --profile emulator/profiles/sp16-<version>.json --build-dir build/sp16-dev --tier smoke
+python3 emulator/native.py build --research --audio file --uncalibrated --library build/sp16-dev/library \
+  --output build/sp16-dev-uncal --bundle-suffix dev-uncal
+python3 emulator/hwsuite.py --profile emulator/profiles/sp16-<version>.json --build-dir build/sp16-dev \
+  --firmware <library id> --control-build build/sp16-dev-uncal --smoke
 ```
 
 Exit 0 pass, 1 fail, 2 blocked (missing profile data), 3 environment, 4 session lost. Only `--tier full` with every

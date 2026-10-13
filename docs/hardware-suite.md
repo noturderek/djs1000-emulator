@@ -32,7 +32,7 @@ titles, probe coordinates, lamp roles). A check whose profile data is missing is
 | Storage, power, soak | HW-40..44 | persistence across clean and hard restarts, isolation between firmware data images, clean quit, 5-minute soak |
 | Driver coverage | HW-45 | every device node and ioctl the firmware uses is served; unknown ones are reported |
 
-Tiers: **smoke** (16 checks, about 8 minutes), **core** (all but the soak), **full** (all 45, about 50 minutes).
+Tiers: **smoke** (16 checks, about 6 minutes), **core** (all but the soak), **full** (all 45, about 30 minutes).
 Only a full-tier run can mark a profile verified.
 
 ## Running it
@@ -40,16 +40,20 @@ Only a full-tier run can mark a profile verified.
 The suite needs a research build that records audio to files (it never plays sound):
 
 ```sh
-python3 emulator/native.py build --decoupled --profile fullpanel --research --audio file \
-  --output build/sp16-dev --bundle-suffix dev
-python3 emulator/native.py launch --output build/sp16-dev --firmware <id>
-python3 emulator/hwsuite.py --runtime build/sp16-dev/sessions/<session>/runtime.json \
-  --profile emulator/profiles/sp16-1.60.json --build-dir build/sp16-dev --tier smoke
+python3 emulator/native.py build --research --audio file --output build/sp16-dev --bundle-suffix dev
+python3 emulator/native.py firmware import --output build/sp16-dev --update <your .UPD> --gpl-archive <part 1> <part 2>
+# the control build: the same build without pad calibration, sharing the firmware library (check HW-24)
+python3 emulator/native.py build --research --audio file --uncalibrated --library build/sp16-dev/library \
+  --output build/sp16-dev-uncal --bundle-suffix dev-uncal
+python3 emulator/hwsuite.py --profile emulator/profiles/sp16-1.60.json --build-dir build/sp16-dev \
+  --firmware <library id> --control-build build/sp16-dev-uncal --smoke      # or --tier core, or no tier for full
 ```
 
-It drives the session only through the control socket, signals to exact process ids and files. It generates its own
-fixtures (test tones, FAT32 stick images); no firmware content is used. Results go to `hwsuite-result.json` and
-`hwsuite-report.md`.
+The suite starts and stops its own emulator sessions (by exact process id), so quit the research builds before you
+run it. It drives them only through the control socket and files, generates its own fixtures (test tones, FAT32
+stick images; no firmware content), and writes `hwsuite-result.json` and `hwsuite-report.md` under
+`build/sp16-dev/hwsuite/<run id>/`. It needs `pillow` and `numpy` (`python3 -m pip install pillow numpy`) and
+`tesseract` for LCD titles.
 
 | Exit code | Meaning |
 |---|---|

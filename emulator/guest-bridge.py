@@ -44,6 +44,8 @@ class Counters:
         self.unknown_ioctls = {}
         # Device nodes the shim does not serve (hardware suite HW-45): path -> opens reported.
         self.unknown_devices = {}
+        # Requests the shim accepted, by device kind (hardware suite HW-45: every declared request was served).
+        self.ioctls_seen = {}
 
     def add(self, name, amount=1):
         with self.lock:
@@ -59,14 +61,20 @@ class Counters:
             if path in self.unknown_devices or len(self.unknown_devices) < 64:
                 self.unknown_devices[path] = self.unknown_devices.get(path, 0) + 1
 
+    def ioctl_seen(self, request, kind):
+        with self.lock:
+            if request in self.ioctls_seen or len(self.ioctls_seen) < 64:
+                self.ioctls_seen[request] = kind
+
     def snapshot(self):
         with self.lock:
             return {**self.values, "unknown_ioctls": dict(self.unknown_ioctls),
-                    "unknown_devices": dict(self.unknown_devices)}
+                    "unknown_devices": dict(self.unknown_devices), "ioctls_seen": dict(self.ioctls_seen)}
 
 
 UNKNOWN_IOCTL = re.compile(r"\[sp16-ui-stub\] unsupported ioctl fd=\d+ request=(0x[0-9a-f]{1,8})$")
 UNKNOWN_DEVICE = re.compile(r"\[sp16-ui-stub\] unknown device open path=(/[!-~]{1,63})$")
+IOCTL_SEEN = re.compile(r"\[sp16-ui-stub\] ioctl accepted request=(0x[0-9a-f]{1,8}) device=([a-z]{1,16})$")
 
 
 def main():
@@ -95,6 +103,9 @@ def main():
                 unknown = UNKNOWN_IOCTL.match(line)
                 if unknown:
                     counters.unknown_ioctl(unknown.group(1))
+                seen = IOCTL_SEEN.match(line)
+                if seen:
+                    counters.ioctl_seen(seen.group(1), seen.group(2))
                 device = UNKNOWN_DEVICE.match(line)
                 if device:
                     counters.unknown_device(device.group(1))
@@ -134,7 +145,7 @@ def main():
                     previous = pixels
                 if time.monotonic() - last_diagnostics >= 1:
                     diagnostics()
-                    send_raw(encode_stats({**counters.snapshot(), "adc": model.adc_words()}))
+                    send_raw(encode_stats({**counters.snapshot(), "adc": model.adc_words(), "rx": model.rx_state()}))
                     last_diagnostics = time.monotonic()
                 time.sleep(.02)
         except (OSError, EOFError, ValueError) as exc:

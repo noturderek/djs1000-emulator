@@ -81,7 +81,7 @@ updates), M7 distribution packaging.
 2. `python3 emulator/native.py firmware profile --output build/sp16 --id <id> > emulator/profiles/sp16-<version>.json`
    writes a `candidate` profile with this import's identity and the reference profile's measurements.
 3. Build a developer variant that shares the library and boots candidates:
-   `python3 emulator/native.py build --decoupled --profile fullpanel --research --audio file --allow-unverified --library build/sp16/library --output build/sp16-dev --bundle-suffix dev`.
+   `python3 emulator/native.py build --research --audio file --allow-unverified --library build/sp16/library --output build/sp16-dev --bundle-suffix dev`.
 4. Launch it, correct any measurement that differs (lamp roles, pad curve, selector window, runtime layout,
    calibration), and run the hardware suite at the full tier ([hardware-suite.md](hardware-suite.md)).
 5. Only a full-tier pass marks the profile `verified` (`hwsuite.py --mark-verified`). Until then normal builds refuse

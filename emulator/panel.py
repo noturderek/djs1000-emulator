@@ -305,6 +305,17 @@ class PanelModel:
                       for off in (0x26, 0x28, 0x2a)})
         return words
 
+    def rx_state(self):
+        """Research readback of the held input the guest is sending (hardware suite HW-13): button bytes 1..5 as
+        hex and the pads whose pressure word is non-zero."""
+        with self.lock:
+            frame = bytearray(self.raw)
+            for offset, byte in self.overrides.items():
+                frame[offset] = byte
+        pads = [index + 1 for index in range(16)
+                if struct.unpack_from(">H", frame, panel_map.PAD_A_OFFSET + 2 * index)[0]]
+        return {"buttons": frame[1:6].hex(), "pads": pads}
+
     def release_all(self):
         with self.lock:
             for byte in range(1, 6):

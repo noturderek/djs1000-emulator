@@ -12,7 +12,7 @@ The developer loop needs a build with the control socket:
 
 ```sh
 mkdir -m 700 build private        # once; both are git-ignored and owner-only
-python3 emulator/native.py build --decoupled --profile fullpanel --research --audio file \
+python3 emulator/native.py build --research --audio file \
   --output build/sp16-dev --bundle-suffix dev
 python3 emulator/native.py firmware import --output build/sp16-dev --update <your .UPD> --gpl-archive <part 1> <part 2>
 ```
