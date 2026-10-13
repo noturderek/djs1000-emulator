@@ -13,16 +13,18 @@ from that update; this repository contains none of it.
 ## What you need
 
 - A Mac with Apple silicon (the emulator uses Hypervisor.framework), macOS 13 or later.
-- Xcode Command Line Tools (`xcode-select --install`): Swift, `codesign`, `make`, and `/usr/bin/python3`, which runs
-  `./sp16` and which the app uses to import firmware.
+- Xcode Command Line Tools (`xcode-select --install`): Swift, `codesign`, `make`, and `/usr/bin/python3` (Python 3.9),
+  which is enough to start `./sp16` and which the app uses to import firmware.
 - Python 3.12 or later for the build tools (for example `brew install python@3.12`). `./sp16` finds it by
   itself; `./sp16 doctor` tells you if it is missing.
 - QEMU build dependencies: `brew install ninja pkgconf glib pixman`. QEMU itself is downloaded from
   download.qemu.org as source and built on your Mac during the first build.
-- Docker Desktop, for the one-time build of the Linux guest base image (Debian packages and this project's code).
-  The emulator does not need Docker to run.
+- Docker Desktop (or another Docker engine, such as OrbStack), running during every `./sp16 build`: it builds the
+  Linux guest base image from Debian packages and this project's code (later builds reuse Docker's cache). `./sp16 mod
+  sdk` uses it too. A built emulator runs without Docker.
 - About 3 GB of free disk space.
-- For the hardware conformance suite only: `python3 -m pip install pillow numpy` and `brew install tesseract`.
+- For the hardware conformance suite only: `pillow` and `numpy` in the Python that runs the build tools
+  (`./sp16 doctor` prints the exact install command for it) and `brew install tesseract`.
 
 ## Quick start
 
@@ -54,7 +56,7 @@ hardware suite. The steps below are the same thing by hand.
 ### 1. Build
 
 ```sh
-git clone <this repository> sp16-emulator
+git clone https://github.com/noturderek/sp16-emulator.git
 cd sp16-emulator
 ./sp16 doctor     # checks your Mac and prints the fix for anything missing
 ./sp16 build
@@ -85,7 +87,8 @@ Download both yourself:
   `ver150`, `ver140`, `ver131`). Or let the tool fetch it: `./sp16 firmware download --version 1.60` shows the
   file name, the URL and the size and asks first (`--info` only shows them, `--yes` agrees); it downloads only from
   that official host, over https, checks the zip, the version, the CRC and (for 1.50 and 1.60) the SHA-256 the
-  profiles pin, and keeps the `.UPD` in `build/downloads/`. It never downloads the key or the GPL archive.
+  profiles pin, and keeps the `.UPD` in `build/downloads/ver160/` (one folder per version; `--to DIR` saves it
+  elsewhere). It never downloads the key or the GPL archive.
 - **GPL source archive.** The official open source page:
   <https://www.pioneerdj.com/en/support/open-source-code-distribution/gnu-open-source-license/>. Download the
   TORAIZ SP-16 source archive (two zip parts). Keep both parts, in order.
@@ -188,7 +191,9 @@ into `build/.cache`, a few seconds), then for example:
 ## Commands and Makefile
 
 `./sp16 help` lists every command; `./sp16 help <command>` (or `<command> --help`) shows its options and
-examples. `./sp16 --dry-run <command> ...` prints the exact tool commands instead of running them.
+examples. `./sp16 --dry-run <command> ...` prints the exact tool commands instead of running them, and `--verbose`
+prints each one as it runs. `SP16EMU_BUILD_DIR` moves the build folder (default `build/`) and `SP16EMU_PYTHON` names
+the Python 3.12+ for the build tools.
 
 | Command | What it does |
 |---|---|
@@ -232,7 +237,7 @@ The root `sp16` Python launcher dispatches to `emulator/sp16emu.py`. That CLI ca
 
 A version is **verified** when it has a verified compatibility profile in `emulator/profiles/` (one that passed the
 full hardware conformance suite). Verified today: **1.50 and 1.60**. Any other update that was encrypted with the
-correct key also runs, as **unverified**: it uses the reference measurements of the verified versions, the window title
+correct key also runs, as **unverified**: it uses the measurements of the reference profile (1.60), the window title
 says "(unverified)", the library lists it as unverified, and the app shows its compatibility report once. The
 integrity checks are the same for every version (a changed library image is refused at boot).
 
@@ -283,7 +288,6 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | `the build tools need Python 3.12 or later` | `brew install python@3.12`; or name one with `./sp16 --python /path/to/python3.12 ...` (or `SP16EMU_PYTHON`, `make TOOL_PYTHON=...`). |
 | `build/sp16 already exists` | `./sp16 run` launches it; `./sp16 build --rebuild` rebuilds it in place and keeps the firmware library and data; `--name` makes another build. |
 | QEMU build fails | Read `build/<name>/qemu-configure.log` or `qemu-build.log`; usually a missing `ninja`, `pkgconf`, `glib` or `pixman` (`./sp16 doctor` checks them). |
-| QEMU link fails with `64-bit mach-o not 8-byte aligned` | A QEMU build folder configured with GNU `ar` (Homebrew `binutils` on `PATH`) from an older checkout; the build now uses Apple's `/usr/bin/ar`. Delete `build/sp16/qemu-build` and build again. |
 | Guest image build fails | Start Docker Desktop and retry; read `build/sp16/guest-build.log`. |
 | Window title says `(unverified)` | The version has no verified profile (see the table above); it runs on the reference measurements. `./sp16 firmware check --id <id>` prints the report. |
 | Import: `update CRC does not match` or `not sector-aligned` | The update file is damaged or incomplete; download it again. |
@@ -294,7 +298,7 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | `usb ...: is in use by a running emulator` | The emulator (or a leftover QEMU) has the stick. Quit it, stopping only the process ids the message names, then repeat the command. Mounting a stick the emulator writes to would corrupt it. |
 | `usb ...: already attached to this Mac` | Release it with `./sp16 usb unmount`, then repeat. `./sp16 run` also starts without the stick (and says why) while the Mac holds it. |
 | `usb ...: cannot attach` | The image has no FAT32 file system (for example a zero-filled file). Recreate it with `./sp16 usb create --force`, or `usb add` formats a blank image by itself. |
-| `usb ...: cannot attach ... no mountable file systems` on a clone in Downloads, Desktop or Documents | macOS privacy protection refuses a mount whose mount point is in that folder, even though the image itself is fine. Current versions mount in `~/Library/Caches/sp16emu/usb-mnt` instead; update the clone. `./sp16 doctor` warns about the location. A message that says "cannot mount ... privacy protection" means the same: move the clone (for example to `~/src/sp16-emulator`) or give your terminal app Full Disk Access (System Settings > Privacy & Security), then repeat. |
+| `usb ...: cannot mount ... privacy protection` (clone in Downloads, Desktop, Documents or iCloud Drive) | macOS privacy protection refuses some disk operations in those folders, even though the image itself is fine (`./sp16 doctor` warns about the location). Move the clone (for example to `~/src/sp16-emulator`) or give your terminal app Full Disk Access (System Settings > Privacy & Security), then repeat. |
 | The window is black | Read `console.txt` in the newest folder under `build/sp16/sessions/`. |
 | The app quit or crashed | Start it again: it offers to collect diagnostics. Then see [Reporting a bug](#reporting-a-bug). The newest folder under `build/sp16/sessions/` holds `app.log` (the app's log) and `qemu-stderr.txt`. |
 

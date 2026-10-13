@@ -5,7 +5,7 @@ The build tool downloads or installs the components below **on your Mac, at buil
 If you redistribute a built app, you also redistribute these components and take on their licence obligations
 (for the GPL components: provide or offer their complete corresponding source).
 
-Every decoupled build writes the exact inventory of what it used into the app bundle:
+Every build writes the exact inventory of what it used into the app bundle:
 `Contents/Resources/THIRD-PARTY-NOTICES.md`, `Contents/Resources/ThirdParty/packages.txt` (every Debian package with
 its version and source package) and `Contents/Resources/ThirdParty/copyright.txt` (each package's copyright and
 licence file).

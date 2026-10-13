@@ -64,7 +64,7 @@ the build folder, owner-only:
 
 At launch the app looks at the previous session: no `clean-exit` and no live process, or a new macOS crash report
 (`~/Library/Logs/DiagnosticReports/SP16Emulator-*.ips`) naming this app, shows a non-blocking notice that offers to
-collect diagnostics, once per finding. Help > Collect Diagnostics… (and `native.py diagnostics`) runs the bundled
+collect diagnostics, once per finding. Help > Collect Diagnostics… (and `./sp16 diagnostics`) runs the bundled
 `diagnostics.py`, which writes one redacted zip; see "Reporting a bug" in the README for what it contains.
 
 ## Import
@@ -103,11 +103,11 @@ updates), M7 distribution packaging.
    `./sp16 build --name sp16-dev --research --audio file --bundle-suffix dev` (all builds share `build/library`).
 4. Launch it, correct any measurement that differs (lamp roles, pad curve, selector window, runtime layout,
    calibration), and run the hardware suite at the full tier ([hardware-suite.md](hardware-suite.md)).
-5. Only a full-tier pass marks the profile `verified` (`hwsuite.py --mark-verified`). Until then the version
+5. Only a full-tier pass marks the profile `verified` (`./sp16 hwsuite --tier full --mark-verified`). Until then the version
    runs as unverified.
 
 ## Research socket
 
 Builds made with `--research` open an owner-only control socket per session; its path is in the session's
-`runtime.json`. `emulator/sessionctl.py --runtime <runtime.json> <command>` sends panel events, touches, raw frames,
+`runtime.json`. `./sp16 ctl <command>` (it runs `emulator/sessionctl.py` against the newest research session) sends panel events, touches, raw frames,
 snapshots, USB attach and eject, `metrics`, `firmware` and `app-restart`. The hardware suite and `fwdev.py` use it.

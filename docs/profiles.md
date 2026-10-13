@@ -14,7 +14,7 @@ What every update of the product shares; used by the importer before a version h
 | Field | Meaning |
 |---|---|
 | `schema`, `product`, `name` | `1`, `sp16`, display name |
-| `reference_profile` | measurements used for an unprofiled version booted without a verified profile (marked unverified), and the start of `native.py firmware profile` |
+| `reference_profile` | measurements used for an unprofiled version booted without a verified profile (marked unverified), and the start of `./sp16 firmware profile` |
 | `update.stock_marker` | trailer marker of an official update (repacked updates use `SP16MODLAB-`) |
 | `update.images_dir`, `update.tar_layers[]`, `update.squashfs_layers[]` | where the firmware layers are inside the update and where each is unpacked |
 | `update.revision_files[]` | small version files copied into the manifest |
@@ -44,8 +44,8 @@ checks that need it are `BLOCKED` until it is.
 
 ### Verification record
 
-`verification` = `{method, result, date, evidence}`. A candidate carries `result: pending`. `hwsuite.py
---mark-verified` writes the block after a full-tier pass and is the only writer of `status: verified`.
+`verification` = `{method, result, date, evidence}`. A candidate carries `result: pending`. `./sp16 hwsuite --tier
+full --mark-verified` writes the block after a full-tier pass and is the only writer of `status: verified`.
 
 ## Import manifest (`<library>/<id>/manifest.json`)
 
@@ -59,4 +59,4 @@ checks that need it are `BLOCKED` until it is.
 | `compat` | device nodes, ALSA names and ioctls found, unknown candidates, calibration markers |
 | `key_scan` | `absent`: no imported file contains the key |
 | `importer` | importer version, base image hash, tool versions |
-| `mod` | for repacked updates: base, recipes, rebuild hash |
+| `mod` | for repacked updates: base, recipes and rebuild hash when verified; `{id, verified: false, reason}` otherwise |

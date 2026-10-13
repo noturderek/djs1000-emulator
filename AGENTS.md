@@ -12,7 +12,7 @@ This repository is a macOS emulator for SP-16 compatible sampler firmware. It co
 - Build and run through `./sp16` (`./sp16 help` lists every command; `make help` the ready-made configurations;
   `./sp16 doctor` checks prerequisites). `--dry-run` shows the exact tool command without running it.
 - Never download firmware or the GPL source archive for the user without their explicit confirmation. The only
-  download the tool makes itself is `./sp16 firmware download` (the official firmware update, from the official
+  firmware download the tool makes itself is `./sp16 firmware download` (the official firmware update, from the official
   server only; pass `--yes` only after the user agreed to the file, source and size it printed with `--info`). Never print,
   copy or commit key bytes. Never commit updates, keys, firmware images, imported files or session captures: they
   live only under the git-ignored `build/` and `private/` folders.
