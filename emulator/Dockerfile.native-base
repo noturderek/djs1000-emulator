@@ -1,0 +1,44 @@
+# Decoupled guest base image (docs/architecture.md, M2/M3): our code and Debian packages only, no OEM files.
+# Build tooling only; the resulting kernel + initramfs boot under native macOS QEMU. The user's firmware is imported
+# into a read-only squashfs inside this guest (sp16.mode=import) and attached at run time as a virtio-blk disk.
+# The legacy Dockerfile.native-guest (whole OEM rootfs in the initramfs) is unchanged.
+FROM debian:bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends linux-image-arm64 kmod cpio gzip iproute2 \
+ qemu-user-static xvfb x11-utils dosfstools python3 gcc-arm-linux-gnueabi libc6-dev-armel-cross libxtst6 \
+ dmsetup squashfs-tools xorriso \
+ && rm -rf /var/lib/apt/lists/*
+# Kept modules: virtio (console, blk), VFAT/NLS (data and USB images), dm-crypt and the kernel crypto modules (import and
+# repack), ISO9660 (update payload), squashfs + overlayfs (firmware image), 9p (developer overlay).
+RUN find /lib/modules -type f -name '*.ko*' ! -path '*/drivers/virtio/*' ! -name virtio_console.ko \
+ ! -name 'virtio_blk.ko*' ! -path '*/fs/fat/*' ! -path '*/fs/nls/*' \
+ ! -path '*/drivers/md/*' ! -path '*/drivers/dax/*' ! -path '*/drivers/cdrom/*' ! -path '*/crypto/*' ! -path '*/fs/isofs/*' ! -path '*/fs/squashfs/*' \
+ ! -path '*/fs/overlayfs/*' ! -path '*/fs/9p/*' ! -path '*/net/9p/*' ! -path '*/fs/netfs/*' ! -path '*/fs/fscache/*' \
+ ! -path '*/kernel/lib/*' -delete \
+ && for sp16_kernel in /lib/modules/*; do sp16_kernel=${sp16_kernel##*/}; depmod "$sp16_kernel"; \
+    sp16_need='virtio_blk vfat dm_crypt isofs squashfs overlay 9p 9pnet_virtio'; \
+    while set -- $sp16_need; [ $# -gt 0 ]; do sp16_module=$1; shift; sp16_need="$*"; \
+      sp16_deps=$(modinfo -k "$sp16_kernel" -F depends "$sp16_module") || exit 1; \
+      sp16_need="$sp16_need $(echo "$sp16_deps" | tr , ' ')"; done; done
+COPY hardware_stub.c /opt/sp16/hardware_stub.c
+RUN arm-linux-gnueabi-gcc -std=c11 -O2 -Wall -Wextra -fPIC -shared -nostdlib \
+ -march=armv7-a -mfpu=vfpv3 -mfloat-abi=softfp -fno-stack-protector \
+ /opt/sp16/hardware_stub.c -Wl,--no-as-needed -l:libdl.so.2 -lgcc -o /opt/sp16/libsp16-ui.so
+COPY guest-init.sh /init
+COPY guest-bridge.py /opt/sp16/guest-bridge.py
+COPY input.py /opt/sp16/input.py
+COPY enter.py /opt/sp16/enter.py
+COPY protocol.py /opt/sp16/protocol.py
+COPY panel.py /opt/sp16/panel.py
+COPY panel_map.py /opt/sp16/panel_map.py
+COPY profiles.py /opt/sp16/profiles.py
+COPY profiles /opt/sp16/profiles
+COPY recipes.py /opt/sp16/recipes.py
+COPY prepare.py /opt/sp16/prepare.py
+COPY guest-firmware.py /opt/sp16/guest-firmware.py
+COPY pack-guest.sh /opt/sp16/pack-guest.sh
+RUN chmod 755 /init /opt/sp16/pack-guest.sh \
+ && find /usr/bin -name 'qemu-*-static' ! -name qemu-arm-static -delete \
+ && mkdir -p /opt/sp16/stage/root/data && touch /opt/sp16/sp16-base \
+ && python3 -c 'import json, pathlib, sys; sys.path.insert(0, "/opt/sp16"); import profiles; [p.write_text(json.dumps({k: ({fk: fv for fk, fv in v.items() if fk != "upd_sha256"} if k == "firmware" else v) for k, v in json.loads(p.read_text()).items() if k in profiles.RUNTIME_FIELDS}, indent=2) + "\n") for p in pathlib.Path("/opt/sp16/profiles").glob("*.json")]' 
+ENTRYPOINT ["/opt/sp16/pack-guest.sh"]

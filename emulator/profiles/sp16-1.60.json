@@ -1,0 +1,788 @@
+{
+  "schema": 1,
+  "id": "sp16-1.60",
+  "product": "sp16",
+  "status": "verified",
+  "verification": {
+    "method": "legacy-conformance",
+    "result": "pass",
+    "date": "2026-10-12",
+    "evidence": "regression guards and the 185-row panel conformance catalogue, measured on this version in the legacy full-panel build; the decoupled 1.60 import passed the same guards and the conformance smoke on 2026-10-12."
+  },
+  "firmware": {
+    "version": "1.60",
+    "upd_sha256": "ff1cc60c4b6e2a3793196486826e78eb223e2f86cd95b5c968f6fca3ade537a4",
+    "app_path": "/root/pdj/EP085_Main_R",
+    "app_sha256": "3d1392a61323e73ea4f2fddef8fe9e0142add7a6f6fab79ab0eb0d5396555464",
+    "app_revision": "Rev.6550",
+    "panel_revisions": {
+      "subucom1": "Rev.5187",
+      "subucom2": "Rev.3671"
+    },
+    "loader_path": "/lib/ld-linux.so.3"
+  },
+  "runtime": {
+    "cwd": "/root/pdj",
+    "qemu_cpu": "cortex-a9",
+    "ld_library_path": "/lib:/usr/lib",
+    "data_dir": "/root/data",
+    "emmc_mount": "/mnt/emmc",
+    "usb_mount": "/media/usb1/sda1",
+    "tmpfs_dirs": [
+      "/root/pdj/project",
+      "/root/pdj/browse",
+      "/root/pdj/scenes",
+      "/root/pdj/packages"
+    ],
+    "app_args": [
+      "testmode"
+    ]
+  },
+  "panel": {
+    "selector_window_frames": 8,
+    "pad_curve": {
+      "a_min": 172,
+      "a_max": 874,
+      "b_contact": 512,
+      "hit_threshold": 169
+    },
+    "button_roles": {
+      "selector": [
+        1,
+        1
+      ],
+      "track": [
+        1,
+        4
+      ],
+      "mute": [
+        1,
+        5
+      ],
+      "slice": [
+        1,
+        6
+      ],
+      "scale": [
+        1,
+        7
+      ],
+      "shift": [
+        2,
+        0
+      ],
+      "rec": [
+        2,
+        1
+      ],
+      "stop": [
+        2,
+        2
+      ],
+      "play": [
+        2,
+        3
+      ],
+      "hold": [
+        2,
+        4
+      ],
+      "mode": [
+        2,
+        5
+      ],
+      "scene": [
+        2,
+        6
+      ],
+      "pattern": [
+        2,
+        7
+      ],
+      "step1": [
+        3,
+        0
+      ],
+      "step2": [
+        3,
+        1
+      ],
+      "step3": [
+        3,
+        2
+      ],
+      "step4": [
+        3,
+        3
+      ],
+      "step5": [
+        3,
+        4
+      ],
+      "step6": [
+        3,
+        5
+      ],
+      "step7": [
+        3,
+        6
+      ],
+      "step8": [
+        3,
+        7
+      ],
+      "step9": [
+        4,
+        0
+      ],
+      "step10": [
+        4,
+        1
+      ],
+      "step11": [
+        4,
+        2
+      ],
+      "step12": [
+        4,
+        3
+      ],
+      "step13": [
+        4,
+        4
+      ],
+      "step14": [
+        4,
+        5
+      ],
+      "step15": [
+        4,
+        6
+      ],
+      "step16": [
+        4,
+        7
+      ],
+      "bar1": [
+        5,
+        0
+      ],
+      "bar2": [
+        5,
+        1
+      ],
+      "bar3": [
+        5,
+        2
+      ],
+      "bar4": [
+        5,
+        3
+      ],
+      "active": [
+        5,
+        5
+      ],
+      "usb_stop": [
+        5,
+        6
+      ],
+      "back": [
+        1,
+        2
+      ],
+      "home": [
+        1,
+        3
+      ]
+    },
+    "buttons_inert": [
+      [
+        1,
+        0
+      ],
+      [
+        5,
+        4
+      ],
+      [
+        5,
+        7
+      ]
+    ],
+    "counters": {
+      "selector": [
+        60,
+        1
+      ],
+      "knob1": [
+        48,
+        1
+      ],
+      "knob2": [
+        50,
+        1
+      ],
+      "knob3": [
+        52,
+        1
+      ],
+      "knob4": [
+        54,
+        1
+      ],
+      "knob5": [
+        56,
+        1
+      ],
+      "knob6": [
+        58,
+        1
+      ]
+    },
+    "analog_words": {
+      "main_out": [
+        40,
+        false
+      ],
+      "drive": [
+        38,
+        true
+      ],
+      "hp_cutoff": [
+        42,
+        true
+      ]
+    },
+    "lamp_roles": {
+      "track": [
+        "mono",
+        0
+      ],
+      "mute": [
+        "mono",
+        1
+      ],
+      "slice": [
+        "mono",
+        2
+      ],
+      "scale": [
+        "mono",
+        3
+      ],
+      "shift": [
+        "mono",
+        4
+      ],
+      "rec": [
+        "mono",
+        5
+      ],
+      "stop": [
+        "mono",
+        6
+      ],
+      "play": [
+        "mono",
+        7
+      ],
+      "scene": [
+        "mono",
+        8
+      ],
+      "pattern": [
+        "mono",
+        9
+      ],
+      "hold": [
+        "mono",
+        10
+      ],
+      "active": [
+        "mono",
+        23
+      ],
+      "usb_stop": [
+        "mono",
+        24
+      ],
+      "usb_led": [
+        "mono",
+        25
+      ],
+      "over_led": [
+        "mono",
+        34
+      ],
+      "bar1": [
+        "mono",
+        26
+      ],
+      "bar2": [
+        "mono",
+        27
+      ],
+      "bar3": [
+        "mono",
+        28
+      ],
+      "bar4": [
+        "mono",
+        29
+      ],
+      "lamp_pitch": [
+        "mono",
+        12
+      ],
+      "lamp_repeat": [
+        "mono",
+        11
+      ],
+      "lamp_user1": [
+        "mono",
+        13
+      ],
+      "lamp_user2": [
+        "mono",
+        14
+      ],
+      "bar_led1": [
+        "mono",
+        30
+      ],
+      "bar_led2": [
+        "mono",
+        31
+      ],
+      "bar_led3": [
+        "mono",
+        32
+      ],
+      "bar_led4": [
+        "mono",
+        33
+      ],
+      "strip_led1": [
+        "mono",
+        15
+      ],
+      "strip_led2": [
+        "mono",
+        16
+      ],
+      "strip_led3": [
+        "mono",
+        17
+      ],
+      "strip_led4": [
+        "mono",
+        18
+      ],
+      "strip_led5": [
+        "mono",
+        19
+      ],
+      "strip_led6": [
+        "mono",
+        20
+      ],
+      "strip_led7": [
+        "mono",
+        21
+      ],
+      "strip_led8": [
+        "mono",
+        22
+      ],
+      "step1": [
+        "rgb",
+        0
+      ],
+      "step2": [
+        "rgb",
+        1
+      ],
+      "step3": [
+        "rgb",
+        2
+      ],
+      "step4": [
+        "rgb",
+        3
+      ],
+      "step5": [
+        "rgb",
+        4
+      ],
+      "step6": [
+        "rgb",
+        5
+      ],
+      "step7": [
+        "rgb",
+        6
+      ],
+      "step8": [
+        "rgb",
+        7
+      ],
+      "step9": [
+        "rgb",
+        8
+      ],
+      "step10": [
+        "rgb",
+        9
+      ],
+      "step11": [
+        "rgb",
+        10
+      ],
+      "step12": [
+        "rgb",
+        11
+      ],
+      "step13": [
+        "rgb",
+        12
+      ],
+      "step14": [
+        "rgb",
+        13
+      ],
+      "step15": [
+        "rgb",
+        14
+      ],
+      "step16": [
+        "rgb",
+        15
+      ],
+      "pad1": [
+        "rgb",
+        16
+      ],
+      "pad2": [
+        "rgb",
+        17
+      ],
+      "pad3": [
+        "rgb",
+        18
+      ],
+      "pad4": [
+        "rgb",
+        19
+      ],
+      "pad5": [
+        "rgb",
+        20
+      ],
+      "pad6": [
+        "rgb",
+        21
+      ],
+      "pad7": [
+        "rgb",
+        22
+      ],
+      "pad8": [
+        "rgb",
+        23
+      ],
+      "pad9": [
+        "rgb",
+        24
+      ],
+      "pad10": [
+        "rgb",
+        25
+      ],
+      "pad11": [
+        "rgb",
+        26
+      ],
+      "pad12": [
+        "rgb",
+        27
+      ],
+      "pad13": [
+        "rgb",
+        28
+      ],
+      "pad14": [
+        "rgb",
+        29
+      ],
+      "pad15": [
+        "rgb",
+        30
+      ],
+      "pad16": [
+        "rgb",
+        31
+      ]
+    },
+    "lamp_groups": {
+      "mode_order": [
+        "lamp_pitch",
+        "lamp_repeat",
+        "lamp_user1",
+        "lamp_user2"
+      ],
+      "pad_mode_one_hot": [
+        "track",
+        "mute",
+        "slice",
+        "scale"
+      ],
+      "transport": [
+        "rec",
+        "stop",
+        "play"
+      ],
+      "strip": [
+        "strip_led1",
+        "strip_led2",
+        "strip_led3",
+        "strip_led4",
+        "strip_led5",
+        "strip_led6",
+        "strip_led7",
+        "strip_led8"
+      ],
+      "bar": [
+        "bar_led1",
+        "bar_led2",
+        "bar_led3",
+        "bar_led4"
+      ],
+      "usb": [
+        "usb_led"
+      ],
+      "over": [
+        "over_led"
+      ]
+    },
+    "mono_dim_flag": "second flag 0 = full brightness, 1 = dim (flag bytes 0x69..0x6b)"
+  },
+  "calibration": {
+    "path": "/root/data/padcalibration.xml",
+    "format": "JUCE ValueTree XML, root PadCalibrationData, CALIB_VALUE_PAD1..16",
+    "template": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\n<PadCalibrationData {attributes}/>\n",
+    "attribute": "CALIB_VALUE_PAD{n}=\"{value}\"",
+    "pads": 16,
+    "markers": [
+      "padcalibration",
+      "PadCalibrationData",
+      "CALIB_VALUE_PAD"
+    ],
+    "range": [
+      48,
+      504
+    ],
+    "default": 242
+  },
+  "identity": {
+    "version": "1.60",
+    "image_sha256": "a2073e9d3b7dcdbeeb1c96c28cbc6ae2560b68789d5fb65e5bc0e205da690e6a",
+    "manifest_sha256": null,
+    "panel_protocol_revision": {
+      "subucom1": "Rev.5187",
+      "subucom2": "Rev.3671"
+    },
+    "tx_frame_bytes": 128,
+    "rx_frame_bytes": 128,
+    "boot_timeout_s": 60
+  },
+  "home": {
+    "title_regex": "^HOME$",
+    "title_box": [
+      0,
+      0,
+      400,
+      32
+    ],
+    "geometry": [
+      800,
+      480
+    ]
+  },
+  "touch_probe": {
+    "x": 748,
+    "y": 58,
+    "expect_title": "HOME > UTILITY"
+  },
+  "touch_dead": null,
+  "screen_titles": [
+    "HOME",
+    "HOME > UTILITY"
+  ],
+  "nav_probe": {
+    "push": [
+      {
+        "touch": [
+          748,
+          58
+        ],
+        "expect_title": "HOME > UTILITY"
+      }
+    ],
+    "back_expect_title": "HOME",
+    "home_expect_title": "HOME"
+  },
+  "selector_probe": {
+    "screen": "HOME",
+    "length": 16,
+    "locator": "white tile border",
+    "tiles": {
+      "left": [
+        18,
+        194,
+        370,
+        546
+      ],
+      "top_rows_from_bottom": [
+        318,
+        248,
+        178,
+        108
+      ],
+      "width": 170,
+      "height": 64,
+      "order": "track n: row (n-1)//4 from the bottom, column (n-1)%4"
+    }
+  },
+  "knob_columns": null,
+  "knob_probe": {
+    "screen": "HOME",
+    "knob": "knob1",
+    "increase": 1,
+    "changes_box": [
+      0,
+      405,
+      800,
+      480
+    ]
+  },
+  "knob_bounded_param": null,
+  "rgb_known": {
+    "strike_flash": null,
+    "playhead": [
+      74,
+      74,
+      74
+    ],
+    "track1_pad": [
+      69,
+      6,
+      0
+    ],
+    "max_channel_value": 74,
+    "tx_level_offset": 110,
+    "tx_level_range": [
+      1,
+      4
+    ]
+  },
+  "shift_probe": null,
+  "recipes": {
+    "sample_load": null,
+    "velocity_enable": null,
+    "gate_mode": null,
+    "brightness": null,
+    "save_project": null,
+    "persist_probe": null,
+    "set_bpm": null
+  },
+  "audio": {
+    "alsa_streams": [
+      {
+        "name": "hw:ak4458audio,0",
+        "direction": "playback",
+        "channels": 4,
+        "rate": null,
+        "format": "S16"
+      },
+      {
+        "name": "hw:ak4452audio,0",
+        "direction": "playback",
+        "channels": 2,
+        "rate": null,
+        "format": "FLOAT"
+      },
+      {
+        "name": "hw:ak4452audio,1",
+        "direction": "playback",
+        "channels": 2,
+        "rate": null,
+        "format": "FLOAT"
+      }
+    ],
+    "sound_channels": {
+      "stream": "hw:ak4458audio,0",
+      "left": 12,
+      "right": 14
+    },
+    "default_bpm": 120,
+    "step_lamps": "rgb 0-15",
+    "playhead_colour": [
+      74,
+      74,
+      74
+    ]
+  },
+  "strip": {
+    "lamp_channels": [
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22
+    ],
+    "default_mode": "PITCH",
+    "mode_order": [
+      "PITCH",
+      "REPEAT",
+      "USER1",
+      "USER2"
+    ],
+    "pitch_range_sign": null
+  },
+  "usb": {
+    "layout": "PIONEER DJ SAMPLER/",
+    "stop_hold_s": 2,
+    "browse_recipe": null
+  },
+  "device_nodes": [
+    "/dev/subucom_spi0.1",
+    "/dev/cdc_spi2.0",
+    "/dev/dac_spi4.0",
+    "/dev/backlight",
+    "/proc/udev_usb1",
+    "/proc/udev_usbctn1"
+  ],
+  "device_nodes_unserved": [
+    "/dev/gpiodrv"
+  ],
+  "ioctl_set": [
+    "0x40107000",
+    "0x40017001",
+    "0x40047002",
+    "0x40027003",
+    "0x40047004",
+    "0x40017005",
+    "0x40047007",
+    "0x40017008",
+    "0x40017009",
+    "0x40017006",
+    "0x40047000"
+  ],
+  "hardware": {
+    "absent": []
+  }
+}

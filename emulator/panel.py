@@ -1,0 +1,322 @@
+"""OEM 1.60 panel RX packets for the isolated native emulator only."""
+from collections import deque
+import socket
+import struct
+import threading
+import time
+
+import panel_map
+from protocol import INPUT_FAILED, INPUT_INVALID, INPUT_OK, INPUT_UNSUPPORTED
+
+
+def _crc_table():
+    table = []
+    for byte in range(256):
+        crc = byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0x8408 if crc & 1 else 0)
+        table.append(crc)
+    return tuple(table)
+
+
+_CRC_TABLE = _crc_table()
+
+
+def crc16(data):
+    """CRC-16/X-25: reflected 0x8408, init/final XOR 0xffff."""
+    crc = 0xffff
+    for byte in data:
+        crc = (crc >> 8) ^ _CRC_TABLE[(crc ^ byte) & 0xff]
+    return crc ^ 0xffff
+
+
+def packet(counter=0, buttons=0):
+    if buttons not in (0, 0x02, 0x08):
+        raise ValueError("unsupported selector button")
+    frame = bytearray(128)
+    frame[0], frame[1] = 1, buttons
+    struct.pack_into(">H", frame, 0x3c, counter & 0xffff)
+    struct.pack_into("<H", frame, 124, crc16(frame[:124]))
+    return bytes(frame)
+
+
+class PanelInput:
+    def __init__(self, path):
+        self.path, self.counter, self.initialized = path, 0, False
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.socket.settimeout(.5)
+
+    def send(self, buttons=0):
+        self.socket.sendto(packet(self.counter, buttons), self.path)
+
+    def baseline(self):
+        if not self.initialized:
+            self.send()
+            time.sleep(.02)
+            self.initialized = True
+
+    def turn(self, rows):
+        if not isinstance(rows, int) or not 1 <= abs(rows) <= 12:
+            raise ValueError("selector rows out of range")
+        self.baseline()
+        # E9: a counter increase moves the Utility highlight down (next row).
+        for _ in range(abs(rows)):
+            self.counter = (self.counter + (1 if rows > 0 else -1)) & 0xffff
+            self.send()
+            time.sleep(.01)
+
+    def press(self, button):
+        self.baseline()
+        self.send(button)
+        time.sleep(.03)
+        self.send()
+
+    def close(self):
+        self.socket.close()
+
+
+def finish(frame):
+    """Write the CRC-16/X-25 over bytes 0..123 into a complete 128-byte RX frame."""
+    struct.pack_into("<H", frame, 124, crc16(frame[:124]))
+    return bytes(frame)
+
+
+class PanelModel:
+    """Semantic panel state -> complete OEM RX frames, with held state preserved.
+
+    Mapped controls only: an unmapped control reports INPUT_UNSUPPORTED rather than
+    producing guessed bits. Encoder motion is queued and applied one detent per frame
+    so firmware acceleration sees physical-like rates instead of a single large jump.
+    """
+
+    # E10: the firmware samples whole frames, so an edge pair shorter than one frame period is
+    # invisible. Each queued edge is shown for at least this many frames before the next one.
+    MIN_EDGE_FRAMES = 3
+    MAX_DELTA = 64
+    # PC-NAV-1: the OEM rotary object notifies once per 8 received frames with a sign-only selector
+    # consumer, so at most one selector count is released per window; HOT_FRAMES keeps the fast
+    # cadence for two windows after any input change so the last window closes quickly.
+    SELECTOR_WINDOW_FRAMES = panel_map.SELECTOR_WINDOW_FRAMES
+    HOT_FRAMES = 16
+
+    def __init__(self, bits=None, counters=None, pad_curve=panel_map.PAD_CURVE):
+        self.lock = threading.Lock()
+        self.bits = dict(panel_map.BUTTON_BITS if bits is None else bits)
+        self.counters = dict(panel_map.COUNTERS if counters is None else counters)
+        self.pad_curve = pad_curve
+        self.raw = bytearray(panel_map.FRAME_BYTES)
+        self.raw[0] = 1
+        self.pending = {}
+        self.cooldown = 0
+        self.hot = 0
+        self.edges = {}
+        self.hold_frames = {}
+        self.held = {}
+        self.overrides = {}
+        for name in panel_map.ANALOG_WORDS:
+            self._set_analog(name, panel_map.ANALOG_DEFAULT)
+        self.cdc_contact, self.cdc_position = False, 0
+        self.cdc_override = None
+        self.cdc_changed = False
+        self.changed = True
+
+    def _set_bit(self, bit, on):
+        byte, mask = bit[0], 1 << bit[1]
+        before = self.raw[byte]
+        self.raw[byte] = before | mask if on else before & ~mask & 0xff
+        self.changed |= before != self.raw[byte]
+
+    def _set_analog(self, name, value):
+        offset, inverted = panel_map.ANALOG_WORDS[name]
+        word = round(value * panel_map.ANALOG_FULL_SCALE / 1000)
+        self._set_word(offset, panel_map.ANALOG_FULL_SCALE - word if inverted else word)
+
+    def _set_word(self, offset, value):
+        struct.pack_into(">H", self.raw, offset, value & 0xffff)
+
+    def apply(self, control, action, value=0):
+        name = panel_map.CONTROL_NAMES.get(control)
+        if name is None:
+            return INPUT_INVALID
+        with self.lock:
+            if name == "strip":
+                return self._strip(action, value)
+            if name in panel_map.ANALOG_WORDS:
+                if action != "value" or not 0 <= value <= 1000:
+                    return INPUT_INVALID
+                self._set_analog(name, value)
+                self.changed = True
+                return INPUT_OK
+            if name.startswith("pad") and action in ("press", "release", "value"):
+                if self.pad_curve is None:
+                    return INPUT_UNSUPPORTED
+                if action == "value":
+                    return self._pad(int(name[3:]) - 1, action, value)
+                self.edges.setdefault(name, deque()).append((action, value))
+                return INPUT_OK
+            if action == "delta":
+                if name not in self.counters or not value:
+                    return INPUT_UNSUPPORTED if name not in self.counters else INPUT_INVALID
+                offset, sign = self.counters[name]
+                total = self.pending.get(offset, 0) + sign * max(-self.MAX_DELTA, min(self.MAX_DELTA, value))
+                # Bound queued motion so one bad event cannot spin a counter for minutes.
+                total = max(-4 * self.MAX_DELTA, min(4 * self.MAX_DELTA, total))
+                if total:
+                    self.pending[offset] = total
+                else:
+                    self.pending.pop(offset, None)
+                self.changed = True
+                return INPUT_OK
+            if action in ("press", "release") and name in self.bits:
+                self.edges.setdefault(name, deque()).append((action, value))
+                return INPUT_OK
+            return INPUT_UNSUPPORTED
+
+    def _drain_edges(self):
+        """Apply at most one queued edge per control per step, then hold it MIN_EDGE_FRAMES."""
+        for name, queue in list(self.edges.items()):
+            remaining = self.hold_frames.get(name, 0)
+            if remaining > 0:
+                self.hold_frames[name] = remaining - 1
+                continue
+            if not queue:
+                continue
+            action, value = queue.popleft()
+            if name.startswith("pad"):
+                self._pad_edge(int(name[3:]) - 1, action, value)
+            else:
+                count = self.held.get(name, 0) + (1 if action == "press" else -1)
+                self.held[name] = max(0, count)
+                self._set_bit(self.bits[name], self.held[name] > 0)
+            self.hold_frames[name] = self.MIN_EDGE_FRAMES - 1
+            self.changed = True
+            if not queue:
+                del self.edges[name]
+
+    def _pad(self, index, action, value):
+        """Pressure update for a pad that is down (action "value")."""
+        name = f"pad{index + 1}"
+        queued = any(action == "press" for action, _ in self.edges.get(name, ()))
+        if not self.held.get(name) and not queued:
+            return INPUT_INVALID  # pressure only exists while the pad is down
+        if not self.held.get(name):
+            # The press has not reached a frame yet: make this the pressure it will show.
+            self.edges[name] = deque((act, value if act == "press" else v) for act, v in self.edges[name])
+            return INPUT_OK
+        a, _ = self.pad_curve(value)
+        self._set_word(panel_map.PAD_A_OFFSET + 2 * index, a)
+        self.changed = True
+        return INPUT_OK
+
+    def _pad_edge(self, index, action, value):
+        a, b = self.pad_curve(value if action == "press" else 0)
+        self._set_word(panel_map.PAD_A_OFFSET + 2 * index, a)
+        self._set_word(panel_map.PAD_B_OFFSET + 2 * index, b)
+        self.held[f"pad{index + 1}"] = int(action == "press")
+
+    def _strip(self, action, value):
+        if action not in ("press", "release", "value") or not 0 <= value <= 1000:
+            return INPUT_INVALID
+        self.cdc_contact = action != "release"
+        if action != "release":
+            self.cdc_position = round(value * 127 / 1000)
+        self.cdc_changed = True
+        return INPUT_OK
+
+    def cdc_bytes(self):
+        """E5: b0 = 0x7f - position, byte 1 bit 7 = contact. With no contact the position is
+        centred (E10: PITCH mode lights no segment away from centre), not the all-zero value
+        the earlier prototype used, which the firmware reads as position 127 (top)."""
+        with self.lock:
+            self.cdc_changed = False
+            if self.cdc_override is not None:
+                return bytes(self.cdc_override)
+            if not self.cdc_contact:
+                return bytes((0x7f - 64, 0, 0, 0))
+            return bytes((0x7f - self.cdc_position, 0x80, 0, 0))
+
+    def set_raw(self, offset, data):
+        """Research only: pin frame bytes after normal state is composed."""
+        with self.lock:
+            for i, byte in enumerate(data):
+                self.overrides[offset + i] = byte
+            self.changed = True
+
+    def set_cdc_raw(self, data):
+        with self.lock:
+            self.cdc_override, self.cdc_changed = bytes(data), True
+
+    def clear_overrides(self):
+        with self.lock:
+            self.overrides.clear()
+            self.cdc_override, self.cdc_changed = None, True
+            self.changed = True
+
+    def active(self):
+        with self.lock:
+            # PC-STR-1: anything held (buttons, step keys, pads, the touch strip) keeps the fast
+            # cadence for as long as it is held, not only for HOT_FRAMES after the last change.
+            return bool(self.pending or self.edges or any(self.held.values()) or self.cdc_contact
+                        or self.overrides or self.hot > 0)
+
+    def step(self):
+        """Advance queued detents by one count each; True when a new frame is due."""
+        with self.lock:
+            self._drain_edges()
+            if self.cooldown:
+                self.cooldown -= 1
+            for offset, remaining in list(self.pending.items()):
+                if offset == panel_map.SELECTOR_COUNTER:
+                    if self.cooldown:
+                        continue
+                    self.cooldown = self.SELECTOR_WINDOW_FRAMES
+                direction = 1 if remaining > 0 else -1
+                current = struct.unpack_from(">H", self.raw, offset)[0]
+                self._set_word(offset, current + direction)
+                if remaining == direction:
+                    del self.pending[offset]
+                else:
+                    self.pending[offset] = remaining - direction
+                self.changed = True
+            due, self.changed = self.changed, False
+            if due:
+                self.hot = self.HOT_FRAMES
+            elif self.hot:
+                self.hot -= 1
+            return due
+
+    def frame(self):
+        with self.lock:
+            frame = bytearray(self.raw)
+            for offset, byte in self.overrides.items():
+                frame[offset] = byte
+            return finish(frame)
+
+    def adc_words(self):
+        """The analog words the guest is currently sending in RX frames (overrides included),
+        by control name plus the raw offset-keyed words, for research readback."""
+        with self.lock:
+            frame = bytearray(self.raw)
+            for offset, byte in self.overrides.items():
+                frame[offset] = byte
+        words = {name: struct.unpack_from(">H", frame, off)[0]
+                 for name, (off, _) in panel_map.ANALOG_WORDS.items()}
+        words.update({f"0x{off:02x}": struct.unpack_from(">H", frame, off)[0]
+                      for off in (0x26, 0x28, 0x2a)})
+        return words
+
+    def release_all(self):
+        with self.lock:
+            for byte in range(1, 6):
+                self.raw[byte] = 0
+            for index in range(16):
+                self._set_word(panel_map.PAD_A_OFFSET + 2 * index, 0)
+                self._set_word(panel_map.PAD_B_OFFSET + 2 * index, 0)
+            self.held.clear()
+            self.pending.clear()
+            self.cooldown = self.hot = 0
+            self.edges.clear()
+            self.hold_frames.clear()
+            self.overrides.clear()
+            self.cdc_override = None
+            self.cdc_contact, self.cdc_changed, self.changed = False, True, True

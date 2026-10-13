@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "product": "sp16",
+  "name": "SP-16",
+  "reference_profile": "sp16-1.60",
+  "update": {
+    "stock_marker": "LIVESAMPLER",
+    "images_dir": "images",
+    "tar_layers": [
+      {"file": "rootfs1.tar.gz", "root": "/"},
+      {"file": "rootfs2.tar.gz", "root": "/"},
+      {"file": "rootfs3.tar.gz", "root": "/"},
+      {"file": "rootfs4.tar.gz", "root": "/"},
+      {"file": "pdj.tar.gz", "root": "/root"}
+    ],
+    "squashfs_layers": [
+      {"file": "lib.sfs", "root": "/usr/lib"},
+      {"file": "bin.sfs", "root": "/usr/bin"},
+      {"file": "share.sfs", "root": "/usr/share"}
+    ],
+    "revision_files": ["release.txt", "app.rev", "subucom1.rev", "subucom2.rev"],
+    "mount_points": ["/dev", "/proc", "/sys", "/tmp", "/root/data", "/mnt/emmc"]
+  },
+  "app_candidates": ["/root/pdj/EP085_Main_R"],
+  "loader_candidates": ["/lib/ld-linux.so.3"]
+}

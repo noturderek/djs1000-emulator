@@ -1,0 +1,13 @@
+# Builds, firmware libraries, sessions and anything firmware-derived stay out of git.
+/build/
+/private/
+*.UPD
+*.upd
+*.key
+*.sqfs
+*.iso
+*.img
+*.wav
+__pycache__/
+*.pyc
+.DS_Store
