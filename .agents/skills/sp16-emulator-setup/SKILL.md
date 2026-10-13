@@ -47,7 +47,7 @@ mkdir -m 700 -p build && umask 077
 python3 emulator/native.py build --audio file --output build/sp16
 ```
 
-The first build takes 10-20 minutes (QEMU from source, then the Docker guest image). On failure read the log the
+The first build takes a few minutes (QEMU from source, then the Docker guest image). On failure read the log the
 error names in `build/sp16/` (`qemu-configure.log`, `qemu-build.log`, `guest-build.log`, `swift-build.log`).
 A rebuild into the same folder reuses the QEMU source; `--reuse-qemu-from <other build>` copies a verified QEMU.
 

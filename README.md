@@ -35,7 +35,8 @@ umask 077
 python3 emulator/native.py build --output build/sp16
 ```
 
-The first build downloads and compiles QEMU (10-20 minutes) and builds the guest base image with Docker. The result
+The first build downloads and compiles QEMU and builds the guest base image with Docker: a few minutes on a recent
+Mac (about 2 minutes measured), longer while Docker first downloads the Debian packages. The result
 is `build/sp16/SP-16 Compatible Emulator.app`, plus the firmware library folder `build/sp16/library`. Everything
 under `build/` is ignored by git and readable only by you; the build tool refuses any other place.
 
