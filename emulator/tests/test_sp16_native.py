@@ -228,6 +228,16 @@ class BundleIdentityTests(unittest.TestCase):
             native.main()
         self.assertEqual(build.call_args.kwargs["bundle_suffix"], "devtest")
 
+    def test_decoupled_menus_have_a_standard_edit_menu(self):
+        window = (TOOLS / "firmware-window.swift").read_text()
+        for title, key in (("Undo", "z"), ("Redo", "z"), ("Cut", "x"), ("Copy", "c"), ("Paste", "v"), ("Select All", "a")):
+            self.assertRegex(window, rf'addItem\(withTitle: "{title}", action: [^\n]+keyEquivalent: "{key}"\)')
+        self.assertEqual(window.count("menu.addItem(editMenuItem())"), 2)  # import screen and library-only app
+        main = (TOOLS / "native-window.swift").read_text()
+        branch = main.split("if config.firmware != nil {", 1)[1].split("}", 1)[0]
+        self.assertIn("editMenuItem()", branch)  # decoupled only; legacy menus unchanged
+        self.assertEqual(main.count("editMenuItem()"), 1)
+
     def test_qemu_source_filter_skips_only_absolute_links(self):
         import tarfile
         link = tarfile.TarInfo("qemu/roms/x/IncludeHack")

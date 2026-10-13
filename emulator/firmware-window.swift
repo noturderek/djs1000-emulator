@@ -281,6 +281,23 @@ final class FirmwareLibraryWindow: NSObject, NSTableViewDataSource, NSTableViewD
     }
 }
 
+/// The standard Edit menu, so text fields (import name, rename) get Undo/Redo, Cut, Copy, Paste and Select All with
+/// their usual shortcuts. Actions go to the first responder (target nil). Decoupled builds only.
+func editMenuItem() -> NSMenuItem {
+    let item = NSMenuItem()
+    let menu = NSMenu(title: "Edit")
+    menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    let redo = menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+    redo.keyEquivalentModifierMask = [.command, .shift]
+    menu.addItem(.separator())
+    menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    item.submenu = menu
+    return item
+}
+
 /// App delegate for a decoupled build that has no usable firmware yet: only the import screen, no VM.
 final class FirmwareSetupApplication: NSObject, NSApplicationDelegate {
     let importer: FirmwareImportWindow
@@ -296,6 +313,7 @@ final class FirmwareSetupApplication: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+        menu.addItem(editMenuItem())
         NSApp.mainMenu = menu
         importer.show()
     }
@@ -316,6 +334,7 @@ final class FirmwareLibrarySetupApplication: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+        menu.addItem(editMenuItem())
         NSApp.mainMenu = menu
         libraryWindow.show()
     }

@@ -167,6 +167,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                         action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         if config.firmware != nil {
+            menu.addItem(editMenuItem())  // decoupled builds: text fields in the import and library windows
             // Decoupled builds (M4): the firmware library (select = restart on that firmware, rename, remove, import).
             let firmwareItem = NSMenuItem(); menu.addItem(firmwareItem)
             let firmwareMenu = NSMenu(title: "Firmware")
