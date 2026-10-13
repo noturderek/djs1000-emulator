@@ -13,6 +13,7 @@ Command Line Tools; the build tools themselves run on the first Python 3.12 or l
 from __future__ import annotations
 
 import argparse
+import contextlib
 import difflib
 import hashlib
 import json
@@ -22,8 +23,11 @@ import plistlib
 import re
 import shlex
 import shutil
+import stat
+import struct
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from pathlib import Path
@@ -95,23 +99,32 @@ class Pos:
 
 
 class Parser(argparse.ArgumentParser):
+    intermixed = False
+
     def error(self, message):
         command = self.prog.split()[-1]
         raise UsageError(f"{command}: {message}; see: sp16emu help {command}")
 
+    def parse_args(self, args=None, namespace=None):
+        if self.intermixed:  # options and positionals in any order (sp16emu usb add a.wav --to kicks b.wav)
+            return self.parse_intermixed_args(args, namespace)
+        return super().parse_args(args, namespace)
+
 
 class Command:
     def __init__(self, name, group, summary, description, opts=(), positionals=(), examples=(), notes=(), usage=None,
-                 passthrough=None, handler=None, direct=False):
+                 passthrough=None, handler=None, direct=False, intermixed=False):
         self.name, self.group, self.summary, self.description = name, group, summary, description
         self.opts, self.positionals, self.examples, self.notes = list(opts), list(positionals), list(examples), list(notes)
         self.usage = usage
         self.passthrough = passthrough
         self.handler = handler
         self.direct = direct  # the handler runs the command itself and returns an exit code
+        self.intermixed = intermixed
 
     def parser(self):
         parser = Parser(prog=f"sp16emu {self.name}", add_help=False, allow_abbrev=False)
+        parser.intermixed = self.intermixed
         for pos in self.positionals:
             kwargs = {"choices": pos.choices, "metavar": pos.metavar}
             if pos.nargs:
@@ -216,6 +229,17 @@ class Context:
             return 127, ""
         except subprocess.TimeoutExpired:
             return 124, ""
+
+    def run_tool(self, argv, timeout=300):
+        """(exit code, stdout, stderr) of a helper that changes something; (127, '', reason) when it cannot start."""
+        try:
+            done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                                  timeout=timeout, env=self.env)
+            return done.returncode, done.stdout, done.stderr
+        except FileNotFoundError:
+            return 127, "", f"{argv[0]}: command not found"
+        except subprocess.TimeoutExpired:
+            return 124, "", f"{argv[0]}: timed out after {timeout} s"
 
     def which(self, name):
         return shutil.which(name, path=self.env.get("PATH"))
@@ -614,7 +638,10 @@ RUN_OPTS = [
     Opt(("--name", "--build"), "The build to launch (default: build/sp16, else the only build).", "NAME", emit=False),
     Opt("--firmware", "Firmware id from the library (see `sp16emu firmware list`); default: the selected one.", "ID"),
     Opt("--usb-image", "Attach this raw image as a virtual USB stick (created sparse if missing and formatted FAT32 "
-        "on first attach). Cold attach: chosen at launch.", "PATH", path=True),
+        "on first attach). Cold attach: chosen at launch. Default: build/stick.img when it exists (see `sp16emu usb`).",
+        "PATH", path=True),
+    Opt("--no-usb", "Do not attach build/stick.img (it is attached automatically when it exists and no --usb-image "
+        "is given).", flag=True, emit=False),
     Opt("--ephemeral", "Use a disposable data image for this session (nothing persists; no lock on the firmware's "
         "data, so a second app can run the same firmware).", flag=True),
     Opt("--dev-overlay", "Research builds: share this mod folder into the guest (see `sp16emu mod`).", "DIR", path=True),
@@ -628,6 +655,12 @@ def plan_run(ctx, args, tail):
     if library is not None and not library_imports(library):
         notes.append("the firmware library is empty: the app opens its import screen, or import first with "
                      "`sp16emu firmware import --update FILE.UPD --key-file KEY`")
+    if args.usb_image and args.no_usb:
+        raise UsageError("run: --usb-image and --no-usb contradict each other; give one")
+    stick, stick_notes = stick_for_run(ctx, args)
+    if stick:
+        args.usb_image = stick
+    notes += stick_notes
     argv = [ctx.python(), ctx.tool("native.py"), "launch", "--output", str(info.path)] + RUN_COMMAND.emit(args) + list(tail)
     return Plan([Step(argv)], notes)
 
@@ -1143,6 +1176,11 @@ def run_clean(ctx, args, tail):
         return 0
     if ctx.build.is_symlink():
         raise CliError(f"{ctx.display(ctx.build)} is a symlink; refusing to clean through it")
+    mounts = ctx.build / USB_MOUNTS
+    if args.everything and mounts.is_dir():
+        held = [m for m in sorted(mounts.iterdir()) if os.path.ismount(str(m))]
+        if held:
+            raise CliError(f"the USB stick is mounted on this Mac at {held[0]}; release it first with: sp16emu usb unmount")
     for pid_owner in ([ctx.build] if args.everything else [b.path for b in list_builds(ctx) if args.all or b.name == args.name]):
         pids = running_pids(ctx, pid_owner)
         if pids:
@@ -1151,7 +1189,7 @@ def run_clean(ctx, args, tail):
     if args.everything:
         shared = ctx.build / "library"
         message = (f"This deletes everything in {ctx.display(ctx.build)}: all builds, the firmware library "
-                   f"({library_imports(shared)} import(s) in {ctx.display(shared)}) and every data image.")
+                   f"({library_imports(shared)} import(s) in {ctx.display(shared)}), every data image and the USB stick image.")
         if not args.yes and not ctx.dry_run:
             if not ctx.interactive:
                 raise CliError(message + " Add --yes to confirm.")
@@ -1186,6 +1224,676 @@ def run_clean(ctx, args, tail):
         ctx.out.write(f"Removed {len(targets)} item(s) from {ctx.display(ctx.build)}."
                       + (f" Kept the firmware library and data: {', '.join(kept)}." if kept else "") + "\n")
     return 0
+
+
+# ------------------------------------------------------------------------------------------------------- usb
+# The virtual USB stick is one raw FAT32 image (no partition table), exactly what the guest formats on the first
+# attach. These commands prepare it on the Mac without booting: they attach the image with hdiutil, copy, and detach.
+STICK_NAME = "stick.img"
+STICK_LABEL = "SP16USB"              # the volume label the guest gives a stick it formats
+STICK_FOLDER = "PIONEER DJ SAMPLER"  # the firmware's own folder on a stick; samples live in its Samples folder
+STICK_SAMPLES = "Samples"
+STICK_DEFAULT_SIZE = 1 << 30
+STICK_MIN_SIZE = 64 << 20
+STICK_MAX_SIZE = 32 << 30
+USB_ACTIONS = ("create", "add", "ls", "mount", "unmount")
+USB_MOUNTS = ".usb-mnt"              # mount points live in build/.usb-mnt (hidden, so it is not taken for a build)
+AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff")
+JUNK_FILES = (".DS_Store", ".apdisk")
+JUNK_PREFIX = "._"
+JUNK_FOLDERS = (".Spotlight-V100", ".fseventsd", ".Trashes", ".TemporaryItems", ".DocumentRevisions-V100")
+FAT_BAD_CHARS = set('"*/:<>?\\|')
+USB_OPTS = [
+    Opt("--image", "The stick image (default: build/stick.img, or stick.img in SP16EMU_BUILD_DIR).", "PATH", emit=False),
+    Opt("--size", "create: image size, 64M to 32G (default 1G). The file is sparse: it takes no disk space until used.",
+        "SIZE", emit=False),
+    Opt("--force", "create: replace an existing image (its content is lost).", flag=True, emit=False),
+    Opt("--to", "add: a folder under Samples to copy into (created if missing), for example kicks.", "SUBDIR", emit=False),
+    Opt("--tree", "add: copy the contents of this folder tree (any number of levels) keeping its structure, without the "
+        "folder's own name; with --to SUBDIR it lands under Samples/SUBDIR. Folders passed as FILES keep their name.",
+        "DIR", emit=False),
+    Opt("--any", "add: also copy files that are not WAV or AIFF audio (they are skipped with a warning otherwise).",
+        flag=True, emit=False),
+]
+
+
+def default_stick(ctx):
+    return ctx.build / STICK_NAME
+
+
+def resolve_image(ctx, given):
+    """The stick image path: --image, else build/stick.img. Absolute, no symlink, no comma (QEMU option syntax)."""
+    path = Path(os.path.expanduser(given)) if given else default_stick(ctx)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = Path(os.path.normpath(str(path)))
+    if "," in str(path):
+        raise CliError(f"the image path {path} contains a comma, which the emulator cannot pass to QEMU; rename it")
+    if path.is_symlink():
+        raise CliError(f"{ctx.display(path)} is a symlink; point --image at the real file")
+    return path
+
+
+def parse_size(text):
+    match = re.fullmatch(r"(\d+)\s*([KMGkmg]?)[iI]?[bB]?", str(text).strip())
+    if not match:
+        raise UsageError(f"usb: {text!r} is not a size; use for example 512M or 2G")
+    size = int(match.group(1)) << {"": 0, "K": 10, "M": 20, "G": 30}[match.group(2).upper()]
+    if not STICK_MIN_SIZE <= size <= STICK_MAX_SIZE:
+        raise UsageError("usb: the size must be between 64M and 32G")
+    return size
+
+
+def human(size):
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+
+
+def process_table(ctx):
+    """[(pid, ppid, command)] of every process."""
+    code, out = ctx.capture(["ps", "-axo", "pid=,ppid=,command="], timeout=10)
+    if code:
+        raise CliError("cannot list the running processes (ps failed), so I cannot tell whether an emulator uses the stick")
+    rows = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    return rows
+
+
+def image_holders(ctx, image):
+    """[(pid, command)] of the processes (a running emulator app or its QEMU) whose command line names the image.
+    This process and its parents (make, the shell) are never counted."""
+    rows = process_table(ctx)
+    parents = {pid: ppid for pid, ppid, _ in rows}
+    mine = set()
+    pid = os.getpid()
+    while pid and pid not in mine:
+        mine.add(pid)
+        pid = parents.get(pid, 0)
+    needles = {str(image), os.path.realpath(str(image))}
+    patterns = [re.compile(r"(?<![\w.\-/])" + re.escape(n) + r"(?![\w.\-])") for n in needles]
+    return [(pid, command) for pid, _, command in rows if pid not in mine and any(p.search(command) for p in patterns)]
+
+
+def hdiutil_images(ctx):
+    code, out = ctx.capture(["hdiutil", "info", "-plist"], timeout=30)
+    if code:
+        raise CliError("cannot list the attached disk images (hdiutil info failed)")
+    try:
+        images = plistlib.loads(out.encode("utf-8")).get("images", [])
+    except (ValueError, AttributeError, plistlib.InvalidFileException):
+        raise CliError("cannot read the list of attached disk images (hdiutil info gave no property list)")
+    return [i for i in images if isinstance(i, dict)]
+
+
+def attachments(ctx, image):
+    """[(device, [mount points])] for every time this image is attached to the Mac (usually zero or one)."""
+    target = os.path.realpath(str(image))
+    found = []
+    for item in hdiutil_images(ctx):
+        path = item.get("image-path")
+        if not path or os.path.realpath(path) != target:
+            continue
+        entries = [e for e in item.get("system-entities", []) if isinstance(e, dict) and e.get("dev-entry")]
+        if entries:
+            device = min((e["dev-entry"] for e in entries), key=len)
+            found.append((device, [e["mount-point"] for e in entries if e.get("mount-point")]))
+    return found
+
+
+def check_idle(ctx, image, action):
+    """Refuse when a running emulator has the image or the Mac already has it attached."""
+    holders = image_holders(ctx, image)
+    if holders:
+        pids = ", ".join(str(pid) for pid, _ in holders)
+        raise CliError(f"usb {action}: {ctx.display(image)} is in use by a running emulator (process id {pids}); quit the "
+                       "emulator first (stop only those ids), then repeat this command")
+    for device, mounts in attachments(ctx, image):
+        where = f" at {mounts[0]}" if mounts else ""
+        raise CliError(f"usb {action}: {ctx.display(image)} is already attached to this Mac as {device}{where}; "
+                       "release it with: sp16emu usb unmount")
+
+
+def require_macos():
+    if platform.system() != "Darwin":
+        raise CliError("the usb commands need macOS (they use hdiutil and newfs_msdos)")
+
+
+def image_is_blank(image):
+    """True for an image whose first 64 KiB is zero: no file system yet (the guest formats such a stick itself)."""
+    with open(str(image), "rb") as stream:
+        return not any(stream.read(65536))
+
+
+def hdiutil_attach(ctx, image, options):
+    code, out, err = ctx.run_tool(["hdiutil", "attach", "-imagekey", "diskimage-class=CRawDiskImage"] + options + [str(image)])
+    if code:
+        lines = [l for l in err.splitlines() if l.strip() and "deprecated" not in l]
+        reason = lines[-1].strip() if lines else f"hdiutil exited with {code}"
+        raise CliError(f"cannot attach {ctx.display(image)}: {reason}. If it holds no FAT32 file system, recreate "
+                       "it with: sp16emu usb create --force")
+    for line in out.splitlines():
+        token = line.split()[:1]
+        if token and re.fullmatch(r"/dev/disk\d+", token[0]):
+            return token[0]
+    raise CliError(f"cannot attach {ctx.display(image)}: hdiutil printed no device")
+
+
+def hdiutil_detach(ctx, device):
+    reason = ""
+    for _ in range(5):
+        code, _, err = ctx.run_tool(["hdiutil", "detach", device])
+        if code == 0:
+            return
+        reason = next((l.strip() for l in reversed(err.splitlines()) if l.strip() and "deprecated" not in l), "")
+        time.sleep(1)
+    code, _, err = ctx.run_tool(["hdiutil", "detach", "-force", device])
+    if code:
+        raise CliError(f"cannot detach {device} ({reason or 'busy'}); close anything using it, then run: sp16emu usb unmount")
+    ctx.say(f"{device} was busy and had to be detached with force; check the stick with: sp16emu usb ls")
+
+
+def mount_root(ctx):
+    root = ctx.build / USB_MOUNTS
+    ensure_build_root(ctx)
+    if not root.is_dir():
+        root.mkdir(mode=0o700)
+    return root
+
+
+def stable_mountpoint(ctx, image):
+    tag = hashlib.sha1(os.path.realpath(str(image)).encode()).hexdigest()[:6]
+    stem = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(image).stem)[:24] or "stick"
+    return mount_root(ctx) / f"{stem}-{tag}"
+
+
+def remove_junk(path):
+    """Delete what macOS adds to a FAT volume (AppleDouble ._ files, .DS_Store, Spotlight and Trash folders)."""
+    removed = 0
+    for folder, dirs, files in os.walk(str(path)):
+        for name in list(dirs):
+            if name in JUNK_FOLDERS:
+                shutil.rmtree(os.path.join(folder, name), ignore_errors=True)
+                dirs.remove(name)
+                removed += 1
+        for name in files:
+            if name in JUNK_FILES or name.startswith(JUNK_PREFIX):
+                try:
+                    os.unlink(os.path.join(folder, name))
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
+
+
+@contextlib.contextmanager
+def mounted_stick(ctx, image, writable=True, keep=False, mountpoint=None):
+    """Attach the image, yield its mount point (inside build/), and always detach, after removing what macOS added.
+    With keep=True a successful mount stays mounted (usb mount); a failure still detaches."""
+    require_macos()
+    point = Path(mountpoint) if mountpoint else Path(tempfile.mkdtemp(prefix="stick-", dir=str(mount_root(ctx))))
+    point.mkdir(mode=0o700, exist_ok=True)
+    device = None
+    ok = False
+    try:
+        device = hdiutil_attach(ctx, image, ["-nobrowse", "-noverify", "-mountpoint", str(point)]
+                                + ([] if writable else ["-readonly"]))
+        yield point
+        ok = True
+    finally:
+        left_mounted = keep and ok
+        try:
+            if device and not left_mounted:
+                if writable:
+                    remove_junk(point)
+                hdiutil_detach(ctx, device)
+        except CliError as error:
+            if ok:
+                raise
+            ctx.say(str(error))
+        finally:
+            if not left_mounted:
+                try:
+                    point.rmdir()
+                except OSError:
+                    pass
+
+
+def format_image(ctx, image):
+    """Write an empty FAT32 file system (volume SP16USB, no partition table) onto the whole image: the layout the
+    guest's own first-attach formatting produces."""
+    require_macos()
+    device = hdiutil_attach(ctx, image, ["-nomount"])
+    try:
+        code, _, err = ctx.run_tool(["newfs_msdos", "-F", "32", "-v", STICK_LABEL, device.replace("/dev/", "/dev/r", 1)])
+        if code:
+            raise CliError(f"newfs_msdos failed on {ctx.display(image)}: " + (err.strip().splitlines() or ["no message"])[-1])
+    finally:
+        hdiutil_detach(ctx, device)
+
+
+def make_tree(point, subdir=""):
+    target = Path(point) / STICK_FOLDER / STICK_SAMPLES
+    if subdir:
+        target = target / subdir
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def create_image(ctx, image, size):
+    """Create a new sparse raw image (0600, never over an existing file), format it and make the Samples folder."""
+    if not image.parent.is_dir():
+        if image.parent == ctx.build:
+            ensure_build_root(ctx)
+        else:
+            raise CliError(f"the folder {ctx.display(image.parent)} does not exist")
+    fd = os.open(str(image), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.truncate(size)
+    try:
+        format_image(ctx, image)
+        with mounted_stick(ctx, image) as point:
+            make_tree(point)
+    except BaseException:
+        try:
+            image.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def stick_state(ctx, image):
+    """'missing', 'blank' (no file system yet) or 'formatted'; anything but a regular file you own is refused."""
+    try:
+        info = image.lstat()
+    except FileNotFoundError:
+        return "missing"
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        raise CliError(f"{ctx.display(image)} must be a regular file owned by you")
+    return "blank" if image_is_blank(image) else "formatted"
+
+
+def usb_dry_run(ctx, args, image, files):
+    lines = {
+        "create": [f"create {ctx.display(image)} ({args.size or '1G'}, sparse, mode 0600)",
+                   "hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount IMAGE",
+                   f"newfs_msdos -F 32 -v {STICK_LABEL} /dev/rdiskN", "hdiutil detach /dev/diskN",
+                   f"hdiutil attach ... -mountpoint {ctx.display(ctx.build / USB_MOUNTS)}/stick-XXXX IMAGE",
+                   f"mkdir -p '{STICK_FOLDER}/{STICK_SAMPLES}'", "hdiutil detach /dev/diskN"],
+        "add": ["create and format the image first when it is missing or blank",
+                "hdiutil attach ... -mountpoint MOUNTPOINT IMAGE"]
+               + [f"cp -X {shlex.quote(f)} '{STICK_FOLDER}/{STICK_SAMPLES}/{args.to or ''}'" for f in files
+                  + ([args.tree + "/..."] if args.tree else [])]
+               + ["delete the ._* and .DS_Store files macOS added", "hdiutil detach /dev/diskN"],
+        "ls": ["hdiutil attach -readonly ... IMAGE", "list the files", "hdiutil detach /dev/diskN"],
+        "mount": ["hdiutil attach ... -mountpoint MOUNTPOINT IMAGE (stays mounted)"],
+        "unmount": ["delete the ._* and .DS_Store files macOS added", "hdiutil detach /dev/diskN"],
+    }[args.action]
+    ctx.out.write(f"sp16emu usb {args.action} on {ctx.display(image)} would:\n" + "".join(f"  {l}\n" for l in lines))
+    return 0
+
+
+# audio file checks ------------------------------------------------------------------------------------------
+def extended_to_rate(raw):
+    """An 80-bit IEEE extended number (the AIFF sample rate) as an int."""
+    exponent = ((raw[0] & 0x7F) << 8) | raw[1]
+    mantissa = struct.unpack(">Q", bytes(raw[2:10]))[0]
+    if exponent == 0 and mantissa == 0:
+        return 0
+    return int(round(mantissa * 2.0 ** (exponent - 16383 - 63)))
+
+
+def audio_format(path):
+    """(kind, sample rate, bits, channels, compressed) read from a WAV or AIFF header; ValueError when unreadable."""
+    with open(str(path), "rb") as stream:
+        head = stream.read(12)
+        if len(head) < 12:
+            raise ValueError("too short to be an audio file")
+        outer, form = head[:4], head[8:12]
+        if outer == b"RIFF" and form == b"WAVE":
+            while True:
+                chunk = stream.read(8)
+                if len(chunk) < 8:
+                    raise ValueError("no fmt chunk")
+                ident, size = chunk[:4], struct.unpack("<I", chunk[4:])[0]
+                if ident == b"fmt ":
+                    body = stream.read(min(size, 40))
+                    if len(body) < 16:
+                        raise ValueError("fmt chunk is too short")
+                    tag, channels, rate, _, _, bits = struct.unpack("<HHIIHH", body[:16])
+                    if tag == 0xFFFE and len(body) >= 26:
+                        tag = struct.unpack("<H", body[24:26])[0]  # WAVE_FORMAT_EXTENSIBLE: the sub-format's code
+                    return "WAV", rate, bits, channels, tag != 1
+                stream.seek(size + (size & 1), 1)
+        if outer == b"FORM" and form in (b"AIFF", b"AIFC"):
+            while True:
+                chunk = stream.read(8)
+                if len(chunk) < 8:
+                    raise ValueError("no COMM chunk")
+                ident, size = chunk[:4], struct.unpack(">I", chunk[4:])[0]
+                if ident == b"COMM":
+                    body = stream.read(min(size, 30))
+                    if len(body) < 18:
+                        raise ValueError("COMM chunk is too short")
+                    channels, _, bits = struct.unpack(">hIh", body[:8])
+                    compressed = form == b"AIFC" and body[18:22] not in (b"NONE", b"twos", b"")
+                    return "AIFF", extended_to_rate(body[8:18]), bits, channels, compressed
+                stream.seek(size + (size & 1), 1)
+    raise ValueError("not a WAV or AIFF file")
+
+
+SUPPORTED_AUDIO = "PCM 16- or 24-bit 44.1 kHz"
+
+
+def audio_class(path):
+    """None for a sample in the supported format (integer PCM, 16 or 24 bit, 44.1 kHz, mono or stereo), else a short
+    label of what differs, the same for every file with the same difference ("WAV 48 kHz", "AIFF not plain PCM")."""
+    try:
+        kind, rate, bits, _, compressed = audio_format(path)
+    except (OSError, ValueError, struct.error):
+        return "with an audio header that cannot be read"
+    problems = []
+    if compressed:
+        problems.append("not plain PCM")
+    elif bits not in (16, 24):
+        problems.append(f"{bits}-bit")
+    if rate != 44100:
+        problems.append(f"{rate / 1000:g} kHz")
+    return f"{kind} {', '.join(problems)}" if problems else None
+
+
+def fat_name_problem(name):
+    if not name or name in (".", ".."):
+        return "an empty name"
+    if any(c in FAT_BAD_CHARS or ord(c) < 32 for c in name):
+        return "a character that FAT does not allow"
+    if name.endswith((" ", ".")):
+        return "a name ending in a space or dot"
+    return None
+
+
+def walk_tree(root, strip):
+    """[(file, path relative to strip)] of every file under root, in a stable order, without hidden folders."""
+    found = []
+    for folder, dirs, files in os.walk(str(root)):
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d != "__MACOSX")
+        for name in sorted(files):
+            full = Path(folder) / name
+            found.append((full, full.relative_to(strip)))
+    return found
+
+
+class Chatter:
+    """Prints the first few messages of a kind and counts the rest (a factory pack has thousands of files)."""
+    LIMIT = 8
+
+    def __init__(self, ctx):
+        self.ctx, self.counts = ctx, {}
+
+    def say(self, kind, message):
+        count = self.counts[kind] = self.counts.get(kind, 0) + 1
+        if count <= self.LIMIT:
+            self.ctx.say(message)
+
+    def finish(self):
+        for kind, count in self.counts.items():
+            if count > self.LIMIT:
+                self.ctx.say(f"... and {count - self.LIMIT} more {kind} (not listed)")
+
+
+def collect_samples(ctx, paths, allow_any, trees=()):
+    """([(source, relative destination)], skipped count): the files to copy, a warning for each problem. A folder in
+    `paths` is walked and keeps its own name; a folder in `trees` is walked and keeps only the structure inside it."""
+    missing = [p for p in list(paths) + list(trees) if not os.path.lexists(os.path.expanduser(p))]
+    if missing:
+        raise CliError("no such file: " + ", ".join(missing))
+    sources = []
+    for given in trees:
+        path = Path(os.path.expanduser(given))
+        if not path.is_dir():
+            raise CliError(f"--tree needs a folder, and {given} is not one")
+        sources += walk_tree(path, path)
+    for given in paths:
+        path = Path(os.path.expanduser(given))
+        if path.is_dir():
+            sources += walk_tree(path, path.parent)
+        else:
+            sources.append((path, Path(path.name)))
+    items, skipped, seen = [], 0, {}
+    chatter = Chatter(ctx)
+    classes = {}
+    for source, relative in sources:
+        name = source.name
+        if name.startswith(".") or not source.is_file():
+            chatter.say("hidden or irregular files", f"skipping {name}: hidden or not a regular file")
+            skipped += 1
+            continue
+        problem = fat_name_problem(name) or next((fat_name_problem(p) for p in relative.parts if fat_name_problem(p)), None)
+        if problem:
+            chatter.say("files with names FAT does not allow", f"skipping {relative}: {problem}; rename it")
+            skipped += 1
+            continue
+        is_audio = source.suffix.lower() in AUDIO_EXTENSIONS
+        if not is_audio and not allow_any:
+            chatter.say("files that are not WAV or AIFF audio",
+                        f"skipping {name}: not WAV or AIFF audio (convert it to PCM 44.1 kHz WAV, or add --any "
+                        "to copy it as it is)")
+            skipped += 1
+            continue
+        key = str(relative).lower()
+        if key in seen:
+            chatter.say("name collisions", f"skipping {source}: {relative} would replace {seen[key]}, which is also "
+                                           "being added")
+            skipped += 1
+            continue
+        if is_audio:
+            label = audio_class(source)
+            if label:
+                classes.setdefault(label, []).append(name)
+        seen[key] = source
+        items.append((source, relative))
+    chatter.finish()
+    for label, names in classes.items():
+        ctx.say(f"warning: {len(names)} file(s) are {label}, not {SUPPORTED_AUDIO}; copied as they are (convert them "
+                f"first if the sampler will not load them), for example {', '.join(names[:3])}")
+    return items, skipped
+
+
+def suggest_size(needed):
+    """The smallest of 2G, 4G, 8G, 16G, 32G that holds the files with 5% file system overhead."""
+    for gib in (2, 4, 8, 16, 32):
+        if needed * 1.05 <= gib << 30:
+            return f"{gib}G"
+    return "32G"
+
+
+def check_subdir(text):
+    if text is None:
+        return ""
+    parts = [p for p in text.replace("\\", "/").split("/") if p]
+    if not parts or text.startswith("/") or any(p in (".", "..") or fat_name_problem(p) for p in parts):
+        raise UsageError("usb: --to must be a plain folder name under Samples, for example kicks or drums/kicks")
+    return "/".join(parts)
+
+
+# commands ---------------------------------------------------------------------------------------------------
+def usb_prepare(ctx, image, needed=0):
+    """For usb add: make sure the image exists and holds a file system (create or format it). A new image is the
+    default 1G, or larger when the files need more."""
+    state = stick_state(ctx, image)
+    if state == "missing":
+        check_idle(ctx, image, "add")
+        size = max(STICK_DEFAULT_SIZE, parse_size(suggest_size(needed)))
+        ctx.say(f"creating {ctx.display(image)} ({human(size)}, FAT32, sparse)")
+        create_image(ctx, image, size)
+    elif state == "blank":
+        check_idle(ctx, image, "add")
+        ctx.say(f"{ctx.display(image)} is blank; formatting it as FAT32 first")
+        format_image(ctx, image)
+
+
+def usb_create(ctx, image, args):
+    size = parse_size(args.size) if args.size else STICK_DEFAULT_SIZE
+    if stick_state(ctx, image) != "missing":
+        if not args.force:
+            raise CliError(f"{ctx.display(image)} already exists; --force replaces it (its content is lost)")
+        check_idle(ctx, image, "create")
+        image.unlink()
+    create_image(ctx, image, size)
+    ctx.out.write(f"Created {ctx.display(image)}: {human(size)} FAT32 (volume {STICK_LABEL}) with {STICK_FOLDER}/"
+                  f"{STICK_SAMPLES}. Add samples with: sp16emu usb add FILES...; sp16emu run then attaches it.\n")
+    return 0
+
+
+def usb_add(ctx, image, args, files):
+    if not files and not args.tree:
+        raise UsageError("usb add: give the sample files to copy, for example: sp16emu usb add ~/samples/*.wav "
+                         "(or a whole folder with --tree DIR)")
+    subdir = check_subdir(args.to)
+    items, skipped = collect_samples(ctx, files, args.any, [args.tree] if args.tree else [])
+    if not items:
+        raise CliError("nothing to add: no file passed the checks above")
+    total = sum(source.stat().st_size for source, _ in items)
+    usb_prepare(ctx, image, total)
+    check_idle(ctx, image, "add")
+    with mounted_stick(ctx, image) as point:
+        target = make_tree(point, subdir)
+        usage = shutil.disk_usage(str(point))
+        free = usage.free
+        if total > free:
+            raise CliError(f"the files need {human(total)} but the stick has {human(free)} free; nothing was copied. "
+                           f"Make a larger stick with: sp16emu usb create --size {suggest_size(usage.used + total)} --force (this "
+                           "replaces the stick), or add --image PATH to use a new one")
+        for number, (source, relative) in enumerate(items, 1):
+            destination = target / relative
+            replaced = destination.exists()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            code, _, err = ctx.run_tool(["cp", "-X", str(source), str(destination)])
+            if code:
+                raise CliError(f"cannot copy {source}: {(err.strip().splitlines() or ['cp failed'])[-1]}")
+            if replaced:
+                ctx.say(f"replaced {relative}")
+            if len(items) > 200 and number % 250 == 0:
+                ctx.say(f"copied {number} of {len(items)} files")
+    where = f"{STICK_FOLDER}/{STICK_SAMPLES}" + (f"/{subdir}" if subdir else "")
+    ctx.out.write(f"Added {len(items)} file(s) ({human(total)}) to {where} on {ctx.display(image)}"
+                  + (f"; skipped {skipped}" if skipped else "") + ". Next: sp16emu run\n")
+    return 0
+
+
+def usb_ls(ctx, image):
+    if stick_state(ctx, image) == "missing":
+        raise CliError(f"{ctx.display(image)} does not exist; create it with: sp16emu usb create")
+    check_idle(ctx, image, "ls")
+    lines, count, used = [], 0, 0
+    with mounted_stick(ctx, image, writable=False) as point:
+        free = shutil.disk_usage(str(point)).free
+        for folder, dirs, files in os.walk(str(point)):
+            dirs[:] = sorted(d for d in dirs if d not in JUNK_FOLDERS)
+            base = os.path.relpath(folder, str(point))
+            lines += [os.path.normpath(os.path.join(base, name)) + "/" for name in dirs]
+            for name in sorted(files):
+                if name in JUNK_FILES or name.startswith(JUNK_PREFIX):
+                    continue
+                size = os.path.getsize(os.path.join(folder, name))
+                count += 1
+                used += size
+                lines.append(f"{os.path.normpath(os.path.join(base, name))}  {human(size)}")
+    ctx.out.write(f"{ctx.display(image)}: {count} file(s), {human(used)} used, {human(free)} free\n")
+    ctx.out.write("".join(line + "\n" for line in sorted(lines)))
+    return 0
+
+
+def usb_mount(ctx, image):
+    if stick_state(ctx, image) == "missing":
+        raise CliError(f"{ctx.display(image)} does not exist; create it with: sp16emu usb create")
+    here = stable_mountpoint(ctx, image)
+    attached = attachments(ctx, image)
+    if attached and not image_holders(ctx, image) and any(
+            os.path.realpath(m) == os.path.realpath(str(here)) for _, mounts in attached for m in mounts):
+        ctx.out.write(f"{here}\n")
+        ctx.say("already mounted; unmount it before starting the emulator: sp16emu usb unmount")
+        return 0
+    check_idle(ctx, image, "mount")
+    with mounted_stick(ctx, image, keep=True, mountpoint=here):
+        pass
+    ctx.out.write(f"{here}\n")
+    ctx.say("mounted; do not start the emulator until you unmount it: sp16emu usb unmount")
+    return 0
+
+
+def usb_unmount(ctx, image):
+    found = attachments(ctx, image)
+    if not found:
+        ctx.out.write(f"{ctx.display(image)} is not mounted.\n")
+        return 0
+    root = os.path.realpath(str(ctx.build / USB_MOUNTS))
+    for device, mounts in found:
+        ours = [m for m in mounts if os.path.realpath(m).startswith(root + os.sep)]
+        for mount in ours:
+            remove_junk(mount)
+        hdiutil_detach(ctx, device)
+        for mount in ours:
+            try:
+                os.rmdir(mount)
+            except OSError:
+                pass
+    ctx.out.write(f"Unmounted {ctx.display(image)}.\n")
+    return 0
+
+
+def run_usb(ctx, args, tail):
+    image = resolve_image(ctx, args.image)
+    files = list(args.files) + list(tail)
+    for option, action in (("size", "create"), ("force", "create"), ("to", "add"), ("any", "add"), ("tree", "add")):
+        if getattr(args, option) and args.action != action:
+            raise UsageError(f"usb {args.action}: --{option} is only for usb {action}")
+    if files and args.action != "add":
+        raise UsageError(f"usb {args.action}: takes no files; only usb add does")
+    if args.size:
+        parse_size(args.size)
+    if ctx.dry_run:
+        return usb_dry_run(ctx, args, image, files)
+    require_macos()
+    if args.action == "create":
+        return usb_create(ctx, image, args)
+    if args.action == "add":
+        return usb_add(ctx, image, args, files)
+    if args.action == "ls":
+        return usb_ls(ctx, image)
+    if args.action == "mount":
+        return usb_mount(ctx, image)
+    return usb_unmount(ctx, image)
+
+
+def stick_for_run(ctx, args):
+    """(path, notes): the default stick to attach to `sp16emu run`, or None with the reason in the notes."""
+    if args.usb_image or args.no_usb:
+        return None, []
+    stick = default_stick(ctx)
+    try:
+        regular = stat.S_ISREG(stick.lstat().st_mode)
+    except OSError:
+        return None, []
+    if not regular or "," in str(stick):
+        return None, []
+    try:
+        holders = image_holders(ctx, stick)
+        if holders:
+            pids = ", ".join(str(pid) for pid, _ in holders)
+            return None, [f"{ctx.display(stick)} is used by a running emulator (process id {pids}); launching without a "
+                          "USB stick"]
+        for device, mounts in attachments(ctx, stick):
+            return None, [f"{ctx.display(stick)} is mounted on this Mac ({mounts[0] if mounts else device}); launching "
+                          "without a USB stick. Release it with: sp16emu usb unmount"]
+    except CliError as error:
+        return None, [f"{error}; launching without a USB stick"]
+    return str(stick), [f"attaching the USB stick {ctx.display(stick)} (sp16emu run --no-usb skips it)"]
 
 
 # ---------------------------------------------------------------------------------------------------- help
@@ -1245,10 +1953,13 @@ def make_commands():
         "run", "Build and run", "Launch a built emulator app",
         "Opens build/NAME with `open -n`; close the window to stop the emulator. The first boot of each firmware "
         "creates a 1 GB data image for it in the library; projects and settings persist there.",
-        opts=RUN_OPTS, usage="sp16emu run [--name NAME] [--firmware ID] [--usb-image PATH] [--ephemeral] [--dev-overlay DIR]",
+        opts=RUN_OPTS, usage="sp16emu run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR]",
         examples=["sp16emu run", "sp16emu run --name sp16-dev --firmware ID",
-                  "sp16emu run --usb-image build/stick.img", "sp16emu run --ephemeral"],
+                  "sp16emu run --usb-image ~/sticks/other.img", "sp16emu run --no-usb", "sp16emu run --ephemeral"],
         notes=["If the build does not exist, the error names the `sp16emu build` command that creates it.",
+               "When build/stick.img exists (see `sp16emu usb`) it is attached as the virtual USB stick unless you give "
+               "--usb-image or --no-usb, or another running emulator or this Mac already holds it (then a note says so "
+               "and the emulator starts without it).",
                "Two apps cannot use the same firmware's data image at once; give the second one --ephemeral."],
         handler=plan_run)
     add("builds", "Build and run", "List the builds in build/ with the options each was built with",
@@ -1256,6 +1967,33 @@ def make_commands():
         "pad calibration, bundle id suffix, firmware count, library and build time.",
         opts=[Opt("--json", "Print JSON instead of a table.", flag=True)], usage="sp16emu builds [--json]",
         examples=["sp16emu builds"], direct=True)
+    add("usb", "Build and run", "Prepare the virtual USB stick on the Mac: create, add samples, ls, mount, unmount",
+        "The stick is one raw FAT32 image, build/stick.img by default; `sp16emu run` attaches it when it exists. "
+        "`create` makes and formats it without booting (volume SP16USB, no partition table, the layout the emulated "
+        "machine produces itself) and adds the PIONEER DJ SAMPLER/Samples folder. `add FILES...` creates the image if "
+        "missing, copies the files into Samples (or a folder under it with --to; a folder argument is copied with its name and "
+        "its structure, `--tree DIR` copies only what is inside DIR) and removes the ._ and .DS_Store "
+        "files macOS adds. WAV and AIFF files that are not PCM 16- or 24-bit 44.1 kHz are copied with one warning per kind, never "
+        "converted; other files are skipped unless --any. `ls` lists the stick, `mount` mounts it (prints the mount "
+        "point, under build/.usb-mnt) and `unmount` releases it. Every command that mounts or writes refuses while a "
+        "running emulator has the image or this Mac has it attached elsewhere. Needs macOS (hdiutil, newfs_msdos).",
+        positionals=[Pos("action", "what to do", choices=USB_ACTIONS), Pos("files", "usb add: the sample files or folders", nargs="*", metavar="FILES")],
+        opts=USB_OPTS, usage="sp16emu usb create | add FILES... | ls | mount | unmount [--image PATH] [options]",
+        examples=["sp16emu usb add ~/samples/*.wav            # creates build/stick.img the first time",
+                  "sp16emu usb add kick.wav snare.wav --to drums", "sp16emu usb create --size 8G --force",
+                  "sp16emu usb add --tree ~/SamplePack --to Pack     # a whole folder tree, structure kept",
+                  "sp16emu usb ls", "sp16emu usb mount && sp16emu usb unmount",
+                  "sp16emu usb add loop.wav --image ~/sticks/gig.img"],
+        notes=["Never mount the stick while the emulator runs: the emulated machine and the Mac would both write to "
+               "one FAT file system and corrupt it. Quit the emulator, then run `sp16emu usb ...`.",
+               "Supported sample format: PCM 16- or 24-bit 44.1 kHz WAV, mono or stereo (what the factory sample pack uses). "
+               "Other sample rates, float or compressed audio are copied with one warning per kind.",
+               "Sizes: the default stick is 1G; --size goes up to 32G (sparse, so it costs no disk space until used). "
+               "The files are checked against the free space before anything is copied. Each file must be under 4 GB "
+               "(FAT32); a stick can hold much more in total.",
+               "Nothing outside the image and build/ is touched; mount points live in build/.usb-mnt and are removed "
+               "again."],
+        direct=True, intermixed=True)
     add("audio", "Build and run", "List CoreAudio output devices for --audio-device (devices); run the audio self-test",
         "`audio devices` compiles the audio tool on first use (into build/.cache, a few seconds) and prints each "
         "output device with the UID that `sp16emu build --audio-device` takes. `audio selftest` runs the audio "
@@ -1388,7 +2126,7 @@ def command_help(command):
                 lines.append(f"  {usage.ljust(26)}{wrapped[0] if wrapped else ''}")
                 lines += [" " * 28 + w for w in wrapped[1:]]
         lines.append("")
-    if command.name not in ("help", "doctor", "builds", "audio", "clean"):
+    if command.name not in ("help", "doctor", "builds", "audio", "clean", "usb"):
         lines.append("  -- ARGS...                Everything after -- is passed unchanged to the underlying tool")
         lines.append("                            (its own --help works there).")
         lines.append("")
@@ -1420,7 +2158,8 @@ def unknown_command(name):
     return f"unknown command '{name}'" + (f" (did you mean '{close[0]}'?)" if close else "") + "; run `sp16emu help` for the list"
 
 
-DIRECT = {"help": run_help, "doctor": run_doctor, "builds": run_builds, "audio": run_audio, "clean": run_clean}
+DIRECT = {"help": run_help, "doctor": run_doctor, "builds": run_builds, "audio": run_audio, "clean": run_clean,
+          "usb": run_usb}
 
 
 # ---------------------------------------------------------------------------------------------------- main
@@ -1499,6 +2238,12 @@ def main(argv=None, ctx=None):
         return error.code
     except KeyboardInterrupt:
         return 130
+    except BrokenPipeError:  # `sp16emu usb ls | head`
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())  # no second error when Python flushes
+        except (OSError, ValueError, AttributeError):
+            pass
+        return 0
 
 
 if __name__ == "__main__":

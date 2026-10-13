@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import shlex
 import shutil
@@ -44,6 +45,7 @@ class CliCase(unittest.TestCase):
         self.build.mkdir(mode=0o700)
         self.calls = []
         self.ps = ""
+        self.hdiutil = plistlib.dumps({"images": []}).decode()
         self.ctx = self.make_ctx()
 
     def make_ctx(self, **kwargs):
@@ -55,6 +57,8 @@ class CliCase(unittest.TestCase):
         def capture(argv, timeout=30):
             if argv[0] == "ps":
                 return 0, self.ps
+            if argv[0] == "hdiutil":
+                return 0, self.hdiutil
             return 0, ""
         ctx.capture = capture
         ctx.preflight = False
@@ -630,7 +634,7 @@ class HelpTests(CliCase):
             self.assertRegex(out, rf"(?m)^  {command.name}\s+\S")
         self.assertEqual(cli.main([], ctx=self.make_ctx()), 0)
         wanted = {"help", "doctor", "build", "run", "firmware", "diagnostics", "hwsuite", "mod", "ctl", "audio",
-                  "builds", "doctor", "test", "clean"}
+                  "builds", "doctor", "test", "clean", "usb"}
         self.assertEqual(wanted, set(cli.BY_NAME))
 
     def test_every_command_documents_every_option_and_an_example(self):
@@ -779,8 +783,8 @@ class MakefileTests(unittest.TestCase):
         for target in phony:
             self.assertRegex(text, rf"(?m)^{target}:.*## \S", f"{target} has no help comment")
             self.assertRegex(out, rf"(?m)^  {target}\s+\S")
-        for variable in ("NAME", "AUDIO", "AUDIO_DEVICE", "FIRMWARE", "USB_IMAGE", "UPD", "KEY", "GPL", "PYTHON",
-                         "PREFIX"):
+        for variable in ("NAME", "AUDIO", "AUDIO_DEVICE", "FIRMWARE", "USB_IMAGE", "FILES", "UPD", "KEY", "GPL",
+                         "PYTHON", "PREFIX"):
             self.assertRegex(out, rf"(?m)^  {variable}\s+\S")
             self.assertRegex(text, rf"(?m)^{variable} \?=")
         self.assertEqual(self.make()[1], out)  # the default goal is help
@@ -798,6 +802,8 @@ class MakefileTests(unittest.TestCase):
             "run-dev": ["run", "--name", "sp16-dev"], "audio-devices": ["audio", "devices"],
             "diagnostics": ["diagnostics"], "hwsuite-smoke": ["hwsuite", "--smoke", "--build", "sp16-dev"],
             "test": ["test"], "clean": ["clean", "--all"], "list": ["builds"],
+            "usb-create": ["usb", "create"], "usb-ls": ["usb", "ls"], "usb-mount": ["usb", "mount"],
+            "usb-unmount": ["usb", "unmount"],
         }
         for target, words in expect.items():
             code, out, err = self.make("-n", target)
@@ -822,12 +828,26 @@ class MakefileTests(unittest.TestCase):
         self.assertEqual(shlex.split(self.make("-n", "list", "NAME=x")[1].splitlines()[1])[2:],
                          ["firmware", "list", "--build", "x"])
 
+    def test_usb_targets_pass_the_files_and_the_image(self):
+        out = self.make("-n", "usb-add", "FILES=a.wav b/c d.wav")[1]
+        self.assertEqual(shlex.split(out)[2:], ["usb", "add", "a.wav", "b/c", "d.wav"])
+        out = self.make("-n", "usb-add", "FILES=a.wav", "USB_IMAGE=my stick.img", "ARGS=--to kicks")[1]
+        self.assertEqual(shlex.split(out)[2:], ["usb", "add", "a.wav", "--image", "my stick.img", "--to", "kicks"])
+        for target in ("usb-create", "usb-ls", "usb-mount", "usb-unmount"):
+            out = self.make("-n", target, "USB_IMAGE=/s/x.img")[1]
+            self.assertEqual(shlex.split(out)[2:], ["usb", target[4:], "--image", "/s/x.img"], target)
+        self.assertEqual(shlex.split(self.make("-n", "usb-create", "ARGS=--size 2G --force")[1])[2:],
+                         ["usb", "create", "--size", "2G", "--force"])
+
     def test_missing_variables_fail_early_with_a_readable_message(self):
         code, _, err = self.make("-n", "import")
         self.assertNotEqual(code, 0)
         self.assertIn("make import needs UPD=", err)
         code, _, err = self.make("-n", "import", "UPD=x")
         self.assertIn("KEY=", err)
+        code, _, err = self.make("-n", "usb-add")
+        self.assertNotEqual(code, 0)
+        self.assertIn("make usb-add needs FILES=", err)
         code, _, err = self.make("-n", "clean-all")
         self.assertNotEqual(code, 0)
         self.assertIn("CONFIRM=1", err)
@@ -847,7 +867,7 @@ class MakefileTests(unittest.TestCase):
         for target in self.targets()[1]:
             if target in ("help", "install", "uninstall"):
                 continue
-            extra = {"import": ["UPD=a", "KEY=k"], "clean-all": ["CONFIRM=1"]}.get(target, [])
+            extra = {"import": ["UPD=a", "KEY=k"], "clean-all": ["CONFIRM=1"], "usb-add": ["FILES=a.wav"]}.get(target, [])
             code, out, err = self.make("-n", target, *extra)
             self.assertEqual(code, 0, err)
             for line in out.splitlines():

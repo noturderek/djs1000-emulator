@@ -27,8 +27,10 @@ AUDIO ?=
 AUDIO_DEVICE ?=
 #: FIRMWARE  firmware id for run and hwsuite-smoke (default: the library's selected firmware)
 FIRMWARE ?=
-#: USB_IMAGE  run: raw image to attach as a virtual USB stick (created if missing)
+#: USB_IMAGE  the virtual USB stick image for run and the usb-* targets (default build/stick.img)
 USB_IMAGE ?=
+#: FILES  usb-add: the sample files (or folders) to copy onto the stick, separated by spaces
+FILES ?=
 #: UPD  import: your firmware update file (.UPD)
 UPD ?=
 #: KEY  import: your key file (or use GPL)
@@ -59,6 +61,7 @@ AUDIO_FLAG         = $(if $(strip $(AUDIO)),--audio "$(AUDIO)")
 AUDIO_DEVICE_FLAG  = $(if $(strip $(AUDIO_DEVICE)),--audio-device "$(AUDIO_DEVICE)")
 FIRMWARE_FLAG      = $(if $(strip $(FIRMWARE)),--firmware "$(FIRMWARE)")
 USB_IMAGE_FLAG     = $(if $(strip $(USB_IMAGE)),--usb-image "$(USB_IMAGE)")
+USB_IMAGE_ARG      = $(if $(strip $(USB_IMAGE)),--image "$(USB_IMAGE)")
 PROFILE_FLAG       = $(if $(strip $(PROFILE)),--profile "$(PROFILE)")
 # Maintenance targets use --build NAME only when you set NAME yourself; otherwise ./sp16emu picks the default build.
 BUILD_FLAG         = $(if $(or $(findstring command line,$(origin NAME)),$(findstring environment,$(origin NAME))),--build "$(NAME)")
@@ -72,6 +75,11 @@ ifeq ($(strip $(KEY))$(strip $(GPL)),)
 $(error make import needs KEY=<your key file> or GPL="<GPL archive part 1> <part 2>" besides UPD)
 endif
 endif
+ifneq ($(filter usb-add,$(MAKECMDGOALS)),)
+ifeq ($(strip $(FILES)),)
+$(error make usb-add needs FILES="<sample files, separated by spaces>", for example make usb-add FILES="~/samples/*.wav")
+endif
+endif
 ifneq ($(filter clean-all,$(MAKECMDGOALS)),)
 ifneq ($(CONFIRM),1)
 $(error make clean-all deletes everything in build/, including the imported firmware and data images; run: make clean-all CONFIRM=1)
@@ -79,7 +87,8 @@ endif
 endif
 
 .PHONY: help doctor build build-audio build-record build-dev build-control run run-audio run-dev audio-devices \
-	import list diagnostics hwsuite-smoke test clean clean-all install uninstall
+	usb-create usb-add usb-ls usb-mount usb-unmount import list diagnostics hwsuite-smoke test clean clean-all \
+	install uninstall
 
 # ------------------------------------------------------------------------------------------------------ targets
 help: ## Show the targets and variables
@@ -111,7 +120,7 @@ build-dev: ## Build build/NAME-dev for modding and tests: research socket, WAV r
 build-control: ## Build build/NAME-dev-uncal, the uncalibrated control build for the hardware suite
 	$(SP16EMU) build --name "$(NAME)-dev-uncal" --research --audio file --uncalibrated --bundle-suffix dev-uncal $(REBUILD_FLAG) $(ARGS)
 
-run: ## Launch build/NAME (FIRMWARE and USB_IMAGE are optional)
+run: ## Launch build/NAME (FIRMWARE and USB_IMAGE are optional; build/stick.img is attached when it exists)
 	$(SP16EMU) run --name "$(NAME)" $(FIRMWARE_FLAG) $(USB_IMAGE_FLAG) $(ARGS)
 
 run-audio: ## Launch build/NAME-audio
@@ -122,6 +131,21 @@ run-dev: ## Launch build/NAME-dev
 
 audio-devices: ## List the Mac's audio output devices and their UIDs (for AUDIO_DEVICE)
 	$(SP16EMU) audio devices
+
+usb-create: ## Create and format the virtual USB stick (build/stick.img, or USB_IMAGE=...) without booting
+	$(SP16EMU) usb create $(USB_IMAGE_ARG) $(ARGS)
+
+usb-add: ## Copy sample files onto the stick (FILES="a.wav b.wav"), creating it if needed
+	$(SP16EMU) usb add $(FILES) $(USB_IMAGE_ARG) $(ARGS)
+
+usb-ls: ## List what is on the stick
+	$(SP16EMU) usb ls $(USB_IMAGE_ARG) $(ARGS)
+
+usb-mount: ## Mount the stick on the Mac and print the mount point (never while the emulator runs)
+	$(SP16EMU) usb mount $(USB_IMAGE_ARG) $(ARGS)
+
+usb-unmount: ## Release the stick again
+	$(SP16EMU) usb unmount $(USB_IMAGE_ARG) $(ARGS)
 
 import: ## Import your firmware into the shared library: UPD=file.UPD and KEY=key or GPL="part1 part2"
 	$(SP16EMU) firmware import $(BUILD_FLAG) --update "$(UPD)" $(if $(strip $(KEY)),--key-file "$(KEY)") $(if $(strip $(GPL)),--gpl-archive $(GPL)) $(ARGS)

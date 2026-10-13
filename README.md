@@ -97,6 +97,40 @@ which `./sp16emu build` command creates it.
 `./sp16emu firmware list` lists imports; `select`, `rename`, `remove`, `show` and `check --id <id>` manage them. In
 the app, Firmware > Library does the same.
 
+### 5. Load your own samples (optional)
+
+The emulated sampler reads samples from a virtual USB stick: a FAT32 disk image on your Mac, `build/stick.img`. Put
+your samples on it before you start the emulator, then run as usual:
+
+```sh
+./sp16emu usb add ~/samples/*.wav     # creates build/stick.img the first time, then copies the files
+./sp16emu run                         # attaches build/stick.img automatically
+# or: make usb-add FILES="~/samples/*.wav" && make run
+```
+
+- **Format:** PCM 16- or 24-bit 44.1 kHz WAV, mono or stereo (AIFF is accepted too). WAV and AIFF files in another
+  sample rate or codec (float, compressed) are copied with one warning per kind, never converted; convert them first if the sampler will not load them. Files that are not WAV or AIFF are
+  skipped with a warning unless you add `--any`.
+- **Where they go:** the firmware's own `PIONEER DJ SAMPLER/Samples` folder on the stick (`--to kicks` copies into a
+  folder `kicks` under it). `./sp16emu usb ls` lists what is on the stick, including projects the sampler saved to
+  it. macOS's `._*` and `.DS_Store` files are removed again after each copy.
+- **Whole folders and big packs:** a folder passed to `usb add` is copied with its name and its structure;
+  `./sp16emu usb add --tree ~/SamplePack --to Pack` copies what is inside the folder, at any depth, into
+  `Samples/Pack`. A new stick is sized for the files (at least 1G). The stick can be up to 32G (`usb create --size 8G`;
+  the image is sparse, so it takes disk space only for what you copy), and a stick above 4 GB works as long as each
+  file is under 4 GB (a FAT32 limit). The free space is checked before anything is copied; if the files do not fit,
+  nothing is copied and the message suggests `usb create --size NG --force` (which replaces the stick) or a new
+  `--image`.
+- **Never mount the stick while the emulator runs.** The emulated sampler and your Mac would both write to one file
+  system and corrupt it. `usb add`, `ls`, `create` and `mount` refuse while a running emulator has the image, or while
+  your Mac has it mounted elsewhere. Quit the emulator first (close its window), or release the stick with
+  `./sp16emu usb unmount`.
+- `./sp16emu usb create [--size 4G] [--force]` makes an empty stick without adding anything (it never overwrites an
+  existing image unless you add `--force`); `./sp16emu usb mount` mounts it in `build/.usb-mnt` and prints the folder
+  if you would rather copy with Finder, and `usb unmount` releases it. `--image PATH` works on another image.
+- `./sp16emu run` attaches `build/stick.img` when it exists. `--no-usb` starts without it and `--usb-image PATH`
+  attaches another image. If another running emulator already uses the stick, `run` says so and starts without it.
+
 ## Audio
 
 A build chooses its audio at build time:
@@ -128,7 +162,8 @@ examples. `./sp16emu --dry-run <command> ...` prints the exact tool commands ins
 |---|---|
 | `doctor` | Check your Mac (Apple silicon, macOS, Command Line Tools, Python, Docker, disk space, git) and print the fixes |
 | `build` | Build the app into `build/<name>`: `--audio`, `--audio-device`, `--research`, `--trace`, `--uncalibrated`, `--pad-calibration-value`, `--bundle-suffix`, `--library`, `--reuse-qemu-from`, `--rebuild` |
-| `run` | Launch a build: `--firmware`, `--usb-image`, `--ephemeral`, `--dev-overlay` |
+| `run` | Launch a build: `--firmware`, `--usb-image` (default `build/stick.img` when it exists), `--no-usb`, `--ephemeral`, `--dev-overlay` |
+| `usb create\|add\|ls\|mount\|unmount` | Prepare the virtual USB stick on the Mac without booting: load samples, list, mount (see [Load your own samples](#5-load-your-own-samples-optional)) |
 | `builds` | List builds and the options each was built with |
 | `audio devices` | List audio output devices (UIDs for `--audio-device`) |
 | `firmware import\|list\|show\|check\|select\|rename\|remove\|profile\|audit` | Manage the shared firmware library |
@@ -149,6 +184,7 @@ it); no shell files are touched.
 | `make build-audio` / `make build-record` | `build/sp16-audio` (audible) / `build/sp16-record` (WAV files) |
 | `make build-dev` / `make build-control` | `build/sp16-dev` (research socket, WAV files) and `build/sp16-dev-uncal` for the hardware suite |
 | `make run`, `run-audio`, `run-dev` | Launch the matching build (`FIRMWARE=`, `USB_IMAGE=`) |
+| `make usb-add FILES="a.wav b.wav"` | Copy samples onto the stick (creating `build/stick.img` if needed); `usb-create`, `usb-ls`, `usb-mount`, `usb-unmount`; `USB_IMAGE=` picks another image |
 | `make import UPD=... KEY=...` (or `GPL="part1 part2"`) | Import firmware |
 | `make list`, `doctor`, `diagnostics`, `test`, `hwsuite-smoke`, `audio-devices` | Information, checks and tests |
 | `make clean` / `make clean-all CONFIRM=1` | Delete build outputs / everything in `build/` including firmware |
@@ -218,6 +254,9 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | Import: `the key does not decrypt this update` | The key does not belong to this update. |
 | The app's import screen says Python is missing | Install the Xcode Command Line Tools (`xcode-select --install`). |
 | Pads blink red and ignore hits | The firmware reports missing pad calibration; rebuild without `--uncalibrated`. |
+| `usb ...: is in use by a running emulator` | The emulator (or a leftover QEMU) has the stick. Quit it, stopping only the process ids the message names, then repeat the command. Mounting a stick the emulator writes to would corrupt it. |
+| `usb ...: already attached to this Mac` | Release it with `./sp16emu usb unmount`, then repeat. `./sp16emu run` also starts without the stick (and says why) while the Mac holds it. |
+| `usb ...: cannot attach` | The image has no FAT32 file system (for example a zero-filled file). Recreate it with `./sp16emu usb create --force`, or `usb add` formats a blank image by itself. |
 | The window is black | Read `console.txt` in the newest folder under `build/sp16/sessions/`. |
 | The app quit or crashed | Start it again: it offers to collect diagnostics. Then see [Reporting a bug](#reporting-a-bug). The newest folder under `build/sp16/sessions/` holds `app.log` (the app's log) and `qemu-stderr.txt`. |
 

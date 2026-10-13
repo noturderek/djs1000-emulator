@@ -13,6 +13,10 @@ Start from the evidence: the session folder (`build/<build>/sessions/native-*/`,
 | `docker build` fails | `guest-build.log` | start Docker Desktop; retry (needs network for Debian packages) |
 | `swiftc` fails | `swift-build.log` | install or update the Xcode Command Line Tools |
 | Import screen: Python is required | `/usr/bin/python3 --version` | `xcode-select --install` |
+| `usb ...: is in use by a running emulator (process id N)` | `ps -axo pid,command \| grep -F "<image>"` | quit that emulator, stopping only the printed ids (and its `qemu-system-aarch64` child); never mount a stick the emulator writes to |
+| `usb ...: already attached to this Mac`, or `run` starts without the stick | `hdiutil info \| grep -F stick.img` | `./sp16emu usb unmount`; the commands never force a busy volume without saying so |
+| `usb ...: cannot attach` | the image is zero-filled or not FAT32 | `./sp16emu usb create --force` (deletes the stick's content), or `usb add` which formats a blank image |
+| Samples do not show up in the sampler | `./sp16emu usb ls`; the `run` notes say whether the stick was attached | the stick must exist before `run` (`usb add`), be in `PIONEER DJ SAMPLER/Samples`, and not be skipped by `--no-usb`; check the format (PCM 16- or 24-bit 44.1 kHz WAV) |
 | Title says `(unverified)` | `./sp16emu firmware check --id <id>` | the version is a candidate or unknown and runs on the reference measurements; verify it with the hardware suite in a research build |
 | `SP16_FIRMWARE_ERROR` then the VM stops | `console.txt` | the image changed since import (re-import), an invalid manifest, or a pad calibration value outside the profile's range |
 | Window black or empty | `console.txt` for `SP16_NATIVE_READY`; `metrics.json` frame counts | if QEMU exited, read the end of `console.txt`; if ready but no frames, the firmware's app has not drawn yet (wait 10 s) |

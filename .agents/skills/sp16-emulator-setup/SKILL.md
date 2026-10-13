@@ -1,6 +1,6 @@
 ---
 name: sp16-emulator-setup
-description: Guide a user through setting up the SP16 Emulator on their Mac - check prerequisites, build, have the user download the firmware update and GPL source archive themselves, import, run, load a modified firmware (recipes, developer overlay, repacked update), run the hardware conformance suite, and troubleshoot, and collect diagnostics for a bug report. Use for "set up the emulator", "build it", "import my firmware", "it won't boot", "it crashed", "file a bug", "load my mod", "run the hardware suite".
+description: Guide a user through setting up the SP16 Emulator on their Mac - check prerequisites, build, have the user download the firmware update and GPL source archive themselves, import, run, load samples onto the virtual USB stick, load a modified firmware (recipes, developer overlay, repacked update), run the hardware conformance suite, and troubleshoot, and collect diagnostics for a bug report. Use for "set up the emulator", "build it", "import my firmware", "it won't boot", "it crashed", "file a bug", "load my mod", "put samples on the USB stick", "run the hardware suite".
 ---
 
 # SP16 Emulator setup
@@ -87,6 +87,26 @@ unverified (title "(unverified)", library status, a one-time notice); see sectio
 
 Confirm it booted: the newest `build/sp16/sessions/native-*/console.txt` contains `SP16_NATIVE_READY`. The window
 shows the panel; the LCD settles on the home screen after about 10 seconds.
+
+## 5a. Samples on the virtual USB stick
+
+The sampler loads samples from a virtual USB stick: `build/stick.img`, a FAT32 image that `./sp16emu run` attaches
+when it exists (`--no-usb` skips it, `--usb-image <file>` uses another). Prepare it on the Mac, with the emulator
+stopped:
+
+```sh
+./sp16emu usb add <sample files>          # creates and formats build/stick.img the first time; --to <folder> for a subfolder
+./sp16emu usb ls                          # what is on the stick
+# or: make usb-add FILES="<sample files>"
+```
+
+- Format: PCM 16- or 24-bit 44.1 kHz WAV (mono or stereo). Other WAV/AIFF files get one warning per kind, are copied, and are never converted;
+  non-audio files are skipped unless `--any`. Samples go to `PIONEER DJ SAMPLER/Samples` on the stick.
+- **Never mount the stick while an emulator runs.** The commands refuse when a running emulator names the image (they
+  print its process ids; stop an emulator only by those exact ids) or when the Mac already has the image attached
+  (`./sp16emu usb unmount`). Do not work around the refusal with `hdiutil` or Finder.
+- `usb create --force` replaces an existing stick and deletes its content: ask the user first.
+- Mount points live in `build/.usb-mnt` (removed again); `usb mount` prints the folder if the user wants Finder.
 
 ## 6. Modified firmware
 
