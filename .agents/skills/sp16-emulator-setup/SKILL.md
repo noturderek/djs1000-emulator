@@ -121,13 +121,16 @@ Follow `docs/modding.md`. Short version, with a research build:
 
 ```sh
 make build-dev                    # build/sp16-dev: research socket, WAV recording; shares build/library
-./sp16 firmware select --id <1.60 id>      # the example targets 1.60 (import first if the library is empty)
-./sp16 mod new  --mod private/my-mod --id my-mod --from-recipe utility-label
+./sp16 firmware select --id <id>  # a firmware matching the mod's base_profile (import first if the library is empty)
+./sp16 mod new  --mod private/my-mod --id my-mod   # empty mod folder; add recipes/, files/ or src/ content
+./sp16 mod check --mod private/my-mod              # preflight: wrong base, unknown paths, copied firmware files
 ./sp16 mod test --mod private/my-mod
 ```
 
-`utility-label` makes the HOME screen's Utility tile read MOD LAB on 1.60. For a repacked update use
-`./sp16 mod package --upd ... --out private/<name>.UPD` and import it; a tampered copy imports as unverified with the reason recorded.
+Keep mod folders under the git-ignored `private/`. Base hashes for recipes are in
+`build/library/<id>/manifest.json` (`files`); never copy firmware files into a mod's `files/` (`mod check` refuses
+them). For a repacked update use `./sp16 mod package --upd ... --out private/<name>.UPD` and import it; a tampered copy
+imports as unverified with the reason recorded. Never share a repacked update: it contains the vendor's firmware.
 
 ## 7. Hardware suite
 

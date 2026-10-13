@@ -4,6 +4,9 @@ You can change how a firmware behaves in the emulator without rebuilding the emu
 the imported firmware image. Changes are applied in the guest, into a tmpfs overlay above the read-only image, each
 time the firmware's application starts.
 
+This repository ships the tooling to develop and run a mod, not any mod itself: you write your own recipes, files and
+preload libraries against firmware you imported yourself.
+
 Everything here runs on the emulator only. Nothing flashes hardware or runs a firmware's update scripts.
 
 ## Setup: a research build
@@ -16,7 +19,8 @@ mkdir -p -m 700 private           # git-ignored and owner-only (build/ is create
 ./sp16 firmware import --update <your .UPD> --gpl-archive <part 1> <part 2>   # skip if already imported
 ```
 
-`--bundle-suffix dev` gives this build its own bundle id, so it can run next to your normal build.
+`--bundle-suffix dev` gives this build its own bundle id, so it can run next to your normal build. All builds share
+the firmware library `build/library`, so firmware you already imported is available here too.
 
 ## A mod folder
 
@@ -25,49 +29,68 @@ my-mod/
   mod.json       {"schema": 1, "id": "my-mod", "base_profile": "sp16-1.60", "description": "..."}
   recipes/       *.json patch recipes
   files/         replaced or added files at their guest paths (your own content only)
-  src/           C sources of preload libraries, built by `fwdev.py sdk`
+  src/           C sources of preload libraries, built by `./sp16 mod sdk`
   preload/       ARM preload libraries (*.so), loaded after the hardware shim
 ```
 
-Create one, optionally from the bundled example:
+Create an empty one (keep it under the git-ignored `private/` folder):
 
 ```sh
-./sp16 mod new --mod private/my-mod --id my-mod --from-recipe utility-label
+./sp16 mod new --mod private/my-mod --id my-mod
 ```
+
+This writes `mod.json` with `base_profile` `sp16-1.60`, empty `recipes/` and `files/` folders and an example preload
+source in `src/` that only logs a line when it loads. Change `base_profile` to `sp16-1.50` if your mod targets 1.50.
 
 ## Recipes
 
-A recipe patches one file of the firmware by offset or by byte pattern. It names the file's SHA-256 before and after,
-and how many matches it expects, so a recipe can never apply to the wrong firmware or apply partially. Replacements
-keep the original length. The example `emulator/mods/utility-label.json` replaces the 8-byte string `UTILITY` with
-`MOD LAB` in the application, so the HOME screen's Utility tile reads MOD LAB:
+A recipe patches one or more files of the firmware by offset or by byte pattern. It names each file's SHA-256 before
+(and optionally after) the patch, and how many matches it expects, so a recipe can never apply to the wrong firmware
+or apply partially. Replacements keep the original length.
 
 ```json
 {
   "schema": 1,
-  "id": "utility-label",
+  "id": "my-label",
   "base_profile": "sp16-1.60",
   "files": {
-    "<application path>": {
-      "base_sha256": "<hash of the stock file>",
-      "patches": [{"offset": 8931164, "original_hex": "5554494c49545900",
-                   "replacement_hex": "4d4f44204c414200", "expected_count": 1}],
-      "result_sha256": "<hash after the patch>"
+    "<guest path of the file>": {
+      "base_sha256": "<SHA-256 of the unmodified file>",
+      "patches": [
+        {"offset": 1234, "original_hex": "<bytes now at that offset>", "replacement_hex": "<same length>",
+         "expected_count": 1}
+      ],
+      "result_sha256": "<optional: SHA-256 of the patched file>"
     }
   }
 }
 ```
 
-Use `"pattern_hex"` instead of `"offset"` to find the bytes by content. A recipe with wrong original bytes or a
-wrong base hash is refused before anything changes; the firmware then starts unchanged and the console shows
-`SP16_DEV_ERROR`.
+- `"offset"` patches need `"original_hex"`: the bytes that must be at that offset. With `"expected_count"`, those
+  bytes must also occur exactly that many times in the whole file.
+- Use `"pattern_hex"` instead of `"offset"` and `"original_hex"` to find bytes by content; every occurrence is
+  replaced, and `"expected_count"` is required.
+- The recipe `id` is lowercase letters, digits and hyphens; name the file after it (`recipes/my-label.json`).
+
+A recipe with wrong original bytes or a wrong base hash is refused before anything changes; the firmware then starts
+unchanged and the console shows `SP16_DEV_ERROR`.
+
+### Finding what to patch
+
+- The base hashes of every file of an imported firmware are in its manifest,
+  `build/library/<firmware id>/manifest.json`, under `files` (`./sp16 firmware list` shows the ids). For example:
+  `python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["files"][sys.argv[2]]["sha256"])' build/library/<id>/manifest.json /path/in/guest`.
+- The firmware image itself is `build/library/<firmware id>/firmware.sqfs`, a read-only squashfs. To look at its
+  files, extract a copy into `private/` (never into a tracked folder) with
+  `unsquashfs -d private/fw-<id> build/library/<id>/firmware.sqfs` (`brew install squashfs`). Do not edit the
+  library copy: a changed image is refused at boot.
+- `./sp16 mod check` tells you when a path is not a file of the firmware or a base hash does not match.
 
 ## The loop
 
 `./sp16 mod` (it runs `emulator/fwdev.py`) works on the library's selected firmware (`./sp16 firmware list` shows it),
-or on the one you name with `--firmware <id>`. A recipe applies only to the firmware it names: the `utility-label`
-example needs 1.60, so select it first with
-`./sp16 firmware select --id <1.60 id>`.
+or on the one you name with `--firmware <id>`. A recipe applies only to the firmware version it names, so select a
+matching firmware first, for example `./sp16 firmware select --id <1.60 id>` for a mod based on `sp16-1.60`.
 
 ```sh
 ./sp16 mod check --mod private/my-mod   # preflight, no boot
@@ -77,14 +100,14 @@ example needs 1.60, so select it first with
 ./sp16 mod test  --mod private/my-mod   # check + run + verify
 ```
 
-`fwdev.py test` confirms the guest applied the overlay and the declared result hash, that lamps are live and audio
+`./sp16 mod test` confirms the guest applied the overlay and any declared result hash, that lamps are live and audio
 counters move, and optionally that an LCD region changed against a stock baseline after a tap
 (`--baseline stock.png --expect-change X0 Y0 X1 Y1 --touch X Y`).
 
 ## Replaced files and preload libraries
 
-- `files/<guest path>` replaces or adds a file in the overlay. `fwdev.py check` refuses unmodified copies of firmware
-  files: put only your own content there.
+- `files/<guest path>` replaces or adds a file in the overlay. `./sp16 mod check` refuses unmodified copies of
+  firmware files: put only your own content there.
 - `src/*.c` are built by `./sp16 mod sdk --mod private/my-mod` into `preload/*.so` with the ARM cross
   toolchain in a throwaway Docker container, with the same flags as the hardware shim. The library binds to the
   firmware's own C library at run time and is loaded after the shim.
@@ -95,7 +118,9 @@ counters move, and optionally that an LCD region changed against a stock baselin
 ./sp16 mod package --mod private/my-mod --out private/my-mod.tar.gz
 ```
 
-The archive holds your recipes, sources and libraries with a manifest; it refuses unmodified firmware files.
+The archive holds your recipes, sources and libraries with a manifest; it refuses unmodified firmware files. This is
+the form to share a mod in: it contains no firmware. Whoever receives it unpacks it into their own `private/`
+folder and needs their own copy of the base firmware.
 
 ## Repacked updates (emulator only)
 

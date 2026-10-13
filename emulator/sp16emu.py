@@ -1051,7 +1051,6 @@ MOD_OPTS = [
     Opt("--build", "check, run, test, package: the build (run and test need a research build; default: "
         "build/sp16-dev, else the only research build).", "NAME", emit=False),
     Opt("--id", "new: the mod id (lowercase letters, digits, hyphens).", "ID"),
-    Opt("--from-recipe", "new: start from a built-in recipe such as utility-label.", "NAME"),
     Opt("--firmware", "check, run, test, package: the firmware id (default: the library's selected one).", "ID"),
     Opt("--baseline", "test: a stock LCD snapshot PNG to compare against.", "PNG", path=True),
     Opt("--expect-change", "test: the LCD region that must differ from the baseline.", "X0 Y0 X1 Y1", nargs=4),
@@ -2934,13 +2933,13 @@ def make_commands():
         "read-only overlay (or restart only the firmware's app), test it against a stock baseline, build preload "
         "libraries, and package an archive or a repacked update for this emulator only.",
         positionals=[Pos("action", "what to do", choices=MOD_ACTIONS)], opts=MOD_OPTS,
-        usage="sp16emu mod ACTION --mod DIR [--build NAME] [options]",
-        examples=["sp16emu mod new --mod private/my-mod --id my-mod --from-recipe utility-label",
-                  "sp16emu mod check --mod private/my-mod", "sp16emu mod run --mod private/my-mod",
-                  "sp16emu mod test --mod private/my-mod --baseline stock.png --expect-change 0 0 100 50",
-                  "sp16emu mod sdk --mod private/my-mod",
-                  "sp16emu mod package --mod private/my-mod --upd --key-file KEY --out private/my-mod.UPD"],
-        notes=["run and test need a research build: sp16emu build --name sp16-dev --research --audio file.",
+        usage="./sp16 mod ACTION --mod DIR [--build NAME] [options]",
+        examples=["./sp16 mod new --mod private/my-mod --id my-mod",
+                  "./sp16 mod check --mod private/my-mod", "./sp16 mod run --mod private/my-mod",
+                  "./sp16 mod test --mod private/my-mod --baseline stock.png --expect-change 0 0 100 50",
+                  "./sp16 mod sdk --mod private/my-mod",
+                  "./sp16 mod package --mod private/my-mod --upd --key-file KEY --out private/my-mod.UPD"],
+        notes=["run and test need a research build: ./sp16 build --name sp16-dev --research --audio file.",
                "Repacked updates carry a mod-lab marker and are for this emulator only: never flash or share them."],
         handler=plan_mod)
     add("ctl", "Develop and test", "Drive a running research session over its control socket (buttons, encoders, LCD)",

@@ -52,9 +52,6 @@ class LegacyProfileTests(unittest.TestCase):
         self.assertEqual(panel_map.PAD_CURVE(127), (874, 512))
         self.assertEqual(panel.PanelModel.SELECTOR_WINDOW_FRAMES, 8)
         self.assertEqual(prepare.EXPECTED_APP, "3d1392a61323e73ea4f2fddef8fe9e0142add7a6f6fab79ab0eb0d5396555464")
-        self.assertEqual(app_identity.MOD_SHA256, "b6fe873fd1fec09870a6081ded7135b8ffcbe5cc773b2e254c81d33e5932e22e")
-        self.assertEqual((app_identity.LABEL_OFFSET, app_identity.ORIGINAL_LABEL, app_identity.MOD_LABEL),
-                         (8931164, b"UTILITY\0", b"MOD LAB\0"))
         self.assertEqual(app_identity.FIRMWARE, "1.60")
         self.assertEqual(profile["firmware"]["upd_sha256"],
                          "ff1cc60c4b6e2a3793196486826e78eb223e2f86cd95b5c968f6fca3ade537a4")
@@ -81,13 +78,13 @@ class LegacyProfileTests(unittest.TestCase):
     @unittest.skip("legacy build files are not part of the public repository")
     def test_guest_images_carry_the_profile_and_recipe(self):
         ignore = (TOOLS / ".dockerignore").read_text()
-        for name in ("profiles.py", "recipes.py", "profiles/sp16-1.60.json", "mods/utility-label.json"):
+        for name in ("profiles.py", "recipes.py", "profiles/sp16-1.60.json"):
             self.assertIn(name, native.GUEST_FILES)
             self.assertTrue((TOOLS / name).is_file())
-        for allowed in ("!profiles.py", "!recipes.py", "!profiles/*.json", "!mods/*.json"):
+        for allowed in ("!profiles.py", "!recipes.py", "!profiles/*.json"):
             self.assertIn(allowed, ignore)
         legacy = (TOOLS / "Dockerfile.native-guest").read_text()
-        for line in ("COPY profiles.py", "COPY recipes.py", "COPY profiles /opt/sp16/profiles", "COPY mods /opt/sp16/mods"):
+        for line in ("COPY profiles.py", "COPY recipes.py", "COPY profiles /opt/sp16/profiles"):
             self.assertIn(line, legacy)
         base = (TOOLS / "Dockerfile.native-base").read_text()
         for line in ("COPY profiles.py", "COPY recipes.py", "COPY profiles /opt/sp16/profiles"):
@@ -339,17 +336,9 @@ class RecipeTests(unittest.TestCase):
                       {"offset": 0, "original_hex": "61", "replacement_hex": "62", "pattern_hex": "61"}):
             with self.assertRaises(ValueError):
                 recipes.validate(self.recipe({"/root/x": dict(spec, patches=[patch])}))
-        for bad in ("../utility-label", "Utility"):
+        for bad_id in ("../label", "Label"):
             with self.assertRaises(ValueError):
-                recipes.load(bad)
-
-    def test_utility_label_recipe_matches_the_legacy_patch(self):
-        recipe = recipes.load("utility-label")
-        spec = recipe["files"]["/root/pdj/EP085_Main_R"]
-        self.assertEqual(recipe["base_profile"], profiles.LEGACY_PROFILE)
-        self.assertEqual(spec["base_sha256"], profiles.legacy()["firmware"]["app_sha256"])
-        self.assertEqual(spec["patches"][0]["expected_count"], 1)
-        self.assertEqual(len(recipes.recipe_sha256(recipe)), 64)
+                recipes.validate(dict(self.recipe({"/root/x": spec}), id=bad_id))
 
 
 if __name__ == "__main__":

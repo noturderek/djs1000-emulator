@@ -245,15 +245,17 @@ To turn an unverified version into a verified one, see [docs/architecture.md](do
 
 ## Load a modified firmware
 
-There are three ways, described in [docs/modding.md](docs/modding.md):
+The repository ships the tooling to develop and run mods, not any mod. You write your own (or use a mod archive
+someone shared) against firmware you imported. There are three ways, described in [docs/modding.md](docs/modding.md):
 
 1. **Recipes**: small JSON patch files (base hash, offset or byte pattern, replacement, expected result hash),
-   applied when the app starts. `emulator/mods/utility-label.json` renames one HOME screen label as an example.
+   applied when the app starts.
 2. **Developer overlay**: a folder of replaced files, recipes and preload libraries shared into a running emulator;
-   edit, then restart only the firmware's app in about ten seconds.
+   edit, then restart only the firmware's app (about 0.2 s; the screen settles a few seconds later).
 3. **Repacked update**: `./sp16 mod package --upd` builds a modified update from a verified base and your recipes.
-   It carries an `SP16MODLAB-<version>` marker, so it can never pass for an official update, and the importer accepts
-   it only if it can rebuild it byte for byte from your verified base. Repacked updates are for this emulator only:
+   It carries an `SP16MODLAB-<version>` marker, so it can never pass for an official update. The importer rebuilds it
+   from your verified base: an identical rebuild is verified, anything else runs as unverified with the reason
+   recorded. Repacked updates are for this emulator only:
    never flash them to hardware and never distribute them (they contain the vendor's firmware).
 
 ## Hardware conformance suite
@@ -332,7 +334,7 @@ such as an external drive's name, are kept.
 ```text
 sp16, Makefile    the command line (`./sp16 help`) and the ready-made build configurations (`make help`)
 emulator/            sp16emu.py (the command), build tool, firmware importer, Linux guest base, hardware shim, panel model, macOS app,
-                     compatibility profiles, example recipe, developer tools, hardware suite, unit tests
+                     compatibility profiles, developer tools, hardware suite, unit tests
 docs/                Python CLI/setup, architecture, modding guide, hardware suite, profile reference
 .agents/skills/      agent skills: sp16-bootstrap (fresh clone to a running emulator) and sp16-emulator-setup (setup details, mods, troubleshooting)
 ```

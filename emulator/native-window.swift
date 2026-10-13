@@ -107,7 +107,6 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         if let name = config.firmwareName {
             return "SP-16 Emulator — \(name)" + (unverifiedNotice == nil ? "" : " (unverified)")
         }
-        if config.variant == "utility-label" { return "SP16 Emulator — MOD LAB experiment" }
         if config.profile == "fullpanel" { return "SP16 Emulator — Full Panel (experimental)" }
         if config.profile == "testmode" { return "SP16 Emulator — OEM factory test (research)" }
         return "SP16 Emulator — OEM 1.60"

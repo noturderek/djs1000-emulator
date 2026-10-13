@@ -198,9 +198,6 @@ class BundleIdentityTests(unittest.TestCase):
         full = self.plist_for(profile="fullpanel")
         self.assertEqual(full["CFBundleIdentifier"], "local.sp16-emulator.legacy.fullpanel")
         self.assertEqual(full["CFBundleName"], "SP16 Emulator Full Panel")
-        mod = self.plist_for(variant="utility-label", profile="fullpanel")
-        self.assertEqual(mod["CFBundleIdentifier"],
-                         "local.sp16-emulator.legacy.utility-label.fullpanel")
 
     @unittest.skip("legacy build files are not part of the public repository")
     def test_suffix_appends_to_bundle_id_and_name(self):
@@ -278,7 +275,7 @@ class BundleIdentityTests(unittest.TestCase):
             native.main()
         self.assertTrue(build.call_args.kwargs["decoupled"])
         self.assertEqual(build.call_args.kwargs["profile"], "fullpanel")
-        for extra in (["--rootfs", "r"], ["--mod", "utility-label"], ["--app-arg", "testmode"], ["--no-persistence"],
+        for extra in (["--rootfs", "r"], ["--app-arg", "testmode"], ["--no-persistence"],
                       ["--profile", "testmode"]):
             stderr = io.StringIO()
             with mock.patch.object(native, "LEGACY_AVAILABLE", False), mock.patch.object(native, "build") as build, \

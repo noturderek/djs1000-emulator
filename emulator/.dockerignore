@@ -17,7 +17,6 @@
 !profiles.py
 !recipes.py
 !profiles/*.json
-!mods/*.json
 !prepare.py
 !guest-firmware.py
 !Dockerfile.native-base

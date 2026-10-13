@@ -18,7 +18,7 @@ import tempfile
 import urllib.request
 
 from prepare import EXPECTED_APP, REPO, guest_file, private_path
-from app_identity import FIRMWARE, identity, patch_utility, validate_identity
+from app_identity import FIRMWARE, identity, validate_identity
 import diagnostics
 import firmware
 import profiles
@@ -30,7 +30,7 @@ APP_NAME = "SP16 Emulator.app"
 GUEST_FILES = ("Dockerfile.native-guest", "Dockerfile", "hardware_stub.c", "guest-init.sh",
                "guest-bridge.py", "pack-guest.sh", "protocol.py", "panel.py", "panel_map.py", "input.py",
                "enter.py", "app_identity.py", "profiles.py", "recipes.py", "profiles/sp16-1.60.json",
-               "profiles/products/sp16.json", "mods/utility-label.json")
+               "profiles/products/sp16.json")
 BASE_GUEST_FILES = ("Dockerfile.native-base", "hardware_stub.c", "guest-init.sh", "guest-bridge.py", "pack-guest.sh",
                     "protocol.py", "panel.py", "panel_map.py", "input.py", "enter.py", "profiles.py", "recipes.py",
                     "prepare.py", "guest-firmware.py", "profiles/sp16-1.60.json",
@@ -57,7 +57,7 @@ FWLIB_FILES = ("firmware.py", "profiles.py", "recipes.py", "fwpack.py", "diagnos
 # repository has. Without them (the public copy) the CLI offers decoupled builds only and hides the legacy options.
 LEGACY_AVAILABLE = (TOOLS / "Dockerfile.native-guest").is_file()
 LEGACY_REFUSAL = ("this copy builds firmware-free apps only: import firmware with `native.py firmware import` "
-                  "instead of --rootfs, --mod, --app-arg, --no-persistence or --profile testmode")
+                  "instead of --rootfs, --app-arg, --no-persistence or --profile testmode")
 
 # Optional per-task suffix (e.g. a task id) so a dev build gets its own bundle ID and quitting one app by ID
 # never quits another. Without it the bundle IDs are unchanged.
@@ -410,9 +410,6 @@ def bundle(output, qemu, guest, variant="stock", profile=None, research=False, a
     if decoupled:
         info.update(CFBundleIdentifier=DECOUPLED_BUNDLE_ID, CFBundleName=DECOUPLED_PRODUCT,
                     CFBundleExecutable=DECOUPLED_EXECUTABLE, CFBundleIconFile=DECOUPLED_ICON_FILE)
-    if variant != "stock":
-        info["CFBundleIdentifier"] += "." + variant
-        info["CFBundleName"] += " MOD LAB"
     if profile:
         info["CFBundleIdentifier"] += "." + profile
         info["CFBundleName"] += "" if decoupled else {"fullpanel": " Full Panel"}.get(profile, " Factory Test")
@@ -480,7 +477,7 @@ def base_boot(output):
                     "initrd_sha256": assets["hashes"][str(guest / "guest.cpio.gz")]}
 
 
-def build(root, output, *, mod=None, reuse_qemu_from=None, profile=None, research=False, app_arg=None,
+def build(root, output, *, reuse_qemu_from=None, profile=None, research=False, app_arg=None,
           pad_calibration=None, uncalibrated=False, trace=None, bundle_suffix=None, no_persistence=False, audio=None,
           audio_device=None, decoupled=False, library=None, allow_unverified=False):
     bundle_suffix = validate_bundle_suffix(bundle_suffix)
@@ -488,7 +485,7 @@ def build(root, output, *, mod=None, reuse_qemu_from=None, profile=None, researc
         return build_decoupled(output, reuse_qemu_from=reuse_qemu_from, profile=profile, research=research,
                                pad_calibration=pad_calibration, uncalibrated=uncalibrated, trace=trace,
                                bundle_suffix=bundle_suffix, audio=audio, audio_device=audio_device, library=library,
-                               allow_unverified=allow_unverified, root=root, mod=mod, app_arg=app_arg,
+                               allow_unverified=allow_unverified, root=root, app_arg=app_arg,
                                no_persistence=no_persistence)
     if allow_unverified or library:
         raise ValueError("--allow-unverified and --library apply to decoupled builds only")
@@ -499,23 +496,18 @@ def build(root, output, *, mod=None, reuse_qemu_from=None, profile=None, researc
     persistent = resolve_persistence(profile, no_persistence)
     if trace and not research:
         raise ValueError("--trace is research-only; add --research")
-    if trace and mod:
-        raise ValueError("--trace is not allowed on --mod builds")
     if audio and not (research or profile == "fullpanel"):
         raise ValueError("--audio is for research or fullpanel builds only")
     if audio_device is not None and audio not in ("coreaudio", "both"):
         raise ValueError("--audio-device needs --audio coreaudio or both")
     if audio_device is not None and (not audio_device or len(audio_device) > 512 or any(ord(c) < 32 for c in audio_device)):
         raise ValueError("--audio-device must be a device UID (or offline:<wav>[:rate[:ppm[:block]]])")
-    if audio and mod:
-        raise ValueError("--audio is not allowed on --mod builds")
     pad_calibration = resolve_pad_calibration(profile, pad_calibration, uncalibrated)
     host_check()
     root = private_path(root)
     if digest(guest_file(root, "/root/pdj/EP085_Main_R")) != EXPECTED_APP:
         raise ValueError("build requires the validated unmodified SP-16 1.60 application")
-    # Experimental builds must have a fresh destination, preserving stock and prior experiments.
-    output = private_path(output, fresh=bool(mod) or not Path(output).exists())
+    output = private_path(output, fresh=not Path(output).exists())
     if profile and (output / "assets.json").exists():
         # An experimental profile may be rebuilt in place; never overwrite another build.
         if json.loads((output / "assets.json").read_text()).get("profile") != profile:
@@ -529,13 +521,7 @@ def build(root, output, *, mod=None, reuse_qemu_from=None, profile=None, researc
         calibration.write_text(pad_calibration_xml(pad_calibration))
         calibration.chmod(0o600)
         extra_files.append((calibration, PAD_CALIBRATION_PATH))
-    application = identity(mod or "stock")
-    patched_app = None
-    if mod:
-        patched_app = output / "EP085_Main_R"
-        patched_app.write_bytes(patch_utility(guest_file(root, "/root/pdj/EP085_Main_R").read_bytes()))
-        patched_app.chmod(0o700)
-        (output / "patch-manifest.json").write_text(json.dumps(application, indent=2) + "\n")
+    application = identity()
     if reuse_qemu_from:
         previous = validated_assets(private_path(reuse_qemu_from))
         if previous.get("qemu_version") != QEMU_VERSION:
@@ -547,7 +533,7 @@ def build(root, output, *, mod=None, reuse_qemu_from=None, profile=None, researc
             raise ValueError("reused QEMU copy differs")
     else:
         qemu = build_qemu(output)
-    guest = build_guest(root, output, application, patched_app, extra_files)
+    guest = build_guest(root, output, application, extra_files=extra_files)
     app = bundle(output, qemu, guest, application["variant"], profile, research, app_arg, trace, bundle_suffix,
                  persistent, audio, audio_device)
     assets = {"firmware": FIRMWARE, "app_sha256": application["app_sha256"],
@@ -567,11 +553,11 @@ def build(root, output, *, mod=None, reuse_qemu_from=None, profile=None, researc
 
 def build_decoupled(output, *, reuse_qemu_from=None, profile=None, research=False, pad_calibration=None,
                     uncalibrated=False, trace=None, bundle_suffix=None, audio=None, audio_device=None, library=None,
-                    allow_unverified=False, root=None, mod=None, app_arg=None, no_persistence=False):
+                    allow_unverified=False, root=None, app_arg=None, no_persistence=False):
     """Decoupled build (docs/architecture.md, M3): the app bundle, QEMU and a guest base image with no OEM files. Firmware comes
     from the per-build library (native.py firmware import) and is attached at launch as a read-only disk."""
-    if root is not None or mod or app_arg:
-        raise ValueError("a decoupled build takes no --rootfs, --mod or --app-arg (firmware is imported separately)")
+    if root is not None or app_arg:
+        raise ValueError("a decoupled build takes no --rootfs or --app-arg (firmware is imported separately)")
     if profile != "fullpanel":
         raise ValueError("--decoupled currently supports --profile fullpanel")
     if no_persistence:
@@ -774,7 +760,6 @@ def main():
     legacy_help = (lambda text: text) if LEGACY_AVAILABLE else (lambda text: argparse.SUPPRESS)
     builder.add_argument("--rootfs", help=legacy_help("prepared OEM rootfs (legacy builds); omit with --decoupled"))
     builder.add_argument("--output", required=True)
-    builder.add_argument("--mod", choices=["utility-label"], help=legacy_help("apply the verified UTILITY → MOD LAB patch"))
     builder.add_argument("--reuse-qemu-from", help="copy hash-verified QEMU from an existing private build")
     builder.add_argument("--profile", choices=PROFILES, default=None if LEGACY_AVAILABLE else "fullpanel",
                          help="separate experimental app profile/bundle ID" if LEGACY_AVAILABLE
@@ -851,11 +836,11 @@ def main():
     diag.add_argument("--key-file", help="also prove this key file's key is absent from the zip (never printed)")
     args = parser.parse_args()
     if args.command == "build" and not LEGACY_AVAILABLE and (
-            args.rootfs or args.mod or args.app_arg or args.no_persistence or args.profile != "fullpanel"):
+            args.rootfs or args.app_arg or args.no_persistence or args.profile != "fullpanel"):
         parser.exit(1, f"native emulator failed: {LEGACY_REFUSAL}\n")
     try:
         if args.command == "build":
-            build(args.rootfs, args.output, mod=args.mod, reuse_qemu_from=args.reuse_qemu_from,
+            build(args.rootfs, args.output, reuse_qemu_from=args.reuse_qemu_from,
                   profile=args.profile, research=args.research, app_arg=args.app_arg,
                   pad_calibration=args.pad_calibration_value, uncalibrated=args.uncalibrated, trace=args.trace,
                   bundle_suffix=args.bundle_suffix, no_persistence=args.no_persistence, audio=args.audio,

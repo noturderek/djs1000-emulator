@@ -390,9 +390,8 @@ class OtherCommandTests(CliCase):
         argv, _ = self.argv("mod", "package", "--mod", "m", "--out", "o", "--upd", "--key-file", "k")
         self.assertEqual(argv[2:], ["package", "--output", str(dev), "--mod", "m", "--out", "o", "--upd",
                                     "--key-file", "k"])
-        argv, _ = self.argv("mod", "new", "--mod", "m", "--id", "x", "--from-recipe", "utility-label")
-        self.assertEqual(argv, [PYTHON, self.tool("fwdev.py"), "new", "--mod", "m", "--id", "x", "--from-recipe",
-                                "utility-label"])
+        argv, _ = self.argv("mod", "new", "--mod", "m", "--id", "x")
+        self.assertEqual(argv, [PYTHON, self.tool("fwdev.py"), "new", "--mod", "m", "--id", "x"])
         argv, _ = self.argv("mod", "sdk", "--mod", "m")
         self.assertEqual(argv, [PYTHON, self.tool("fwdev.py"), "sdk", "--mod", "m"])
         with self.assertRaises(cli.UsageError):

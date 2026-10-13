@@ -361,7 +361,7 @@ class PadCalibrationTests(unittest.TestCase):
         self.assertEqual(native.resolve_pad_calibration("fullpanel", 300), 300)
         self.assertIsNone(native.resolve_pad_calibration("fullpanel", uncalibrated=True))
         self.assertIsNone(native.resolve_pad_calibration("testmode"))
-        self.assertIsNone(native.resolve_pad_calibration(None))  # stock and MOD LAB builds stay untouched
+        self.assertIsNone(native.resolve_pad_calibration(None))  # legacy builds stay untouched
         self.assertNotIn("padcal", native.PROFILES)
 
     def test_invalid_combinations_are_rejected(self):

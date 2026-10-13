@@ -9,7 +9,7 @@ A mod is a folder:
   preload/     *.so ARM preload libraries, loaded after the hardware shim
 
 Commands:
-  new      scaffold a mod folder (optionally from a built-in recipe such as utility-label)
+  new      scaffold an empty mod folder (mod.json, empty recipes/ and files/, an example preload source)
   check    preflight against the selected firmware's manifest, without booting
   run      start the decoupled build with the mod as a read-only 9p overlay, or restart only the OEM app in the
            running session so a changed recipe or file is visible in seconds
@@ -87,7 +87,7 @@ def mod_files(folder):
 
 # ------------------------------------------------------------------------------------------------------------- new
 
-def new(folder, mod_id, from_recipe=None, base_profile=profiles.LEGACY_PROFILE):
+def new(folder, mod_id, base_profile=profiles.LEGACY_PROFILE):
     folder = Path(folder)
     if folder.exists() and any(folder.iterdir()):
         raise ModError(f"{folder} exists and is not empty")
@@ -97,10 +97,6 @@ def new(folder, mod_id, from_recipe=None, base_profile=profiles.LEGACY_PROFILE):
     for sub in ("recipes", "files", "src", "preload"):
         (folder / sub).mkdir(parents=True, exist_ok=True, mode=0o700)
     meta = {"schema": 1, "id": mod_id, "base_profile": base_profile, "description": ""}
-    if from_recipe:
-        recipe = recipes.load(from_recipe)
-        meta["description"] = recipe.get("description", "")
-        (folder / "recipes" / f"{recipe['id']}.json").write_text(json.dumps(recipe, indent=2) + "\n")
     (folder / "mod.json").write_text(json.dumps(meta, indent=2) + "\n")
     (folder / "src" / f"{mod_id}.c").write_text(EXAMPLE_PRELOAD.replace("MOD_ID", mod_id))
     return {"status": "mod_created", "folder": str(folder.resolve()), "id": mod_id}
@@ -442,7 +438,6 @@ def main():
     command = commands.add_parser("new")
     command.add_argument("--mod", required=True)
     command.add_argument("--id", required=True)
-    command.add_argument("--from-recipe")
     for name in ("check", "run", "test", "package"):
         command = commands.add_parser(name)
         command.add_argument("--output", required=True, help="decoupled research build")
@@ -463,7 +458,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "new":
-            result = new(args.mod, args.id, args.from_recipe)
+            result = new(args.mod, args.id)
         elif args.command == "sdk":
             result = sdk(args.mod)
         else:

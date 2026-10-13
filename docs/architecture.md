@@ -35,7 +35,7 @@ profile ([profiles.md](profiles.md)).
 | macOS app | `native-window.swift`, `panel-view.swift`, `panel-layout.json`, `firmware-window.swift`, `firmware-library.swift`, `app-diagnostics.swift`, `data-image.swift`, `audio-sink.swift`, `audio-output.swift`, `make-icon.swift` |
 | Developer tools | `fwdev.py`, `sessionctl.py`, `e2e-screen.py`, `pcm-tap-analyze.py`, `arm-contracts.sh` |
 | Hardware conformance suite | `hwsuite.py` |
-| Data | `profiles/*.json`, `profiles/products/sp16.json`, `mods/utility-label.json` |
+| Data | `profiles/*.json`, `profiles/products/sp16.json` |
 
 ## Boot
 
@@ -85,7 +85,7 @@ collect diagnostics, once per finding. Help > Collect Diagnostics… (and `nativ
 |---|---|
 | D1 | The user supplies the key (a key file, or the official GPL source archive it comes from). Nothing is bundled or downloaded. The key is used for the import boot only. |
 | D2 | Any update encrypted with the correct key is accepted and runs. A version with a verified profile runs as verified; any other runs on the reference profile, marked unverified (title, library status, a one-time notice, console `SP16_FIRMWARE_UNVERIFIED`). `--allow-unverified` is accepted and does nothing. |
-| D3 | The developer workflow also produces repacked updates, for this emulator only. They carry an `SP16MODLAB-<version>` marker and are verified when the importer can rebuild them byte for byte from a verified base and the declared recipes, and run as unverified otherwise. |
+| D3 | The developer workflow also produces repacked updates, for this emulator only. They carry an `SP16MODLAB-<version>` marker and are verified when the importer can rebuild them byte for byte from a verified base and the declared recipes, and run as unverified otherwise. The repository ships the tooling, never a mod. |
 | D4 | Neutral product name and bundle id, no vendor logos, source-only distribution. |
 
 Code comments refer to the stages in which the design was built: M1 firmware registry and profiles, M2 importer,
