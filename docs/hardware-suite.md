@@ -40,11 +40,11 @@ Only a full-tier run can mark a profile verified.
 The suite needs a research build that records audio to files (it never plays sound):
 
 ```sh
-./sp16emu build --name sp16-dev --research --audio file --bundle-suffix dev     # or: make build-dev
-./sp16emu firmware import --update <your .UPD> --gpl-archive <part 1> <part 2>   # once; every build shares the library
+./sp16 build --name sp16-dev --research --audio file --bundle-suffix dev     # or: make build-dev
+./sp16 firmware import --update <your .UPD> --gpl-archive <part 1> <part 2>   # once; every build shares the library
 # the control build: the same build without pad calibration, sharing the firmware library (check HW-24)
-./sp16emu build --name sp16-dev-uncal --research --audio file --uncalibrated --bundle-suffix dev-uncal   # or: make build-control
-./sp16emu hwsuite --profile 1.60 --firmware <library id> --smoke      # or --tier core, or no tier for full
+./sp16 build --name sp16-dev-uncal --research --audio file --uncalibrated --bundle-suffix dev-uncal   # or: make build-control
+./sp16 hwsuite --profile 1.60 --firmware <library id> --smoke      # or --tier core, or no tier for full
 # --build / --control name other builds; without --profile the version of the selected firmware is used
 ```
 

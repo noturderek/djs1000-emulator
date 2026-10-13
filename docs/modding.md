@@ -12,8 +12,8 @@ The developer loop needs a build with the control socket:
 
 ```sh
 mkdir -p -m 700 private           # git-ignored and owner-only (build/ is created for you)
-./sp16emu build --name sp16-dev --research --audio file --bundle-suffix dev     # or: make build-dev
-./sp16emu firmware import --update <your .UPD> --gpl-archive <part 1> <part 2>   # skip if already imported
+./sp16 build --name sp16-dev --research --audio file --bundle-suffix dev     # or: make build-dev
+./sp16 firmware import --update <your .UPD> --gpl-archive <part 1> <part 2>   # skip if already imported
 ```
 
 `--bundle-suffix dev` gives this build its own bundle id, so it can run next to your normal build.
@@ -32,7 +32,7 @@ my-mod/
 Create one, optionally from the bundled example:
 
 ```sh
-./sp16emu mod new --mod private/my-mod --id my-mod --from-recipe utility-label
+./sp16 mod new --mod private/my-mod --id my-mod --from-recipe utility-label
 ```
 
 ## Recipes
@@ -64,17 +64,17 @@ wrong base hash is refused before anything changes; the firmware then starts unc
 
 ## The loop
 
-`./sp16emu mod` (it runs `emulator/fwdev.py`) works on the library's selected firmware (`./sp16emu firmware list` shows it),
+`./sp16 mod` (it runs `emulator/fwdev.py`) works on the library's selected firmware (`./sp16 firmware list` shows it),
 or on the one you name with `--firmware <id>`. A recipe applies only to the firmware it names: the `utility-label`
 example needs 1.60, so select it first with
-`./sp16emu firmware select --id <1.60 id>`.
+`./sp16 firmware select --id <1.60 id>`.
 
 ```sh
-./sp16emu mod check --mod private/my-mod   # preflight, no boot
-./sp16emu mod run   --mod private/my-mod   # launch with the overlay
+./sp16 mod check --mod private/my-mod   # preflight, no boot
+./sp16 mod run   --mod private/my-mod   # launch with the overlay
 # edit a recipe or a file, then run again: only the firmware's app restarts (about 0.2 s), and the screen settles
 # a few seconds later
-./sp16emu mod test  --mod private/my-mod   # check + run + verify
+./sp16 mod test  --mod private/my-mod   # check + run + verify
 ```
 
 `fwdev.py test` confirms the guest applied the overlay and the declared result hash, that lamps are live and audio
@@ -85,14 +85,14 @@ counters move, and optionally that an LCD region changed against a stock baselin
 
 - `files/<guest path>` replaces or adds a file in the overlay. `fwdev.py check` refuses unmodified copies of firmware
   files: put only your own content there.
-- `src/*.c` are built by `./sp16emu mod sdk --mod private/my-mod` into `preload/*.so` with the ARM cross
+- `src/*.c` are built by `./sp16 mod sdk --mod private/my-mod` into `preload/*.so` with the ARM cross
   toolchain in a throwaway Docker container, with the same flags as the hardware shim. The library binds to the
   firmware's own C library at run time and is loaded after the shim.
 
 ## Package a mod
 
 ```sh
-./sp16emu mod package --mod private/my-mod --out private/my-mod.tar.gz
+./sp16 mod package --mod private/my-mod --out private/my-mod.tar.gz
 ```
 
 The archive holds your recipes, sources and libraries with a manifest; it refuses unmodified firmware files.
@@ -100,9 +100,9 @@ The archive holds your recipes, sources and libraries with a manifest; it refuse
 ## Repacked updates (emulator only)
 
 ```sh
-./sp16emu mod package --upd --mod private/my-mod \
+./sp16 mod package --upd --mod private/my-mod \
   --gpl-archive <part 1> <part 2> --out private/my-mod.UPD
-./sp16emu firmware import --update private/my-mod.UPD --gpl-archive <part 1> <part 2>
+./sp16 firmware import --update private/my-mod.UPD --gpl-archive <part 1> <part 2>
 ```
 
 The repacked update is built from the verified base in your library and the mod's recipes, deterministically. It

@@ -6,19 +6,19 @@ description: Guide a user through setting up the SP16 Emulator on their Mac - ch
 # SP16 Emulator setup
 
 To take a user from a fresh clone to a running emulator with audio, firmware, samples and demo projects, use the
-[sp16-bootstrap](../sp16-bootstrap/SKILL.md) skill (`./sp16emu bootstrap`); this skill covers the details after that:
+[sp16-bootstrap](../sp16-bootstrap/SKILL.md) skill (`./sp16 bootstrap`); this skill covers the details after that:
 mods, the hardware suite, diagnostics and troubleshooting.
 
 Work from the repository root. The user's README is the reference; this skill adds the order, the checks and the
-rules. Everything goes through `./sp16emu` (`./sp16emu help` lists every command; `./sp16emu help <command>` shows its
+rules. Everything goes through `./sp16` (`./sp16 help` lists every command; `./sp16 help <command>` shows its
 options; `make help` lists the ready-made configurations). Commands assume the default build `build/sp16`; add
-`--name <name>` for another. `./sp16emu --dry-run <command>` prints the exact tool command without running it.
+`--name <name>` for another. `./sp16 --dry-run <command>` prints the exact tool command without running it.
 
 ## Rules (always)
 
 - **Firmware and the GPL archive are the user's to download.** Give them the two official links from the README and
   let them download. Download for them only after they explicitly confirm, naming the file and source first. The
-  tool's own `./sp16emu firmware download --version 1.60 --info` (then `--yes` after their yes) fetches only the
+  tool's own `./sp16 firmware download --version 1.60 --info` (then `--yes` after their yes) fetches only the
   official firmware update from the official server; the GPL archive and the key are never downloaded by it.
 - **Never print, copy, log or commit key bytes.** Pass key files and archives by path only. Do not `cat`, `xxd`,
   `strings` or hash-print a key file. Do not describe how the update is encrypted.
@@ -26,7 +26,7 @@ options; `make help` lists the ready-made configurations). Commands assume the d
   in `build/` or `private/` (both git-ignored; create with `mkdir -m 700`).
 - **Never flash hardware**, run a firmware's own scripts, or distribute a repacked update.
 - **Audio:** when you launch to test, use builds made with `--audio file` (silent, records WAVs; `make build-record`).
-  Use `--audio coreaudio` only when the user wants to hear it; `./sp16emu audio devices` lists output devices.
+  Use `--audio coreaudio` only when the user wants to hear it; `./sp16 audio devices` lists output devices.
 - **Stopping:** stop an emulator only by its exact process id, found from its build path
   (`ps -axo pid,command | grep -F "<build dir>/"`), then confirm its `qemu-system-aarch64` child exits. Never quit by
   bundle id, never `pkill` or `killall`. Each running emulator uses about 3 CPU cores; keep at most three.
@@ -34,7 +34,7 @@ options; `make help` lists the ready-made configurations). Commands assume the d
 ## 1. Check prerequisites
 
 ```sh
-./sp16emu doctor
+./sp16 doctor
 ```
 
 It checks Apple silicon and macOS 13+, the Xcode Command Line Tools (`swiftc`, `codesign`, `/usr/bin/python3`), a
@@ -46,13 +46,13 @@ line and stop until they are fixed. Typical fixes: `xcode-select --install`,
 ## 2. Build
 
 ```sh
-./sp16emu build --audio file          # or: make build-record  (build/sp16-record, silent, records WAVs)
+./sp16 build --audio file          # or: make build-record  (build/sp16-record, silent, records WAVs)
 ```
 
-`./sp16emu` creates `build/` owner-only. The first build takes a few minutes (QEMU from source, then the Docker guest
+`./sp16` creates `build/` owner-only. The first build takes a few minutes (QEMU from source, then the Docker guest
 image). On failure read the log the error names in `build/<name>/` (`qemu-configure.log`, `qemu-build.log`,
 `guest-build.log`, `swift-build.log`). Later builds reuse QEMU from an existing build automatically and share one
-firmware library (`build/library`); `./sp16emu builds` lists them. An existing build is never overwritten:
+firmware library (`build/library`); `./sp16 builds` lists them. An existing build is never overwritten:
 `--rebuild` rebuilds it in place and keeps the firmware library and data images.
 
 ## 3. Firmware: the user downloads it
@@ -67,12 +67,12 @@ Ask where they saved them. Check the paths exist (`ls -l`), nothing more.
 ## 4. Import
 
 ```sh
-./sp16emu firmware import --update <path to .UPD> --gpl-archive <part 1 zip> <part 2 zip>   # or: --key-file <key file>
+./sp16 firmware import --update <path to .UPD> --gpl-archive <part 1 zip> <part 2 zip>   # or: --key-file <key file>
 # or: make import UPD=<.UPD> GPL="<part 1 zip> <part 2 zip>"   (KEY=<key file> instead of GPL)
 ```
 
 Read the JSON result: `firmware_imported` with an id and a report, or `firmware_refused` with the reason. Then
-`./sp16emu firmware list`. Typical refusals:
+`./sp16 firmware list`. Typical refusals:
 
 | Reason | Meaning |
 |---|---|
@@ -88,7 +88,7 @@ unverified (title "(unverified)", library status, a one-time notice); see sectio
 ## 5. Run
 
 ```sh
-./sp16emu run                     # or: make run;  --firmware <id>, --usb-image <file>, --ephemeral
+./sp16 run                     # or: make run;  --firmware <id>, --usb-image <file>, --ephemeral
 ```
 
 Confirm it booted: the newest `build/sp16/sessions/native-*/console.txt` contains `SP16_NATIVE_READY`. The window
@@ -96,22 +96,22 @@ shows the panel; the LCD settles on the home screen after about 10 seconds.
 
 ## 5a. Samples on the virtual USB stick
 
-The sampler loads samples from a virtual USB stick: `build/stick.img`, a FAT32 image that `./sp16emu run` attaches
+The sampler loads samples from a virtual USB stick: `build/stick.img`, a FAT32 image that `./sp16 run` attaches
 when it exists (`--no-usb` skips it, `--usb-image <file>` uses another). Prepare it on the Mac, with the emulator
 stopped:
 
 ```sh
-./sp16emu usb add <sample files>          # creates and formats build/stick.img the first time; --to <folder> for a subfolder
-./sp16emu usb ls                          # what is on the stick
+./sp16 usb add <sample files>          # creates and formats build/stick.img the first time; --to <folder> for a subfolder
+./sp16 usb ls                          # what is on the stick
 # or: make usb-add FILES="<sample files>"
 ```
 
 - Format: PCM 16- or 24-bit 44.1 kHz WAV (mono or stereo). Other WAV/AIFF files get one warning per kind, are copied, and are never converted;
   non-audio files are skipped unless `--any`. Samples go to `PIONEER DJ SAMPLER/Samples` on the stick; project files
-  go with `./sp16emu usb add <files> --dest Projects` (any file type; the path must stay under `PIONEER DJ SAMPLER`).
+  go with `./sp16 usb add <files> --dest Projects` (any file type; the path must stay under `PIONEER DJ SAMPLER`).
 - **Never mount the stick while an emulator runs.** The commands refuse when a running emulator names the image (they
   print its process ids; stop an emulator only by those exact ids) or when the Mac already has the image attached
-  (`./sp16emu usb unmount`). Do not work around the refusal with `hdiutil` or Finder.
+  (`./sp16 usb unmount`). Do not work around the refusal with `hdiutil` or Finder.
 - `usb create --force` replaces an existing stick and deletes its content: ask the user first.
 - Mount points live in `build/.usb-mnt` (removed again); `usb mount` prints the folder if the user wants Finder. When the clone is inside Downloads, Desktop, Documents or iCloud Drive, macOS refuses mounts there, so they go to `~/Library/Caches/sp16emu/usb-mnt` instead (the image is fine where it is).
 
@@ -121,13 +121,13 @@ Follow `docs/modding.md`. Short version, with a research build:
 
 ```sh
 make build-dev                    # build/sp16-dev: research socket, WAV recording; shares build/library
-./sp16emu firmware select --id <1.60 id>      # the example targets 1.60 (import first if the library is empty)
-./sp16emu mod new  --mod private/my-mod --id my-mod --from-recipe utility-label
-./sp16emu mod test --mod private/my-mod
+./sp16 firmware select --id <1.60 id>      # the example targets 1.60 (import first if the library is empty)
+./sp16 mod new  --mod private/my-mod --id my-mod --from-recipe utility-label
+./sp16 mod test --mod private/my-mod
 ```
 
 `utility-label` makes the HOME screen's Utility tile read MOD LAB on 1.60. For a repacked update use
-`./sp16emu mod package --upd ... --out private/<name>.UPD` and import it; a tampered copy imports as unverified with the reason recorded.
+`./sp16 mod package --upd ... --out private/<name>.UPD` and import it; a tampered copy imports as unverified with the reason recorded.
 
 ## 7. Hardware suite
 
@@ -137,7 +137,7 @@ and `tesseract`.
 
 ```sh
 make build-dev build-control      # build/sp16-dev and build/sp16-dev-uncal
-./sp16emu hwsuite --smoke         # --profile <version>, --firmware <library id>, --tier core|full
+./sp16 hwsuite --smoke         # --profile <version>, --firmware <library id>, --tier core|full
 ```
 
 Exit 0 pass, 1 fail, 2 blocked (missing profile data), 3 environment, 4 session lost. Only `--tier full` with every
@@ -149,7 +149,7 @@ check passing can mark a profile verified (`--mark-verified`). Run it on an idle
 When the emulator crashes, will not boot or misbehaves, collect one zip for the bug report:
 
 ```sh
-./sp16emu diagnostics             # --sessions N, --include-audio, --out <zip>   (or: make diagnostics)
+./sp16 diagnostics             # --sessions N, --include-audio, --out <zip>   (or: make diagnostics)
 ```
 
 The app does the same from Help > Collect Diagnostics…, and offers it on the next start after an unclean exit. Read

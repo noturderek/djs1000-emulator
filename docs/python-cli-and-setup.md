@@ -1,0 +1,57 @@
+---
+title: Python CLI and Setup
+description: How the SP-16 command line launcher is laid out and how to install and use it.
+type: reference
+status: complete
+created: 2026-10-13
+tags:
+  - cli
+  - setup
+  - python
+  - sp16
+---
+
+# Python CLI and Setup
+
+## Command layout
+
+Run the emulator CLI from a checkout with `./sp16`. The root `sp16` entrypoint is a symlink to the Python launcher at
+`scripts/sp16emu`. The launcher locates the checkout and imports the command implementation from
+`emulator/sp16emu.py`, so it works when invoked through the root link or through `make install`.
+
+To make `sp16` available as a command in your shell, install a link into `~/.local/bin`:
+
+```sh
+make install
+```
+
+Add `~/.local/bin` to `PATH` if it is not already there. Use `make uninstall` to remove only the link created by this
+checkout. Set `PREFIX=/some/path` with either target to use a different install directory.
+
+## Prerequisites
+
+The emulator runs on Apple silicon Macs with macOS 13 or later. Check the local setup with:
+
+```sh
+./sp16 doctor
+```
+
+The build needs Python 3.12 or later, Xcode Command Line Tools, QEMU build dependencies (`ninja`, `pkgconf`, `glib`,
+and `pixman`), and Docker Desktop or OrbStack for the Linux guest image. The CLI itself starts with Python 3.9 or later;
+`doctor` reports missing build prerequisites and their fixes.
+
+## Common commands
+
+```sh
+./sp16 help                         # list commands
+./sp16 help build                   # command options and examples
+./sp16 --dry-run build --audio file # show the commands without running them
+./sp16 build --audio file           # silent build that records WAV output
+./sp16 run                          # launch the default build
+```
+
+Firmware and GPL sources are not included. Import only files supplied by the user, and keep firmware, keys, imported
+images and session data in the ignored `build/` or `private/` directories. See the [README](../README.md) for the full
+fresh-clone workflow, firmware import, audio, virtual USB storage, builds and troubleshooting. The agent setup workflows
+are in [sp16-bootstrap](../.agents/skills/sp16-bootstrap/SKILL.md) and
+[sp16-emulator-setup](../.agents/skills/sp16-emulator-setup/SKILL.md).

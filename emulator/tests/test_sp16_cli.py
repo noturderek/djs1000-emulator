@@ -27,8 +27,8 @@ PYTHON = "/py/python3"
 def public_files():
     """(Makefile, root shim): in the public layout next to emulator/, in the private one under public/."""
     for folder in (TOOLS.parent, TOOLS / "public"):
-        if (folder / "Makefile").is_file() and (folder / "sp16emu").is_file():
-            return folder / "Makefile", folder / "sp16emu"
+        if (folder / "Makefile").is_file() and (folder / "sp16").is_file():
+            return folder / "Makefile", folder / "sp16"
     return None, None
 
 
@@ -822,7 +822,7 @@ class MakefileTests(unittest.TestCase):
             code, out, err = self.make("-n", target)
             self.assertEqual(code, 0, err)
             first = shlex.split(out.splitlines()[0])
-            self.assertEqual(first[:2], ["/usr/bin/python3", "./sp16emu"], target)
+            self.assertEqual(first[:2], ["/usr/bin/python3", "./sp16"], target)
             self.assertEqual(first[2:], words, target)
 
     def test_variables_flow_into_the_commands(self):
@@ -830,7 +830,7 @@ class MakefileTests(unittest.TestCase):
         self.assertEqual(shlex.split(out)[2:], ["build", "--name", "mine", "--audio", "both", "--audio-device",
                                                 "UID 1", "--rebuild", "--research"])
         out = self.make("-n", "run", "NAME=a b", "FIRMWARE=f", "USB_IMAGE=my stick.img", "PYTHON=/opt/py thon")[1]
-        self.assertEqual(shlex.split(out), ["/opt/py thon", "./sp16emu", "run", "--name", "a b", "--firmware", "f",
+        self.assertEqual(shlex.split(out), ["/opt/py thon", "./sp16", "run", "--name", "a b", "--firmware", "f",
                                             "--usb-image", "my stick.img"])
         out = self.make("-n", "import", "UPD=/p a/SP16.UPD", "GPL=one.zip two.zip")[1]
         self.assertEqual(shlex.split(out)[2:], ["firmware", "import", "--update", "/p a/SP16.UPD", "--gpl-archive",
@@ -874,7 +874,7 @@ class MakefileTests(unittest.TestCase):
         code, out, _ = self.make("-n", "install", "PREFIX=/opt/x")
         self.assertEqual(code, 0)
         self.assertIn('ln -sfn "', out)
-        self.assertIn('/opt/x/bin/sp16emu"', out)
+        self.assertIn('/opt/x/bin/sp16"', out)
         self.assertNotRegex(out, r"\.zshrc|\.bash_profile|\.profile")
         self.assertIn("readlink", self.make("-n", "uninstall")[1])
 
@@ -887,7 +887,7 @@ class MakefileTests(unittest.TestCase):
             self.assertEqual(code, 0, err)
             for line in out.splitlines():
                 words = shlex.split(line)
-                self.assertEqual(words[1], "./sp16emu")
+                self.assertEqual(words[1], "./sp16")
                 name, rest = words[2], words[3:]
                 self.assertIn(name, cli.BY_NAME)
                 head, _ = cli.split_tail(rest)
@@ -897,9 +897,9 @@ class MakefileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             prefix = os.path.join(os.path.realpath(folder), "pre fix")
             self.assertEqual(self.make("install", f"PREFIX={prefix}")[0], 0)
-            link = Path(prefix) / "bin" / "sp16emu"
+            link = Path(prefix) / "bin" / "sp16"
             self.assertTrue(link.is_symlink())
-            self.assertEqual(os.path.realpath(str(link)), os.path.realpath(str(MAKEFILE.parent / "sp16emu")))
+            self.assertEqual(os.path.realpath(str(link)), os.path.realpath(str(MAKEFILE.parent / "sp16")))
             self.assertEqual(self.make("uninstall", f"PREFIX={prefix}")[0], 0)
             self.assertFalse(link.exists() or link.is_symlink())
             link.write_text("not mine")

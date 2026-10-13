@@ -14,9 +14,9 @@ from that update; this repository contains none of it.
 
 - A Mac with Apple silicon (the emulator uses Hypervisor.framework), macOS 13 or later.
 - Xcode Command Line Tools (`xcode-select --install`): Swift, `codesign`, `make`, and `/usr/bin/python3`, which runs
-  `./sp16emu` and which the app uses to import firmware.
-- Python 3.12 or later for the build tools (for example `brew install python@3.12`). `./sp16emu` finds it by
-  itself; `./sp16emu doctor` tells you if it is missing.
+  `./sp16` and which the app uses to import firmware.
+- Python 3.12 or later for the build tools (for example `brew install python@3.12`). `./sp16` finds it by
+  itself; `./sp16 doctor` tells you if it is missing.
 - QEMU build dependencies: `brew install ninja pkgconf glib pixman`. QEMU itself is downloaded from
   download.qemu.org as source and built on your Mac during the first build.
 - Docker Desktop, for the one-time build of the Linux guest base image (Debian packages and this project's code).
@@ -39,12 +39,12 @@ make bootstrap UPD=~/Downloads/TORAIZSP16.UPD GPL="~/Downloads/gpl-part-1.zip ~/
   SAMPLES="~/Downloads/LOOPMASTERS_SAMPLE_PACK" PROJECTS=~/Downloads/TORAIZ_SP-16_Factory_Projects-B.zip
 # or have it download the official firmware (it shows the file, source and size first; YES=1 skips the question):
 make bootstrap VERSION=1.60 KEY=~/keys/update.key SAMPLES=~/Samples
-# the same without make:  ./sp16emu bootstrap --update FILE.UPD --gpl-archive PART1 PART2 --samples DIR|ZIP --projects DIR|ZIP
+# the same without make:  ./sp16 bootstrap --update FILE.UPD --gpl-archive PART1 PART2 --samples DIR|ZIP --projects DIR|ZIP
 ```
 
 `SAMPLES` and `PROJECTS` take folders or `.zip` files (a folder keeps its name under `PIONEER DJ SAMPLER/Samples`;
 projects go to `PIONEER DJ SAMPLER/Projects`). Audio defaults to your Mac's output (`AUDIO=file` records silently).
-`./sp16emu --dry-run bootstrap ...` lists every step first. Every step skips what is already done, so the same command
+`./sp16 --dry-run bootstrap ...` lists every step first. Every step skips what is already done, so the same command
 can be run again after an interruption or to add more samples. For problems after that, the
 [`sp16-emulator-setup`](.agents/skills/sp16-emulator-setup/SKILL.md) skill covers troubleshooting, modded firmware and the
 hardware suite. The steps below are the same thing by hand.
@@ -54,8 +54,8 @@ hardware suite. The steps below are the same thing by hand.
 ```sh
 git clone <this repository> sp16-emulator
 cd sp16-emulator
-./sp16emu doctor     # checks your Mac and prints the fix for anything missing
-./sp16emu build
+./sp16 doctor     # checks your Mac and prints the fix for anything missing
+./sp16 build
 ```
 
 (`make build` does the same; `make help` lists the ready-made configurations.)
@@ -63,11 +63,11 @@ cd sp16-emulator
 The first build downloads and compiles QEMU and builds the guest base image with Docker: a few minutes on a recent
 Mac (about 2 minutes measured), longer while Docker first downloads the Debian packages. The result
 is `build/sp16/SP-16 Compatible Emulator.app`. Everything under `build/` is ignored by git and readable only by
-you; the build tool refuses any other place, and `./sp16emu` creates `build/` for you.
+you; the build tool refuses any other place, and `./sp16` creates `build/` for you.
 
-Every later build (`--name` picks the folder, `./sp16emu build --name second`) copies the verified QEMU from an
+Every later build (`--name` picks the folder, `./sp16 build --name second`) copies the verified QEMU from an
 existing build instead of compiling it again, and all builds share one firmware library, `build/library`, so you
-import firmware once. `./sp16emu builds` lists your builds and how each was made.
+import firmware once. `./sp16 builds` lists your builds and how each was made.
 
 The build is silent by default. Add `--audio file` to record each audio stream to a WAV file in the session folder
 (still silent), or `--audio coreaudio` to hear it through your Mac (see [Audio](#audio)).
@@ -80,7 +80,7 @@ Download both yourself:
   <https://support.alphatheta.com/en-us/articles/4405128836121>. Download the latest update (1.60), unzip it and
   keep the `.UPD` file. Version 1.50 is also supported if you have its update file. The direct official downloads are
   `https://downloads.support.alphatheta.com/firmwares/music-production/TORAIZ_SP-16/TORAIZSP16_ver160.zip` (also
-  `ver150`, `ver140`, `ver131`). Or let the tool fetch it: `./sp16emu firmware download --version 1.60` shows the
+  `ver150`, `ver140`, `ver131`). Or let the tool fetch it: `./sp16 firmware download --version 1.60` shows the
   file name, the URL and the size and asks first (`--info` only shows them, `--yes` agrees); it downloads only from
   that official host, over https, checks the zip, the version, the CRC and (for 1.50 and 1.60) the SHA-256 the
   profiles pin, and keeps the `.UPD` in `build/downloads/`. It never downloads the key or the GPL archive.
@@ -100,7 +100,7 @@ Either start the app (step 4) with an empty library and use its import screen (c
 or both GPL archive parts), or use the command line:
 
 ```sh
-./sp16emu firmware import \
+./sp16 firmware import \
   --update ~/Downloads/TORAIZSP16.UPD --gpl-archive ~/Downloads/gpl-part-1.zip ~/Downloads/gpl-part-2.zip
 # or: --key-file <key file>
 # or: make import UPD=~/Downloads/TORAIZSP16.UPD GPL="~/Downloads/gpl-part-1.zip ~/Downloads/gpl-part-2.zip"
@@ -114,15 +114,15 @@ file, wrong key, not an update for this sampler, already imported) leave nothing
 ### 4. Run
 
 ```sh
-./sp16emu run          # or: make run
+./sp16 run          # or: make run
 ```
 
 or open `build/sp16/SP-16 Compatible Emulator.app`. The first boot creates a 1 GB internal storage image for that
 firmware; projects and settings persist there across launches. Close the window to stop the emulator. If you built
-under another name, `./sp16emu run --name <name>` launches that one; if the build does not exist, the error says
-which `./sp16emu build` command creates it.
+under another name, `./sp16 run --name <name>` launches that one; if the build does not exist, the error says
+which `./sp16 build` command creates it.
 
-`./sp16emu firmware list` lists imports; `select`, `rename`, `remove`, `show` and `check --id <id>` manage them. In
+`./sp16 firmware list` lists imports; `select`, `rename`, `remove`, `show` and `check --id <id>` manage them. In
 the app, Firmware > Library does the same.
 
 ### 5. Load your own samples (optional)
@@ -131,8 +131,8 @@ The emulated sampler reads samples from a virtual USB stick: a FAT32 disk image 
 your samples on it before you start the emulator, then run as usual:
 
 ```sh
-./sp16emu usb add ~/samples/*.wav     # creates build/stick.img the first time, then copies the files
-./sp16emu run                         # attaches build/stick.img automatically
+./sp16 usb add ~/samples/*.wav     # creates build/stick.img the first time, then copies the files
+./sp16 run                         # attaches build/stick.img automatically
 # or: make usb-add FILES="~/samples/*.wav" && make run
 ```
 
@@ -141,10 +141,10 @@ your samples on it before you start the emulator, then run as usual:
   skipped with a warning unless you add `--any`.
 - **Where they go:** the firmware's own `PIONEER DJ SAMPLER/Samples` folder on the stick (`--to kicks` copies into a
   folder `kicks` under it; `--dest Projects` copies any file type into another folder under `PIONEER DJ SAMPLER`, for
-  example demo projects, and cannot leave that folder). `./sp16emu usb ls` lists what is on the stick, including projects the sampler saved to
+  example demo projects, and cannot leave that folder). `./sp16 usb ls` lists what is on the stick, including projects the sampler saved to
   it. macOS's `._*` and `.DS_Store` files are removed again after each copy.
 - **Whole folders and big packs:** a folder passed to `usb add` is copied with its name and its structure;
-  `./sp16emu usb add --tree ~/SamplePack --to Pack` copies what is inside the folder, at any depth, into
+  `./sp16 usb add --tree ~/SamplePack --to Pack` copies what is inside the folder, at any depth, into
   `Samples/Pack`. A new stick is sized for the files (at least 1G). The stick can be up to 32G (`usb create --size 8G`;
   the image is sparse, so it takes disk space only for what you copy), and a stick above 4 GB works as long as each
   file is under 4 GB (a FAT32 limit). The free space is checked before anything is copied; if the files do not fit,
@@ -153,12 +153,12 @@ your samples on it before you start the emulator, then run as usual:
 - **Never mount the stick while the emulator runs.** The emulated sampler and your Mac would both write to one file
   system and corrupt it. `usb add`, `ls`, `create` and `mount` refuse while a running emulator has the image, or while
   your Mac has it mounted elsewhere. Quit the emulator first (close its window), or release the stick with
-  `./sp16emu usb unmount`.
-- `./sp16emu usb create [--size 4G] [--force]` makes an empty stick without adding anything (it never overwrites an
-  existing image unless you add `--force`); `./sp16emu usb mount` mounts it in `build/.usb-mnt` (in
+  `./sp16 usb unmount`.
+- `./sp16 usb create [--size 4G] [--force]` makes an empty stick without adding anything (it never overwrites an
+  existing image unless you add `--force`); `./sp16 usb mount` mounts it in `build/.usb-mnt` (in
   `~/Library/Caches/sp16emu/usb-mnt` when the clone is inside Downloads, Desktop, Documents or iCloud Drive) and prints
   the folder if you would rather copy with Finder, and `usb unmount` releases it. `--image PATH` works on another image.
-- `./sp16emu run` attaches `build/stick.img` when it exists. `--no-usb` starts without it and `--usb-image PATH`
+- `./sp16 run` attaches `build/stick.img` when it exists. `--no-usb` starts without it and `--usb-image PATH`
   attaches another image. If another running emulator already uses the stick, `run` says so and starts without it.
 
 ## Audio
@@ -173,20 +173,20 @@ A build chooses its audio at build time:
 | `--audio both` | Plays and records. |
 | `--audio-device UID` | With `coreaudio` or `both`: play through this output device instead of the default. |
 
-List your Mac's output devices and their UIDs with `./sp16emu audio devices` (the first call compiles a small tool
+List your Mac's output devices and their UIDs with `./sp16 audio devices` (the first call compiles a small tool
 into `build/.cache`, a few seconds), then for example:
 
 ```sh
-./sp16emu build --name loud --audio coreaudio --audio-device <UID>
-./sp16emu run --name loud
+./sp16 build --name loud --audio coreaudio --audio-device <UID>
+./sp16 run --name loud
 ```
 
 `make build-audio` and `make build-record` build the two variants as `sp16-audio` and `sp16-record`.
 
 ## Commands and Makefile
 
-`./sp16emu help` lists every command; `./sp16emu help <command>` (or `<command> --help`) shows its options and
-examples. `./sp16emu --dry-run <command> ...` prints the exact tool commands instead of running them.
+`./sp16 help` lists every command; `./sp16 help <command>` (or `<command> --help`) shows its options and
+examples. `./sp16 --dry-run <command> ...` prints the exact tool commands instead of running them.
 
 | Command | What it does |
 |---|---|
@@ -206,8 +206,8 @@ examples. `./sp16emu --dry-run <command> ...` prints the exact tool commands ins
 | `test` | Run the firmware-free unit tests |
 | `clean` | Delete build outputs; the firmware library and data images are kept unless you ask for `--everything` |
 
-`make help` lists the ready-made configurations (the Makefile only calls `./sp16emu`; `make -n <target>` shows the
-exact command). `make install` links `sp16emu` into `~/.local/bin` (`PREFIX=` changes it; `make uninstall` removes
+`make help` lists the ready-made configurations (the Makefile only calls `./sp16`; `make -n <target>` shows the
+exact command). `make install` links `sp16` into `~/.local/bin` (`PREFIX=` changes it; `make uninstall` removes
 it); no shell files are touched.
 
 | Target | Builds or runs |
@@ -222,9 +222,9 @@ it); no shell files are touched.
 | `make list`, `doctor`, `diagnostics`, `test`, `hwsuite-smoke`, `audio-devices` | Information, checks and tests |
 | `make clean` / `make clean-all CONFIRM=1` | Delete build outputs / everything in `build/` including firmware |
 
-Under the hood `./sp16emu` is a thin wrapper over `emulator/native.py` (`build`, `launch`, `firmware`, `diagnostics`),
-`emulator/fwdev.py`, `emulator/hwsuite.py` and `emulator/sessionctl.py`; any option those tools have that is not
-listed in `./sp16emu help` can be passed after `--`.
+The `./sp16` launcher is linked from `scripts/sp16emu` and dispatches to `emulator/sp16emu.py`. That CLI calls
+`emulator/native.py` (`build`, `launch`, `firmware`, `diagnostics`), `emulator/fwdev.py`, `emulator/hwsuite.py` and
+`emulator/sessionctl.py`; any option those tools have that is not listed in `./sp16 help` can be passed after `--`.
 
 ## Supported firmware versions
 
@@ -249,7 +249,7 @@ There are three ways, described in [docs/modding.md](docs/modding.md):
    applied when the app starts. `emulator/mods/utility-label.json` renames one HOME screen label as an example.
 2. **Developer overlay**: a folder of replaced files, recipes and preload libraries shared into a running emulator;
    edit, then restart only the firmware's app in about ten seconds.
-3. **Repacked update**: `./sp16emu mod package --upd` builds a modified update from a verified base and your recipes.
+3. **Repacked update**: `./sp16 mod package --upd` builds a modified update from a verified base and your recipes.
    It carries an `SP16MODLAB-<version>` marker, so it can never pass for an official update, and the importer accepts
    it only if it can rebuild it byte for byte from your verified base. Repacked updates are for this emulator only:
    never flash them to hardware and never distribute them (they contain the vendor's firmware).
@@ -263,7 +263,7 @@ shares its library, and starts its own sessions:
 
 ```sh
 make build-dev build-control      # build/sp16-dev and build/sp16-dev-uncal, sharing build/library
-./sp16emu hwsuite --smoke         # profile = the version of the selected firmware; --profile 1.60 to choose
+./sp16 hwsuite --smoke         # profile = the version of the selected firmware; --profile 1.60 to choose
 ```
 
 See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
@@ -272,25 +272,25 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 
 | Symptom | What to do |
 |---|---|
-| Anything fails before or during a build | Run `./sp16emu doctor`: it checks the Mac, Command Line Tools, Python, QEMU tools, Docker, disk space and the git set-up, and prints the fix for each. |
-| `is not a git work tree` or `must be Git-ignored` or `owner-only permissions` | Use a git clone of this repository (the build tool only writes into the git-ignored `build/`); `./sp16emu` creates `build/` owner-only, or fix it with `chmod 700 build`. |
+| Anything fails before or during a build | Run `./sp16 doctor`: it checks the Mac, Command Line Tools, Python, QEMU tools, Docker, disk space and the git set-up, and prints the fix for each. |
+| `is not a git work tree` or `must be Git-ignored` or `owner-only permissions` | Use a git clone of this repository (the build tool only writes into the git-ignored `build/`); `./sp16` creates `build/` owner-only, or fix it with `chmod 700 build`. |
 | `without symlink parents` | The clone's path must not pass through a symlink (on macOS `/tmp` is one; clone into your home folder). |
 | `this native HVF build currently requires an Apple Silicon Mac` | Intel Macs are not supported. |
-| `the build tools need Python 3.12 or later` | `brew install python@3.12`; or name one with `./sp16emu --python /path/to/python3.12 ...` (or `SP16EMU_PYTHON`, `make TOOL_PYTHON=...`). |
-| `build/sp16 already exists` | `./sp16emu run` launches it; `./sp16emu build --rebuild` rebuilds it in place and keeps the firmware library and data; `--name` makes another build. |
-| QEMU build fails | Read `build/<name>/qemu-configure.log` or `qemu-build.log`; usually a missing `ninja`, `pkgconf`, `glib` or `pixman` (`./sp16emu doctor` checks them). |
+| `the build tools need Python 3.12 or later` | `brew install python@3.12`; or name one with `./sp16 --python /path/to/python3.12 ...` (or `SP16EMU_PYTHON`, `make TOOL_PYTHON=...`). |
+| `build/sp16 already exists` | `./sp16 run` launches it; `./sp16 build --rebuild` rebuilds it in place and keeps the firmware library and data; `--name` makes another build. |
+| QEMU build fails | Read `build/<name>/qemu-configure.log` or `qemu-build.log`; usually a missing `ninja`, `pkgconf`, `glib` or `pixman` (`./sp16 doctor` checks them). |
 | QEMU link fails with `64-bit mach-o not 8-byte aligned` | A QEMU build folder configured with GNU `ar` (Homebrew `binutils` on `PATH`) from an older checkout; the build now uses Apple's `/usr/bin/ar`. Delete `build/sp16/qemu-build` and build again. |
 | Guest image build fails | Start Docker Desktop and retry; read `build/sp16/guest-build.log`. |
-| Window title says `(unverified)` | The version has no verified profile (see the table above); it runs on the reference measurements. `./sp16emu firmware check --id <id>` prints the report. |
+| Window title says `(unverified)` | The version has no verified profile (see the table above); it runs on the reference measurements. `./sp16 firmware check --id <id>` prints the report. |
 | Import: `update CRC does not match` or `not sector-aligned` | The update file is damaged or incomplete; download it again. |
 | Import: `GPL archive is damaged or incomplete` | Give both zip parts, in order (part 1, then part 2). |
 | Import: `the key does not decrypt this update` | The key does not belong to this update. |
 | The app's import screen says Python is missing | Install the Xcode Command Line Tools (`xcode-select --install`). |
 | Pads blink red and ignore hits | The firmware reports missing pad calibration; rebuild without `--uncalibrated`. |
 | `usb ...: is in use by a running emulator` | The emulator (or a leftover QEMU) has the stick. Quit it, stopping only the process ids the message names, then repeat the command. Mounting a stick the emulator writes to would corrupt it. |
-| `usb ...: already attached to this Mac` | Release it with `./sp16emu usb unmount`, then repeat. `./sp16emu run` also starts without the stick (and says why) while the Mac holds it. |
-| `usb ...: cannot attach` | The image has no FAT32 file system (for example a zero-filled file). Recreate it with `./sp16emu usb create --force`, or `usb add` formats a blank image by itself. |
-| `usb ...: cannot attach ... no mountable file systems` on a clone in Downloads, Desktop or Documents | macOS privacy protection refuses a mount whose mount point is in that folder, even though the image itself is fine. Current versions mount in `~/Library/Caches/sp16emu/usb-mnt` instead; update the clone. `./sp16emu doctor` warns about the location. A message that says "cannot mount ... privacy protection" means the same: move the clone (for example to `~/src/sp16-emulator`) or give your terminal app Full Disk Access (System Settings > Privacy & Security), then repeat. |
+| `usb ...: already attached to this Mac` | Release it with `./sp16 usb unmount`, then repeat. `./sp16 run` also starts without the stick (and says why) while the Mac holds it. |
+| `usb ...: cannot attach` | The image has no FAT32 file system (for example a zero-filled file). Recreate it with `./sp16 usb create --force`, or `usb add` formats a blank image by itself. |
+| `usb ...: cannot attach ... no mountable file systems` on a clone in Downloads, Desktop or Documents | macOS privacy protection refuses a mount whose mount point is in that folder, even though the image itself is fine. Current versions mount in `~/Library/Caches/sp16emu/usb-mnt` instead; update the clone. `./sp16 doctor` warns about the location. A message that says "cannot mount ... privacy protection" means the same: move the clone (for example to `~/src/sp16-emulator`) or give your terminal app Full Disk Access (System Settings > Privacy & Security), then repeat. |
 | The window is black | Read `console.txt` in the newest folder under `build/sp16/sessions/`. |
 | The app quit or crashed | Start it again: it offers to collect diagnostics. Then see [Reporting a bug](#reporting-a-bug). The newest folder under `build/sp16/sessions/` holds `app.log` (the app's log) and `qemu-stderr.txt`. |
 
@@ -301,7 +301,7 @@ them to an issue (the bug report form asks for them).
 
 1. In the app choose **Help > Collect Diagnostics…**. If the app did not shut down cleanly last time, it offers this
    itself the next time it starts. Without the app (for example when it will not start), run
-   `./sp16emu diagnostics` (or `make diagnostics`). Options: `--sessions N` (how many recent sessions,
+   `./sp16 diagnostics` (or `make diagnostics`). Options: `--sessions N` (how many recent sessions,
    default 3), `--include-audio` (adds the sessions' WAV captures, which can be large), `--out file.zip`.
 2. The result is one zip, `sp16-diagnostics-<time>.zip`, written to your Desktop (macOS may ask whether the app may
    access the Desktop; if you decline, or there is no Desktop, it is written to the build folder instead). The app
@@ -328,14 +328,16 @@ such as an external drive's name, are kept.
 ## Repository layout
 
 ```text
-sp16emu, Makefile    the command line (`./sp16emu help`) and the ready-made build configurations (`make help`)
+sp16, scripts/sp16emu, Makefile    the command line (`./sp16 help`) and the ready-made build configurations (`make help`)
 emulator/            sp16emu.py (the command), build tool, firmware importer, Linux guest base, hardware shim, panel model, macOS app,
                      compatibility profiles, example recipe, developer tools, hardware suite, unit tests
-docs/                architecture, modding guide, hardware suite, profile reference
+docs/                Python CLI/setup, architecture, modding guide, hardware suite, profile reference
 .agents/skills/      agent skills: sp16-bootstrap (fresh clone to a running emulator) and sp16-emulator-setup (setup details, mods, troubleshooting)
 ```
 
-Run the firmware-free unit tests with `./sp16emu test` (or `make test`); it runs
+See [Python CLI and Setup](docs/python-cli-and-setup.md) for the launcher layout, PATH installation and prerequisites.
+
+Run the firmware-free unit tests with `./sp16 test` (or `make test`); it runs
 `python3 -m unittest discover -s emulator/tests -p 'test_sp16_*.py'` with a Python 3.12 or later.
 
 ## License

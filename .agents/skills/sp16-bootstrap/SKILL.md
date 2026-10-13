@@ -6,8 +6,8 @@ description: Bootstrap the SP16 Emulator from a fresh clone to a running emulato
 # SP16 Emulator bootstrap
 
 Goal: from this fresh clone to a running emulator that plays audio, runs the firmware the user picked, and has a USB
-stick with their samples and the demo projects. Work from the repository root. Everything goes through `./sp16emu`;
-one command, `./sp16emu bootstrap`, does the deterministic work, and this skill gets the user's inputs first.
+stick with their samples and the demo projects. Work from the repository root. Everything goes through `./sp16`;
+one command, `./sp16 bootstrap`, does the deterministic work, and this skill gets the user's inputs first.
 
 This repository ships no Pioneer-made firmware, keys or samples: **the user supplies them**. Tell the user so in your
 first message.
@@ -34,7 +34,7 @@ first message.
 ## 1. Check this Mac
 
 ```sh
-./sp16emu doctor
+./sp16 doctor
 ```
 
 It prints `FAIL` lines with a `fix:` each. Walk the user through the ones you cannot do yourself, asking first:
@@ -47,12 +47,12 @@ It prints `FAIL` lines with a `fix:` each. Walk the user through the ones you ca
 | Docker running | start Docker Desktop or OrbStack and wait until it says it is running (only the first build needs it) |
 | Apple silicon, macOS 13+ | cannot be fixed; the emulator does not run on Intel Macs |
 
-Run `./sp16emu doctor` again until it prints `Ready.`.
+Run `./sp16 doctor` again until it prints `Ready.`.
 
 ## 2. Audio
 
 Ask: "Should the emulator play through your Mac's default output?" Default yes (`coreaudio`). If they want a specific
-device, run `./sp16emu audio devices` and let them pick a UID (`--audio-device UID`). Mention that nothing is audible
+device, run `./sp16 audio devices` and let them pick a UID (`--audio-device UID`). Mention that nothing is audible
 until a track's VOLUME is raised in the emulator.
 
 ## 3. Firmware
@@ -68,13 +68,13 @@ and nothing else.
 **If they want you to download it:**
 
 ```sh
-./sp16emu firmware download --version 1.60 --info      # prints file name, URL and size; downloads nothing
+./sp16 firmware download --version 1.60 --info      # prints file name, URL and size; downloads nothing
 ```
 
 Show the user the file name, the URL and the size, and ask "Download it?". Only after a yes:
 
 ```sh
-./sp16emu firmware download --version 1.60 --yes       # saves and checks it in build/downloads/ver160/
+./sp16 firmware download --version 1.60 --yes       # saves and checks it in build/downloads/ver160/
 ```
 
 (or pass `--download-firmware 1.60 --yes` to `bootstrap` in section 7). The tool checks the zip, that it holds exactly
@@ -126,15 +126,15 @@ copy the sample folder from the USB stick to internal storage with the sampler's
 Read the collected paths back to the user and ask for a yes. Optionally show the plan first (it changes nothing):
 
 ```sh
-./sp16emu --dry-run bootstrap <options>
+./sp16 --dry-run bootstrap <options>
 ```
 
 Then run it. Examples (adapt to what the user chose):
 
 ```sh
-./sp16emu bootstrap --update ~/Downloads/TORAIZSP16.UPD --gpl-archive ~/Downloads/gpl-part-1.zip ~/Downloads/gpl-part-2.zip \
+./sp16 bootstrap --update ~/Downloads/TORAIZSP16.UPD --gpl-archive ~/Downloads/gpl-part-1.zip ~/Downloads/gpl-part-2.zip \
   --samples "~/Downloads/LOOPMASTERS SAMPLE PACK" --projects ~/Downloads/TORAIZ_SP-16_Factory_Projects-B.zip
-./sp16emu bootstrap --download-firmware 1.60 --yes --key-file ~/keys/update.key --samples ~/Samples
+./sp16 bootstrap --download-firmware 1.60 --yes --key-file ~/keys/update.key --samples ~/Samples
 # the same through make:  make bootstrap UPD=... GPL="part1 part2" SAMPLES=... PROJECTS=...   (or VERSION=1.60 YES=1 KEY=...)
 ```
 
@@ -157,11 +157,11 @@ Tell them:
   without a verified profile. **Firmware > Library** in the app menu lists and switches the imported firmware.
 - **Where things live:** the build in `build/sp16/`, the stick in `build/stick.img`, the imported firmware and its data
   in the shared library `build/library`, downloads in `build/downloads/`. All git-ignored.
-- **Stop:** close the emulator window (or quit the app). **Restart:** `./sp16emu run`.
-- **Add samples later:** quit the emulator first, then `./sp16emu usb add <files or folders>`; project files with
-  `./sp16emu usb add <files> --dest Projects`; `./sp16emu usb ls` lists the stick. Never mount the stick while the
+- **Stop:** close the emulator window (or quit the app). **Restart:** `./sp16 run`.
+- **Add samples later:** quit the emulator first, then `./sp16 usb add <files or folders>`; project files with
+  `./sp16 usb add <files> --dest Projects`; `./sp16 usb ls` lists the stick. Never mount the stick while the
   emulator runs; the commands refuse when it does.
-- **Switch firmware:** `./sp16emu firmware list`, `./sp16emu firmware select --id <id>`, restart; or import another
-  version with `./sp16emu bootstrap --no-run ...`.
-- **Problems:** `./sp16emu diagnostics` collects a redacted zip for a bug report; see the sp16-emulator-setup skill.
+- **Switch firmware:** `./sp16 firmware list`, `./sp16 firmware select --id <id>`, restart; or import another
+  version with `./sp16 bootstrap --no-run ...`.
+- **Problems:** `./sp16 diagnostics` collects a redacted zip for a bug report; see the sp16-emulator-setup skill.
 - **Rules:** never commit firmware, keys, samples or projects; never flash a real device with anything from here.

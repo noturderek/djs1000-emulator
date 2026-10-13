@@ -1,6 +1,6 @@
 # SP16 Emulator: the common build configurations as make targets.
 #
-# Every target is a thin call to ./sp16emu, which holds all the logic (`./sp16emu help` lists every command and option).
+# Every target is a thin call to ./sp16, which holds all the logic (`./sp16 help` lists every command and option).
 # Run `make` or `make help` for the targets and the variables you can override, for example:
 #   make build-record                     build with WAV recording (silent)
 #   make bootstrap UPD=~/Downloads/SP16.UPD GPL="gpl-1.zip gpl-2.zip" SAMPLES=~/Samples   everything: build, import, stick, run
@@ -52,18 +52,18 @@ PROJECTS ?=
 PROFILE ?=
 #: REBUILD  1 = rebuild an existing build in place (keeps firmware and data)
 REBUILD ?=
-#: ARGS  extra options appended to the ./sp16emu command (for example ARGS="--research")
+#: ARGS  extra options appended to the ./sp16 command (for example ARGS="--research")
 ARGS ?=
-#: PYTHON  runs ./sp16emu itself (Python 3.9 or later); default /usr/bin/python3
+#: PYTHON  runs ./sp16 itself (Python 3.9 or later); default /usr/bin/python3
 PYTHON ?= /usr/bin/python3
 #: TOOL_PYTHON  runs the build tools (Python 3.12 or later; default: the first one found)
 TOOL_PYTHON ?=
-#: PREFIX  install: sp16emu is linked into $(PREFIX)/bin; default ~/.local
+#: PREFIX  install: sp16 is linked into $(PREFIX)/bin; default ~/.local
 PREFIX ?= $(HOME)/.local
 #: CONFIRM  clean-all: must be 1
 CONFIRM ?=
 
-SP16EMU := "$(PYTHON)" ./sp16emu
+SP16EMU := "$(PYTHON)" ./sp16
 ifneq ($(strip $(TOOL_PYTHON)),)
 export SP16EMU_PYTHON := $(TOOL_PYTHON)
 endif
@@ -80,7 +80,7 @@ BOOT_VERSION       = $(if $(findstring command line,$(origin VERSION)),$(strip $
 BOOT_FIRMWARE      = $(if $(BOOT_VERSION),--download-firmware "$(BOOT_VERSION)",$(if $(strip $(UPD)),--update "$(UPD)"))
 BOOT_KEY           = $(if $(strip $(KEY)),--key-file "$(KEY)")$(if $(strip $(GPL)), --gpl-archive $(GPL))
 BOOT_YES           = $(if $(strip $(YES)),--yes)
-# Maintenance targets use --build NAME only when you set NAME yourself; otherwise ./sp16emu picks the default build.
+# Maintenance targets use --build NAME only when you set NAME yourself; otherwise ./sp16 picks the default build.
 BUILD_FLAG         = $(if $(or $(findstring command line,$(origin NAME)),$(findstring environment,$(origin NAME))),--build "$(NAME)")
 
 # Fail early, before anything runs, when a required variable is missing.
@@ -129,7 +129,7 @@ help: ## Show the targets and variables
 	@echo "Variables (override on the command line, for example make build NAME=mine):"
 	@awk '/^#: [A-Z_]+  / { name = $$2; text = $$0; sub(/^#: [A-Z_]+  /, "", text); printf "  %-15s %s\n", name, text }' $(MAKEFILE_LIST)
 	@echo
-	@echo "Everything these targets do is also available as ./sp16emu <command>; see ./sp16emu help."
+	@echo "Everything these targets do is also available as ./sp16 <command>; see ./sp16 help."
 
 doctor: ## Check this Mac for everything a build needs
 	$(SP16EMU) doctor
@@ -201,11 +201,11 @@ clean: ## Delete build outputs; keeps the firmware library and data images
 clean-all: ## Delete everything in build/ including firmware (needs CONFIRM=1)
 	$(SP16EMU) clean --everything --yes
 
-install: ## Link sp16emu into $(PREFIX)/bin (no shell files are touched)
+install: ## Link sp16 into $(PREFIX)/bin (no shell files are touched)
 	mkdir -p "$(PREFIX)/bin"
-	if [ -e "$(PREFIX)/bin/sp16emu" ] && [ ! -L "$(PREFIX)/bin/sp16emu" ]; then echo "$(PREFIX)/bin/sp16emu exists and is not a link; move it away first" >&2; exit 1; fi
-	ln -sfn "$(CURDIR)/sp16emu" "$(PREFIX)/bin/sp16emu"
-	echo "Linked $(PREFIX)/bin/sp16emu. If 'sp16emu' is not found, add $(PREFIX)/bin to your PATH."
+	if [ -e "$(PREFIX)/bin/sp16" ] && [ ! -L "$(PREFIX)/bin/sp16" ]; then echo "$(PREFIX)/bin/sp16 exists and is not a link; move it away first" >&2; exit 1; fi
+	ln -sfn "$(CURDIR)/sp16" "$(PREFIX)/bin/sp16"
+	echo "Linked $(PREFIX)/bin/sp16. If 'sp16' is not found, add $(PREFIX)/bin to your PATH."
 
 uninstall: ## Remove the link that `make install` made
-	if [ -L "$(PREFIX)/bin/sp16emu" ] && [ "$$(readlink "$(PREFIX)/bin/sp16emu")" = "$(CURDIR)/sp16emu" ]; then rm "$(PREFIX)/bin/sp16emu" && echo "Removed $(PREFIX)/bin/sp16emu"; else echo "Nothing to remove: $(PREFIX)/bin/sp16emu is not a link to this checkout"; fi
+	if [ -L "$(PREFIX)/bin/sp16" ] && [ "$$(readlink "$(PREFIX)/bin/sp16")" = "$(CURDIR)/sp16" ]; then rm "$(PREFIX)/bin/sp16" && echo "Removed $(PREFIX)/bin/sp16"; else echo "Nothing to remove: $(PREFIX)/bin/sp16 is not a link to this checkout"; fi
