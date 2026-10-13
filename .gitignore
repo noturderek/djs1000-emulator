@@ -33,3 +33,13 @@ __pycache__/
 *.IMG
 *.KEY
 PIONEER DJ SAMPLER/
+
+# Local tooling and interrupted downloads (`firmware download --to` inside the repository leaves *.part files).
+.envrc
+.direnv/
+.venv/
+venv/
+.vscode/
+.idea/
+*.swp
+*.part

@@ -350,9 +350,14 @@ See [Python CLI and Setup](docs/python-cli-and-setup.md) for the launcher layout
 Run the firmware-free unit tests with `./sp16 test` (or `make test`); it runs
 `python3 -m unittest discover -s emulator/tests -p 'test_sp16_*.py'` with a Python 3.12 or later.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md): no firmware or firmware-derived material, no mods, and `./sp16 test` before a
+pull request.
+
 ## License
 
-The code in this repository is released under the MIT License ([LICENSE](LICENSE)). Third-party components that the
+The code in this repository is released into the public domain under the [Unlicense](LICENSE). Third-party components that the
 build downloads and builds on your Mac (QEMU, Debian packages in the guest base image) keep their own licences; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Firmware you import is not covered by either and remains subject
 to its owner's terms.
