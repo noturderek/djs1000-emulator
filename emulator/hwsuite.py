@@ -731,6 +731,8 @@ def build_processes(build):
     """(app pids, [(qemu pid, parent pid)]) of one build, by exact executable path and build directory."""
     exe = app_executable(build)
     prefix = str(Path(build).resolve()) + "/"
+    # Foundation starts QEMU with a standardized path: /private/tmp/... becomes /tmp/... (also /private/var, /private/etc).
+    prefixes = (prefix, prefix[len("/private"):]) if prefix.startswith("/private/") else (prefix,)
     out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True).stdout
     apps, qemus = [], []
     for line in out.splitlines():
@@ -740,7 +742,7 @@ def build_processes(build):
         pid, ppid, command = int(parts[0]), int(parts[1]), parts[2]
         if command == exe or command.startswith(exe + " "):
             apps.append(pid)
-        elif command.startswith(prefix) and "qemu-system" in command.split(" -", 1)[0]:
+        elif command.startswith(prefixes) and "qemu-system" in command.split(" -", 1)[0]:
             qemus.append((pid, ppid))
     return apps, qemus
 

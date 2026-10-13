@@ -355,6 +355,23 @@ class MarkVerifiedTests(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text())["status"], self.profile["status"])
 
 
+class ProcessTests(unittest.TestCase):
+    def test_qemu_found_under_the_standardized_tmp_path(self):
+        """Foundation starts QEMU as /tmp/... for a build under /private/tmp/...; both spellings belong to the build."""
+        build = Path("/private/tmp/x/build/dev")
+        exe = "/private/tmp/x/build/dev/App.app/Contents/MacOS/App"
+        listing = (f"10 1 {exe} --firmware a\n"
+                   "11 10 /tmp/x/build/dev/qemu-system-aarch64 -machine virt\n"
+                   "12 10 /private/tmp/x/build/dev/qemu-system-aarch64 -machine virt\n"
+                   "13 1 /tmp/x/build/other/qemu-system-aarch64 -machine virt\n")
+        with mock.patch.object(hwsuite.subprocess, "run", return_value=mock.Mock(stdout=listing)), \
+                mock.patch.object(Path, "resolve", lambda self: self), \
+                mock.patch.object(hwsuite, "app_executable", return_value=exe):
+            apps, qemus = hwsuite.build_processes(build)
+        self.assertEqual(apps, [10])
+        self.assertEqual(qemus, [(11, 10), (12, 10)])
+
+
 class CliTests(unittest.TestCase):
     def test_usage_errors_exit_3(self):
         with mock.patch("sys.stderr"):
