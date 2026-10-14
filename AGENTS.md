@@ -22,5 +22,7 @@ This repository is a macOS emulator for SP-16 compatible sampler firmware. It co
 - Never flash hardware or run a firmware's own update scripts. Repacked updates are for this emulator only.
 - Code lives in `emulator/`, user documentation in `docs/`. Run the unit tests with
   `./sp16 test` (`python3 -m unittest discover -s emulator/tests -p 'test_sp16_*.py'`) before proposing a change.
+- To commit or open a pull request (commit style, which checks a change needs, the smoke test's screencast, the PR
+  description), follow [.agents/skills/sp16-pull-request/SKILL.md](.agents/skills/sp16-pull-request/SKILL.md).
 - When testing, build with `--audio file` (`make build-record`; records to WAV) unless the user asks to hear audio, and stop an emulator
   only by its exact process id (never by bundle id, never with `pkill`).

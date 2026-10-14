@@ -19,6 +19,8 @@ welcome as code.
 ```sh
 ./sp16 doctor     # prerequisites
 ./sp16 test       # the firmware-free unit tests (what CI runs); needs Python 3.12 or later
+./sp16 test --coverage   # the same with line and branch coverage (pip install coverage)
+make build-dev && ./sp16 smoke   # end-to-end smoke test with a sped-up screencast (needs imported firmware)
 ```
 
 - Python tools use the standard library only; the app is Swift against Apple system frameworks with no third-party
@@ -34,8 +36,10 @@ Agents working in this repository follow [AGENTS.md](AGENTS.md).
 
 ## Pull requests
 
-Keep a pull request to one change, describe what it does and how you tested it, and link the issue it fixes. CI runs
-the unit tests and refuses committed firmware, keys and images.
+Keep a pull request to one change, describe what it does and how you tested it, and link the issue it fixes. For a
+change to the app, the build, the guest or the panel model, run `./sp16 smoke` and attach its screencast. CI runs the
+unit tests with coverage and refuses committed firmware, keys and images. Commit style and the full checklist are in
+the [sp16-pull-request skill](.agents/skills/sp16-pull-request/SKILL.md).
 
 ## Licence
 
