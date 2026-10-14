@@ -37,7 +37,8 @@ Agents working in this repository follow [AGENTS.md](AGENTS.md).
 ## Pull requests
 
 Keep a pull request to one change, describe what it does and how you tested it, and link the issue it fixes. For a
-change to the app, the build, the guest or the panel model, run `./sp16 smoke` and attach its screencast. CI runs the
+change to the app, the build, the guest or the panel model, run `./sp16 smoke` and give its result; a screencast is
+optional (GitHub needs the web page to attach one). CI runs the
 unit tests with coverage and refuses committed firmware, keys and images. Commit style and the full checklist are in
 the [sp16-pull-request skill](.agents/skills/sp16-pull-request/SKILL.md).
 
