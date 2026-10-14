@@ -209,8 +209,9 @@ the Python 3.12+ for the build tools.
 | `mod new\|check\|run\|test\|sdk\|package` | Develop and test firmware mods |
 | `ctl` | Drive a running research session (buttons, encoders, LCD) |
 | `hwsuite` | Run the hardware conformance suite |
+| `smoke` | Run the end-to-end smoke test and record a sped-up screencast |
 | `diagnostics` | Collect a redacted bug-report zip |
-| `test` | Run the firmware-free unit tests |
+| `test` | Run the firmware-free unit tests (`--coverage` measures coverage) |
 | `clean` | Delete build outputs; the firmware library and data images are kept unless you ask for `--everything` |
 
 `make help` lists the ready-made configurations (the Makefile only calls `./sp16`; `make -n <target>` shows the
@@ -226,7 +227,7 @@ it); no shell files are touched.
 | `make run`, `run-audio`, `run-dev` | Launch the matching build (`FIRMWARE=`, `USB_IMAGE=`) |
 | `make usb-add FILES="a.wav b.wav"` | Copy samples onto the stick (creating `build/stick.img` if needed); `usb-create`, `usb-ls`, `usb-mount`, `usb-unmount`; `USB_IMAGE=` picks another image |
 | `make import UPD=... KEY=...` (or `GPL="part1 part2"`) | Import firmware |
-| `make list`, `doctor`, `diagnostics`, `test`, `hwsuite-smoke`, `audio-devices` | Information, checks and tests |
+| `make list`, `doctor`, `diagnostics`, `test`, `coverage`, `smoke`, `hwsuite-smoke`, `audio-devices` | Information, checks and tests |
 | `make clean` / `make clean-all CONFIRM=1` | Delete build outputs / everything in `build/` including firmware |
 
 The root `sp16` Python launcher dispatches to `emulator/sp16emu.py`. That CLI calls
@@ -262,6 +263,15 @@ someone shared) against firmware you imported. There are three ways, described i
    from your verified base: an identical rebuild is verified, anything else runs as unverified with the reason
    recorded. Repacked updates are for this emulator only:
    never flash them to hardware and never distribute them (they contain the vendor's firmware).
+
+## Smoke test and screencast
+
+`./sp16 smoke` (or `make smoke`) boots a research build for about a minute and checks that the emulator runs and
+responds: a settled home screen, live lamps, a selector detent that changes the LCD, pad presses and PLAY/STOP
+reaching the firmware, the mounted USB stick and a clean stop. It records the whole panel through the control socket
+and writes a sped-up screencast (`screencast.mp4` and `screencast.gif`, 4x by default; `--speed N`) with a report to
+`build/sp16-dev/smoke/<run id>/`. It needs a `--research` build (`make build-dev`), imported firmware and, for the
+screencast, ffmpeg (`brew install ffmpeg`); it never plays sound.
 
 ## Hardware conformance suite
 
@@ -348,7 +358,9 @@ docs/                Python CLI/setup, architecture, modding guide, hardware sui
 See [Python CLI and Setup](docs/python-cli-and-setup.md) for the launcher layout, PATH installation and prerequisites.
 
 Run the firmware-free unit tests with `./sp16 test` (or `make test`); it runs
-`python3 -m unittest discover -s emulator/tests -p 'test_sp16_*.py'` with a Python 3.12 or later.
+`python3 -m unittest discover -s emulator/tests -p 'test_sp16_*.py'` with a Python 3.12 or later. `./sp16 test
+--coverage` (or `make coverage`) also measures line and branch coverage with coverage.py and writes
+`build/coverage/coverage.xml`; CI shows the coverage table in each run's summary.
 
 ## Contributing
 

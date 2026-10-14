@@ -1179,13 +1179,57 @@ def plan_hwsuite(ctx, args, tail):
     return Plan([Step(argv)], notes)
 
 
+# ------------------------------------------------------------------------------------------------ smoke
+SMOKE_OPTS = [
+    Opt("--build", "The research build to run (built with --research, silent or --audio file; default: build/sp16-dev, "
+        "else the only research build).", "NAME", emit=False),
+    Opt("--firmware", "The firmware id in the library (default: the library's selected one).", "ID"),
+    Opt("--speed", "How much faster the screencast plays than real time (default 4).", "N"),
+    Opt("--interval", "Seconds between captured frames (default 0.25).", "SECONDS"),
+    Opt("--out", "Output folder (default <build>/smoke/<run id>).", "DIR", path=True),
+    Opt("--no-video", "Run the checks without recording a screencast.", flag=True),
+    Opt("--keep-frames", "Keep the captured PNG frames next to the screencast.", flag=True),
+]
+
+
+def plan_smoke(ctx, args, tail):
+    info = pick_build(ctx, args.build, need_research=True, prefer=(DEV_NAME,))
+    if (info.assets or {}).get("audio") in ("coreaudio", "both"):
+        raise CliError(f"{ctx.display(info.path)} plays sound; the smoke test only runs silent or --audio file builds: "
+                       f"{build_hint(info.name, '--rebuild --research --audio file')}")
+    argv = [ctx.python(), ctx.tool("smoke.py"), "--build-dir", str(info.path)] + SMOKE_COMMAND.emit(args) + list(tail)
+    notes = [] if shutil.which("ffmpeg") or args.no_video else [
+        "ffmpeg is not installed: the screencast is a GIF made with Pillow, or none (brew install ffmpeg)"]
+    return Plan([Step(argv)], notes)
+
+
 # ------------------------------------------------------------------------------------------------- test
-TEST_OPTS = []
+TEST_OPTS = [
+    Opt("--coverage", "Measure line coverage of emulator/ with coverage.py (pip install coverage) and write "
+        "build/coverage/coverage.xml.", flag=True, emit=False),
+]
+COVERAGE_DIR = "coverage"
 
 
 def plan_test(ctx, args, tail):
-    argv = [ctx.python(), "-m", "unittest", "discover", "-s", str(ctx.tools / "tests"), "-p", "test_sp16_*.py"] + list(tail)
-    return Plan([Step(argv, {"PYTHONDONTWRITEBYTECODE": "1"})])
+    tests = ["unittest", "discover", "-s", str(ctx.tools / "tests"), "-p", "test_sp16_*.py"] + list(tail)
+    env = {"PYTHONDONTWRITEBYTECODE": "1"}
+    if not args.coverage:
+        return Plan([Step([ctx.python(), "-m", *tests], env)])
+    python = ctx.python()
+    if not ctx.dry_run and ctx.capture([python, "-c", "import coverage"], timeout=30)[0]:
+        raise CliError(f"--coverage needs coverage.py in the build tools' Python: {python} -m pip install coverage")
+    if not ctx.dry_run:
+        ensure_build_root(ctx)
+        (ctx.build / COVERAGE_DIR).mkdir(mode=0o700, exist_ok=True)
+    folder = ctx.build / COVERAGE_DIR
+    data = ["--data-file", str(folder / ".coverage")]
+    measure = [python, "-m", "coverage", "run", *data, "--branch", "--source", str(ctx.tools),
+               "--omit", str(ctx.tools / "tests" / "*"), "-m", *tests]
+    return Plan([Step(measure, env),
+                 Step([python, "-m", "coverage", "report", *data, "--skip-empty", "--sort=cover"]),
+                 Step([python, "-m", "coverage", "xml", *data, "-o", str(folder / "coverage.xml"), "-q"])],
+                [f"coverage report: {ctx.display(folder / 'coverage.xml')}"])
 
 
 # ------------------------------------------------------------------------------------------------- audio
@@ -2843,7 +2887,7 @@ def make_commands():
                "The key is never printed or written; --gpl-archive reads it from the official GPL archive in memory.",
                "The emulator must not be running while the stick is changed; stop it first (by its exact process id)."],
         direct=True)
-    global BUILD_COMMAND, RUN_COMMAND, FIRMWARE_COMMAND, DIAGNOSTICS_COMMAND, MOD_COMMAND, HWSUITE_COMMAND
+    global BUILD_COMMAND, RUN_COMMAND, FIRMWARE_COMMAND, DIAGNOSTICS_COMMAND, MOD_COMMAND, HWSUITE_COMMAND, SMOKE_COMMAND
     BUILD_COMMAND = add(
         "build", "Build and run", "Build the emulator app (QEMU, Linux guest image, macOS app) into build/NAME",
         "Builds a firmware-free app into build/NAME (default sp16). All builds share one firmware library "
@@ -2976,9 +3020,24 @@ def make_commands():
         notes=["Exit codes: 0 pass, 1 fail, 2 blocked (missing profile data), 3 environment, 4 session lost.",
                "Only a full-tier run in which every check passes can mark a profile verified."],
         handler=plan_hwsuite)
+    SMOKE_COMMAND = add(
+        "smoke", "Develop and test", "Run the end-to-end smoke test and record a sped-up screencast",
+        "Boots a research build (about a minute) and checks that it runs and responds: a settled home screen, live "
+        "lamps, a selector detent that changes the LCD, pad presses and PLAY/STOP reaching the firmware, a mounted USB "
+        "stick and a clean stop. It records the whole panel through the control socket (no screen-recording permission) "
+        "and writes a sped-up screencast (MP4 and GIF with ffmpeg) plus smoke-result.json and smoke-report.md. It "
+        "never plays sound and stops only the session it started.",
+        opts=SMOKE_OPTS, usage="./sp16 smoke [--build NAME] [--firmware ID] [--speed N] [options]",
+        examples=["./sp16 smoke", "./sp16 smoke --speed 6", "./sp16 smoke --no-video"],
+        notes=["Needs a build made with --research (make build-dev) and imported firmware.",
+               "Exit codes: 0 pass, 1 a check failed, 3 environment error."],
+        handler=plan_smoke)
     add("test", "Develop and test", "Run the firmware-free unit tests",
-        "Runs the project's unit tests with the build tools' Python. They need no firmware and no running emulator.",
-        usage="./sp16 test [-- UNITTEST_ARGS...]", examples=["./sp16 test", "./sp16 test -- -k panel -v"],
+        "Runs the project's unit tests with the build tools' Python. They need no firmware and no running emulator. "
+        "--coverage measures line and branch coverage of emulator/ (needs coverage.py) and writes "
+        "build/coverage/coverage.xml.",
+        opts=TEST_OPTS, usage="./sp16 test [--coverage] [-- UNITTEST_ARGS...]",
+        examples=["./sp16 test", "./sp16 test --coverage", "./sp16 test -- -k panel -v"],
         handler=plan_test)
     add("clean", "Maintenance", "Delete build outputs; keeps the firmware library and data images",
         "`--name NAME` or `--all` remove each build's app, QEMU, guest image and logs but keep any library and data "
@@ -2991,6 +3050,7 @@ def make_commands():
 
 
 BUILD_COMMAND = RUN_COMMAND = FIRMWARE_COMMAND = DIAGNOSTICS_COMMAND = MOD_COMMAND = HWSUITE_COMMAND = None
+SMOKE_COMMAND = None
 COMMANDS = make_commands()
 BY_NAME = {c.name: c for c in COMMANDS}
 GLOBAL_HELP = """Global options (before the command):

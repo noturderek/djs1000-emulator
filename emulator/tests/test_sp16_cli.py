@@ -454,6 +454,32 @@ class OtherCommandTests(CliCase):
         argv, _ = self.argv("hwsuite", "--make-fixtures", "fx")
         self.assertEqual(argv, [PYTHON, self.tool("hwsuite.py"), "--make-fixtures", "fx"])
 
+    def test_smoke_defaults_and_refusals(self):
+        library = self.make_library(self.build / "library")
+        dev = self.make_build("sp16-dev", research=True, audio="file", library=library)
+        argv, _ = self.argv("smoke", "--speed", "6", "--no-video")
+        self.assertEqual(argv[1:], [self.tool("smoke.py"), "--build-dir", str(dev), "--speed", "6", "--no-video"])
+        loud = self.make_build("loud", research=True, audio="coreaudio", library=library)
+        with self.assertRaisesRegex(cli.CliError, "plays sound"):
+            self.argv("smoke", "--build", loud.name)
+        self.make_build("plain", research=False, library=library)
+        with self.assertRaises(cli.CliError):
+            self.argv("smoke", "--build", "plain")
+
+    def test_coverage_measures_then_reports(self):
+        run = cli.BY_NAME["test"]
+        plan = run.handler(self.ctx, run.parser().parse_args(["--coverage"]), ["-k", "panel"])
+        measure, report, xml = (step.argv for step in plan.steps)
+        self.assertEqual(measure[1:4], ["-m", "coverage", "run"])
+        self.assertIn("--branch", measure)
+        self.assertEqual(measure[-2:], ["-k", "panel"])
+        self.assertEqual(report[1:4], ["-m", "coverage", "report"])
+        self.assertIn(str(self.build / "coverage" / "coverage.xml"), xml)
+        self.assertTrue((self.build / "coverage").is_dir())
+        self.ctx.capture = lambda argv, timeout=30: (1, "")  # coverage.py is not installed
+        with self.assertRaisesRegex(cli.CliError, "pip install coverage"):
+            run.handler(self.ctx, run.parser().parse_args(["--coverage"]), [])
+
     def test_test_command_uses_the_right_folder(self):
         argv, _ = self.argv("test", "--", "-k", "panel")
         self.assertEqual(argv[1:4], ["-m", "unittest", "discover"])
@@ -673,7 +699,7 @@ class HelpTests(CliCase):
             self.assertRegex(out, rf"(?m)^  {command.name}\s+\S")
         self.assertEqual(cli.main([], ctx=self.make_ctx()), 0)
         wanted = {"help", "doctor", "build", "run", "firmware", "diagnostics", "hwsuite", "mod", "ctl", "audio",
-                  "builds", "doctor", "test", "clean", "usb", "bootstrap"}
+                  "builds", "doctor", "test", "clean", "usb", "bootstrap", "smoke"}
         self.assertEqual(wanted, set(cli.BY_NAME))
 
     def test_every_command_documents_every_option_and_an_example(self):
@@ -780,6 +806,10 @@ class DriftTests(unittest.TestCase):
     def test_hwsuite_flags(self):
         tool = self.flags_of(str(TOOLS / "hwsuite.py"))
         self.assertEqual(tool - self.reachable("hwsuite") - {"--build-dir", "--control-build"}, set())
+
+    def test_smoke_flags(self):
+        tool = self.flags_of(str(TOOLS / "smoke.py"))
+        self.assertEqual(tool - self.reachable("smoke") - {"--build-dir"}, set())
 
     def test_sessionctl_commands(self):
         usage = subprocess.run([sys.executable, str(TOOLS / "sessionctl.py"), "--help"], capture_output=True,

@@ -116,7 +116,7 @@ endif
 endif
 
 .PHONY: help doctor bootstrap build build-audio build-record build-dev build-control run run-audio run-dev audio-devices \
-	usb-create usb-add usb-ls usb-mount usb-unmount import list diagnostics hwsuite-smoke test clean clean-all \
+	usb-create usb-add usb-ls usb-mount usb-unmount import list diagnostics smoke hwsuite-smoke test coverage clean clean-all \
 	install uninstall
 
 # ------------------------------------------------------------------------------------------------------ targets
@@ -189,11 +189,17 @@ list: ## List the builds and the imported firmware
 diagnostics: ## Collect a redacted diagnostics zip for a bug report
 	$(SP16EMU) diagnostics $(BUILD_FLAG) $(ARGS)
 
+smoke: ## Run the end-to-end smoke test on build/NAME-dev and record a sped-up screencast (see make build-dev)
+	$(SP16EMU) smoke --build "$(NAME)-dev" $(FIRMWARE_FLAG) $(ARGS)
+
 hwsuite-smoke: ## Run the hardware conformance suite's smoke tier on build/NAME-dev (see make build-dev, build-control)
 	$(SP16EMU) hwsuite --smoke --build "$(NAME)-dev" $(PROFILE_FLAG) $(FIRMWARE_FLAG) $(ARGS)
 
 test: ## Run the firmware-free unit tests
 	$(SP16EMU) test
+
+coverage: ## Run the unit tests with line and branch coverage (needs coverage.py); writes build/coverage/coverage.xml
+	$(SP16EMU) test --coverage
 
 clean: ## Delete build outputs; keeps the firmware library and data images
 	$(SP16EMU) clean --all
