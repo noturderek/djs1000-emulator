@@ -43,6 +43,8 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_NAME = "sp16"
 DEV_NAME = "sp16-dev"
 CONTROL_NAME = "sp16-dev-uncal"
+# Folders in build/ that hold shared data rather than a build: never listed as builds, never valid build names.
+SHARED_FOLDERS = ("library", "downloads", "coverage")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,47}")
 SUFFIX_RE = re.compile(r"[a-z0-9-]{1,32}")
 MIN_TOOL_PYTHON = (3, 12)
@@ -353,7 +355,7 @@ def list_builds(ctx):
     except OSError:
         return builds
     for entry in entries:
-        if entry.name.startswith(".") or entry.name == "library" or entry.is_symlink() or not entry.is_dir():
+        if entry.name.startswith(".") or entry.name in SHARED_FOLDERS or entry.is_symlink() or not entry.is_dir():
             continue
         builds.append(BuildInfo(entry.name, entry, read_assets(entry)))
     return builds
@@ -368,8 +370,9 @@ def library_imports(path):
 
 
 def check_name(name):
-    if not isinstance(name, str) or not NAME_RE.fullmatch(name) or name == "library":
-        raise UsageError(f"build name {name!r} is not valid; use letters, digits, '.', '_' or '-' (at most 48), and not 'library'")
+    if not isinstance(name, str) or not NAME_RE.fullmatch(name) or name in SHARED_FOLDERS:
+        raise UsageError(f"build name {name!r} is not valid; use letters, digits, '.', '_' or '-' (at most 48), and not "
+                         + ", ".join(f"'{folder}'" for folder in SHARED_FOLDERS))
     return name
 
 

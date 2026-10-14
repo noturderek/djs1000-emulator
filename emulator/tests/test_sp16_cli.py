@@ -139,7 +139,7 @@ class BuildTests(CliCase):
         self.assertNotIn("--bundle-suffix", argv)
 
     def test_names_are_validated(self):
-        for bad in ("../x", "a b", ".hidden", "x/y", "a,b", "library"):
+        for bad in ("../x", "a b", ".hidden", "x/y", "a,b", "library", "downloads", "coverage"):
             with self.assertRaises(cli.CliError, msg=bad):
                 self.argv("build", "--name", bad)
 
@@ -499,6 +499,8 @@ class OtherCommandTests(CliCase):
         self.make_build("sp16", audio="file", library=library, pad_calibration="off")
         self.make_build("sp16-dev", research=True, trace="pcmtap", library=library)
         self.make_build("half", complete=False)
+        for shared in ("coverage", "downloads/ver160"):  # written by test --coverage and firmware download
+            (self.build / shared).mkdir(parents=True)
         code, out, _ = self.main("builds")
         self.assertEqual(code, 0)
         lines = {line.split()[0]: line for line in out.splitlines() if line.strip() and not line.startswith("Shared")}
@@ -510,6 +512,7 @@ class OtherCommandTests(CliCase):
         code, out, _ = self.main("builds", "--json")
         rows = json.loads(out)
         self.assertEqual([r["name"] for r in rows], ["half", "sp16", "sp16-dev"])
+        self.assertTrue({cli.DOWNLOAD_DIR, cli.COVERAGE_DIR} <= set(cli.SHARED_FOLDERS))
         self.assertEqual(rows[1]["firmware"], 2)
 
 
