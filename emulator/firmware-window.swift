@@ -403,9 +403,9 @@ final class FirmwareLibrarySetupApplication: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The one-time, non-blocking notice for firmware that runs without a verified profile (owner decision of
-/// 2026-10-13). It shows the compatibility findings once per firmware image; the window title and the library's
-/// Status column keep saying "unverified".
+/// The one-time, non-blocking notice for firmware that runs without a verified profile (D2 in docs/architecture.md).
+/// It shows the compatibility findings once per firmware image; the window title and the library's Status column
+/// keep saying "unverified".
 enum UnverifiedNotice {
     static var panel: NSPanel?
     static let defaultsKey = "sp16.unverified-notice-seen"

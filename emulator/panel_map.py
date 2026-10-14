@@ -160,7 +160,7 @@ RGB_FULL = 74
 PAD_A_MIN = PROFILE["panel"]["pad_curve"]["a_min"]
 PAD_A_MAX = PROFILE["panel"]["pad_curve"]["a_max"]
 PAD_B_CONTACT = PROFILE["panel"]["pad_curve"]["b_contact"]
-# PC-NAV-1: frames per selector notification window (1.60: 8).
+# Frames per selector notification window (1.60: 8).
 SELECTOR_WINDOW_FRAMES = PROFILE["panel"]["selector_window_frames"]
 
 

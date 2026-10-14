@@ -1,4 +1,4 @@
-"""Jitter buffer, drift controller and device-state checks for the host audio output (M4b2), on synthetic input.
+"""Jitter buffer, drift controller and device-state checks for the host audio output, on synthetic input.
 
 Compiles tools/sp16-emulator/audio-selftest.swift (never part of the app) and runs it in virtual time; no
 audio device is opened and nothing is played.

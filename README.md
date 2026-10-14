@@ -13,16 +13,18 @@ from that update; this repository contains none of it.
 ## What you need
 
 - A Mac with Apple silicon (the emulator uses Hypervisor.framework), macOS 13 or later.
-- Xcode Command Line Tools (`xcode-select --install`): Swift, `codesign`, `make`, and `/usr/bin/python3`, which runs
-  `./sp16` and which the app uses to import firmware.
+- Xcode Command Line Tools (`xcode-select --install`): Swift, `codesign`, `make`, and `/usr/bin/python3` (Python 3.9),
+  which is enough to start `./sp16` and which the app uses to import firmware.
 - Python 3.12 or later for the build tools (for example `brew install python@3.12`). `./sp16` finds it by
   itself; `./sp16 doctor` tells you if it is missing.
 - QEMU build dependencies: `brew install ninja pkgconf glib pixman`. QEMU itself is downloaded from
   download.qemu.org as source and built on your Mac during the first build.
-- Docker Desktop, for the one-time build of the Linux guest base image (Debian packages and this project's code).
-  The emulator does not need Docker to run.
+- Docker Desktop (or another Docker engine, such as OrbStack), running during every `./sp16 build`: it builds the
+  Linux guest base image from Debian packages and this project's code (later builds reuse Docker's cache). `./sp16 mod
+  sdk` uses it too. A built emulator runs without Docker.
 - About 3 GB of free disk space.
-- For the hardware conformance suite only: `python3 -m pip install pillow numpy` and `brew install tesseract`.
+- For the hardware conformance suite only: `pillow` and `numpy` in the Python that runs the build tools
+  (`./sp16 doctor` prints the exact install command for it) and `brew install tesseract`.
 
 ## Quick start
 
@@ -54,7 +56,7 @@ hardware suite. The steps below are the same thing by hand.
 ### 1. Build
 
 ```sh
-git clone <this repository> sp16-emulator
+git clone https://github.com/noturderek/sp16-emulator.git
 cd sp16-emulator
 ./sp16 doctor     # checks your Mac and prints the fix for anything missing
 ./sp16 build
@@ -85,7 +87,8 @@ Download both yourself:
   `ver150`, `ver140`, `ver131`). Or let the tool fetch it: `./sp16 firmware download --version 1.60` shows the
   file name, the URL and the size and asks first (`--info` only shows them, `--yes` agrees); it downloads only from
   that official host, over https, checks the zip, the version, the CRC and (for 1.50 and 1.60) the SHA-256 the
-  profiles pin, and keeps the `.UPD` in `build/downloads/`. It never downloads the key or the GPL archive.
+  profiles pin, and keeps the `.UPD` in `build/downloads/ver160/` (one folder per version; `--to DIR` saves it
+  elsewhere). It never downloads the key or the GPL archive.
 - **GPL source archive.** The official open source page:
   <https://www.pioneerdj.com/en/support/open-source-code-distribution/gnu-open-source-license/>. Download the
   TORAIZ SP-16 source archive (two zip parts). Keep both parts, in order.
@@ -188,7 +191,9 @@ into `build/.cache`, a few seconds), then for example:
 ## Commands and Makefile
 
 `./sp16 help` lists every command; `./sp16 help <command>` (or `<command> --help`) shows its options and
-examples. `./sp16 --dry-run <command> ...` prints the exact tool commands instead of running them.
+examples. `./sp16 --dry-run <command> ...` prints the exact tool commands instead of running them, and `--verbose`
+prints each one as it runs. `SP16EMU_BUILD_DIR` moves the build folder (default `build/`) and `SP16EMU_PYTHON` names
+the Python 3.12+ for the build tools.
 
 | Command | What it does |
 |---|---|
@@ -204,8 +209,9 @@ examples. `./sp16 --dry-run <command> ...` prints the exact tool commands instea
 | `mod new\|check\|run\|test\|sdk\|package` | Develop and test firmware mods |
 | `ctl` | Drive a running research session (buttons, encoders, LCD) |
 | `hwsuite` | Run the hardware conformance suite |
+| `smoke` | Run the end-to-end smoke test and record a sped-up screencast |
 | `diagnostics` | Collect a redacted bug-report zip |
-| `test` | Run the firmware-free unit tests |
+| `test` | Run the firmware-free unit tests (`--coverage` measures coverage) |
 | `clean` | Delete build outputs; the firmware library and data images are kept unless you ask for `--everything` |
 
 `make help` lists the ready-made configurations (the Makefile only calls `./sp16`; `make -n <target>` shows the
@@ -221,7 +227,7 @@ it); no shell files are touched.
 | `make run`, `run-audio`, `run-dev` | Launch the matching build (`FIRMWARE=`, `USB_IMAGE=`) |
 | `make usb-add FILES="a.wav b.wav"` | Copy samples onto the stick (creating `build/stick.img` if needed); `usb-create`, `usb-ls`, `usb-mount`, `usb-unmount`; `USB_IMAGE=` picks another image |
 | `make import UPD=... KEY=...` (or `GPL="part1 part2"`) | Import firmware |
-| `make list`, `doctor`, `diagnostics`, `test`, `hwsuite-smoke`, `audio-devices` | Information, checks and tests |
+| `make list`, `doctor`, `diagnostics`, `test`, `coverage`, `smoke`, `hwsuite-smoke`, `audio-devices` | Information, checks and tests |
 | `make clean` / `make clean-all CONFIRM=1` | Delete build outputs / everything in `build/` including firmware |
 
 The root `sp16` Python launcher dispatches to `emulator/sp16emu.py`. That CLI calls
@@ -232,7 +238,7 @@ The root `sp16` Python launcher dispatches to `emulator/sp16emu.py`. That CLI ca
 
 A version is **verified** when it has a verified compatibility profile in `emulator/profiles/` (one that passed the
 full hardware conformance suite). Verified today: **1.50 and 1.60**. Any other update that was encrypted with the
-correct key also runs, as **unverified**: it uses the reference measurements of the verified versions, the window title
+correct key also runs, as **unverified**: it uses the measurements of the reference profile (1.60), the window title
 says "(unverified)", the library lists it as unverified, and the app shows its compatibility report once. The
 integrity checks are the same for every version (a changed library image is refused at boot).
 
@@ -245,16 +251,27 @@ To turn an unverified version into a verified one, see [docs/architecture.md](do
 
 ## Load a modified firmware
 
-There are three ways, described in [docs/modding.md](docs/modding.md):
+The repository ships the tooling to develop and run mods, not any mod. You write your own (or use a mod archive
+someone shared) against firmware you imported. There are three ways, described in [docs/modding.md](docs/modding.md):
 
 1. **Recipes**: small JSON patch files (base hash, offset or byte pattern, replacement, expected result hash),
-   applied when the app starts. `emulator/mods/utility-label.json` renames one HOME screen label as an example.
+   applied when the app starts.
 2. **Developer overlay**: a folder of replaced files, recipes and preload libraries shared into a running emulator;
-   edit, then restart only the firmware's app in about ten seconds.
+   edit, then restart only the firmware's app (about 0.2 s; the screen settles a few seconds later).
 3. **Repacked update**: `./sp16 mod package --upd` builds a modified update from a verified base and your recipes.
-   It carries an `SP16MODLAB-<version>` marker, so it can never pass for an official update, and the importer accepts
-   it only if it can rebuild it byte for byte from your verified base. Repacked updates are for this emulator only:
+   It carries an `SP16MODLAB-<version>` marker, so it can never pass for an official update. The importer rebuilds it
+   from your verified base: an identical rebuild is verified, anything else runs as unverified with the reason
+   recorded. Repacked updates are for this emulator only:
    never flash them to hardware and never distribute them (they contain the vendor's firmware).
+
+## Smoke test and screencast
+
+`./sp16 smoke` (or `make smoke`) boots a research build for about a minute and checks that the emulator runs and
+responds: a settled home screen, live lamps, a selector detent that changes the LCD, pad presses and PLAY/STOP
+reaching the firmware, the mounted USB stick and a clean stop. It records the whole panel through the control socket
+and writes a sped-up screencast (`screencast.mp4` and `screencast.gif`, 4x by default; `--speed N`) with a report to
+`build/sp16-dev/smoke/<run id>/`. It needs a `--research` build (`make build-dev`), imported firmware and, for the
+screencast, ffmpeg (`brew install ffmpeg`); it never plays sound.
 
 ## Hardware conformance suite
 
@@ -281,7 +298,6 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | `the build tools need Python 3.12 or later` | `brew install python@3.12`; or name one with `./sp16 --python /path/to/python3.12 ...` (or `SP16EMU_PYTHON`, `make TOOL_PYTHON=...`). |
 | `build/sp16 already exists` | `./sp16 run` launches it; `./sp16 build --rebuild` rebuilds it in place and keeps the firmware library and data; `--name` makes another build. |
 | QEMU build fails | Read `build/<name>/qemu-configure.log` or `qemu-build.log`; usually a missing `ninja`, `pkgconf`, `glib` or `pixman` (`./sp16 doctor` checks them). |
-| QEMU link fails with `64-bit mach-o not 8-byte aligned` | A QEMU build folder configured with GNU `ar` (Homebrew `binutils` on `PATH`) from an older checkout; the build now uses Apple's `/usr/bin/ar`. Delete `build/sp16/qemu-build` and build again. |
 | Guest image build fails | Start Docker Desktop and retry; read `build/sp16/guest-build.log`. |
 | Window title says `(unverified)` | The version has no verified profile (see the table above); it runs on the reference measurements. `./sp16 firmware check --id <id>` prints the report. |
 | Import: `update CRC does not match` or `not sector-aligned` | The update file is damaged or incomplete; download it again. |
@@ -292,7 +308,7 @@ See [docs/hardware-suite.md](docs/hardware-suite.md) for the full steps.
 | `usb ...: is in use by a running emulator` | The emulator (or a leftover QEMU) has the stick. Quit it, stopping only the process ids the message names, then repeat the command. Mounting a stick the emulator writes to would corrupt it. |
 | `usb ...: already attached to this Mac` | Release it with `./sp16 usb unmount`, then repeat. `./sp16 run` also starts without the stick (and says why) while the Mac holds it. |
 | `usb ...: cannot attach` | The image has no FAT32 file system (for example a zero-filled file). Recreate it with `./sp16 usb create --force`, or `usb add` formats a blank image by itself. |
-| `usb ...: cannot attach ... no mountable file systems` on a clone in Downloads, Desktop or Documents | macOS privacy protection refuses a mount whose mount point is in that folder, even though the image itself is fine. Current versions mount in `~/Library/Caches/sp16emu/usb-mnt` instead; update the clone. `./sp16 doctor` warns about the location. A message that says "cannot mount ... privacy protection" means the same: move the clone (for example to `~/src/sp16-emulator`) or give your terminal app Full Disk Access (System Settings > Privacy & Security), then repeat. |
+| `usb ...: cannot mount ... privacy protection` (clone in Downloads, Desktop, Documents or iCloud Drive) | macOS privacy protection refuses some disk operations in those folders, even though the image itself is fine (`./sp16 doctor` warns about the location). Move the clone (for example to `~/src/sp16-emulator`) or give your terminal app Full Disk Access (System Settings > Privacy & Security), then repeat. |
 | The window is black | Read `console.txt` in the newest folder under `build/sp16/sessions/`. |
 | The app quit or crashed | Start it again: it offers to collect diagnostics. Then see [Reporting a bug](#reporting-a-bug). The newest folder under `build/sp16/sessions/` holds `app.log` (the app's log) and `qemu-stderr.txt`. |
 
@@ -321,7 +337,9 @@ and build logs (the last 500 lines of each); and macOS crash reports of the last
 What is never in it: firmware, updates (`.UPD`), key files or GPL archives, the firmware image, or your data image
 (projects and settings). The tool refuses any file named `*.key`, `*.upd`, `*.sqfs`, `*.img`, `*.iso`, `*.sfs` or
 `*.mot`. Text files are redacted: your home folder becomes `~`, your account name `<user>`, your Mac's name
-`<host>`, your full name `<name>` and e-mail addresses `<email>`. Add `--key-file <your key file>` to the command to
+`<host>`, your full name `<name>` and e-mail addresses `<email>`; the machine identifiers macOS writes into crash
+reports are blanked, and an audio output device you chose is reported only as `<set>` (its UID can contain a serial
+number). Add `--key-file <your key file>` to the command to
 also prove that the key does not occur anywhere in the zip (the key is never printed). Paths outside your home folder,
 such as an external drive's name, are kept.
 
@@ -332,7 +350,7 @@ such as an external drive's name, are kept.
 ```text
 sp16, Makefile    the command line (`./sp16 help`) and the ready-made build configurations (`make help`)
 emulator/            sp16emu.py (the command), build tool, firmware importer, Linux guest base, hardware shim, panel model, macOS app,
-                     compatibility profiles, example recipe, developer tools, hardware suite, unit tests
+                     compatibility profiles, developer tools, hardware suite, unit tests
 docs/                Python CLI/setup, architecture, modding guide, hardware suite, profile reference
 .agents/skills/      agent skills: sp16-bootstrap (fresh clone to a running emulator) and sp16-emulator-setup (setup details, mods, troubleshooting)
 ```
@@ -340,11 +358,18 @@ docs/                Python CLI/setup, architecture, modding guide, hardware sui
 See [Python CLI and Setup](docs/python-cli-and-setup.md) for the launcher layout, PATH installation and prerequisites.
 
 Run the firmware-free unit tests with `./sp16 test` (or `make test`); it runs
-`python3 -m unittest discover -s emulator/tests -p 'test_sp16_*.py'` with a Python 3.12 or later.
+`python3 -m unittest discover -s emulator/tests -p 'test_sp16_*.py'` with a Python 3.12 or later. `./sp16 test
+--coverage` (or `make coverage`) also measures line and branch coverage with coverage.py and writes
+`build/coverage/coverage.xml`; CI shows the coverage table in each run's summary.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md): no firmware or firmware-derived material, no mods, and `./sp16 test` before a
+pull request.
 
 ## License
 
-The code in this repository is released under the MIT License ([LICENSE](LICENSE)). Third-party components that the
+The code in this repository is released into the public domain under the [Unlicense](LICENSE). Third-party components that the
 build downloads and builds on your Mac (QEMU, Debian packages in the guest base image) keep their own licences; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Firmware you import is not covered by either and remains subject
 to its owner's terms.

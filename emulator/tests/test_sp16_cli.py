@@ -1,5 +1,6 @@
-"""The sp16emu command line and the Makefile: argument mapping, defaults, help coverage and drift against the tools."""
+"""The ./sp16 command line and the Makefile: argument mapping, defaults, help coverage and drift against the tools."""
 import ast
+import errno
 import hashlib
 import importlib.util
 import io
@@ -93,7 +94,7 @@ class CliCase(unittest.TestCase):
         return path
 
     def argv(self, command, *args):
-        """The tool command line sp16emu would run (after the interpreter) and the notes it prints."""
+        """The tool command line ./sp16 would run (after the interpreter) and the notes it prints."""
         run = cli.BY_NAME[command]
         head, tail = cli.split_tail(list(args))
         plan = run.handler(self.ctx, run.parser().parse_args(head), tail)
@@ -239,7 +240,7 @@ class BuildTests(CliCase):
         self.assertIn("firmware import", plan.after[0])
         self.make_library(self.build / "library")
         plan = cli.BY_NAME["build"].handler(self.ctx, cli.BY_NAME["build"].parser().parse_args(["--name", "x"]), [])
-        self.assertIn("Next: sp16emu run --name x", plan.after[0])
+        self.assertIn("Next: ./sp16 run --name x", plan.after[0])
         cli.execute(self.ctx, plan)
         self.assertIn("Next:", self.ctx.err.getvalue())
 
@@ -289,9 +290,9 @@ class RunTests(CliCase):
 
     def test_a_missing_build_names_the_command_that_creates_it(self):
         self.make_build("other")
-        with self.assertRaisesRegex(cli.CliError, r"sp16emu build --name nope.*existing builds: other"):
+        with self.assertRaisesRegex(cli.CliError, r"./sp16 build --name nope.*existing builds: other"):
             self.argv("run", "--name", "nope")
-        with self.assertRaisesRegex(cli.CliError, r"there is no build.*sp16emu build --name sp16"):
+        with self.assertRaisesRegex(cli.CliError, r"there is no build.*./sp16 build --name sp16"):
             shutil.rmtree(self.build / "other")
             self.argv("run")
 
@@ -363,7 +364,7 @@ class FirmwareTests(CliCase):
     def test_unknown_action_and_missing_build(self):
         with self.assertRaises(cli.UsageError):
             cli.BY_NAME["firmware"].parser().parse_args(["frobnicate"])
-        with self.assertRaisesRegex(cli.CliError, "sp16emu build --name sp16"):
+        with self.assertRaisesRegex(cli.CliError, "./sp16 build --name sp16"):
             self.argv("firmware", "list")
 
 
@@ -390,9 +391,8 @@ class OtherCommandTests(CliCase):
         argv, _ = self.argv("mod", "package", "--mod", "m", "--out", "o", "--upd", "--key-file", "k")
         self.assertEqual(argv[2:], ["package", "--output", str(dev), "--mod", "m", "--out", "o", "--upd",
                                     "--key-file", "k"])
-        argv, _ = self.argv("mod", "new", "--mod", "m", "--id", "x", "--from-recipe", "utility-label")
-        self.assertEqual(argv, [PYTHON, self.tool("fwdev.py"), "new", "--mod", "m", "--id", "x", "--from-recipe",
-                                "utility-label"])
+        argv, _ = self.argv("mod", "new", "--mod", "m", "--id", "x")
+        self.assertEqual(argv, [PYTHON, self.tool("fwdev.py"), "new", "--mod", "m", "--id", "x"])
         argv, _ = self.argv("mod", "sdk", "--mod", "m")
         self.assertEqual(argv, [PYTHON, self.tool("fwdev.py"), "sdk", "--mod", "m"])
         with self.assertRaises(cli.UsageError):
@@ -421,7 +421,7 @@ class OtherCommandTests(CliCase):
 
     def test_ctl_without_a_session(self):
         self.make_build("sp16-dev", research=True)
-        with self.assertRaisesRegex(cli.CliError, "no running research session.*sp16emu run --name sp16-dev"):
+        with self.assertRaisesRegex(cli.CliError, "no running research session.*./sp16 run --name sp16-dev"):
             self.argv("ctl", "metrics")
         argv, _ = self.argv("ctl", "--runtime", "r.json", "press", "play", "0.2")
         self.assertEqual(argv[2:], ["--runtime", "r.json", "press", "play", "0.2"])
@@ -453,6 +453,32 @@ class OtherCommandTests(CliCase):
     def test_hwsuite_tools_without_a_build(self):
         argv, _ = self.argv("hwsuite", "--make-fixtures", "fx")
         self.assertEqual(argv, [PYTHON, self.tool("hwsuite.py"), "--make-fixtures", "fx"])
+
+    def test_smoke_defaults_and_refusals(self):
+        library = self.make_library(self.build / "library")
+        dev = self.make_build("sp16-dev", research=True, audio="file", library=library)
+        argv, _ = self.argv("smoke", "--speed", "6", "--no-video")
+        self.assertEqual(argv[1:], [self.tool("smoke.py"), "--build-dir", str(dev), "--speed", "6", "--no-video"])
+        loud = self.make_build("loud", research=True, audio="coreaudio", library=library)
+        with self.assertRaisesRegex(cli.CliError, "plays sound"):
+            self.argv("smoke", "--build", loud.name)
+        self.make_build("plain", research=False, library=library)
+        with self.assertRaises(cli.CliError):
+            self.argv("smoke", "--build", "plain")
+
+    def test_coverage_measures_then_reports(self):
+        run = cli.BY_NAME["test"]
+        plan = run.handler(self.ctx, run.parser().parse_args(["--coverage"]), ["-k", "panel"])
+        measure, report, xml = (step.argv for step in plan.steps)
+        self.assertEqual(measure[1:4], ["-m", "coverage", "run"])
+        self.assertIn("--branch", measure)
+        self.assertEqual(measure[-2:], ["-k", "panel"])
+        self.assertEqual(report[1:4], ["-m", "coverage", "report"])
+        self.assertIn(str(self.build / "coverage" / "coverage.xml"), xml)
+        self.assertTrue((self.build / "coverage").is_dir())
+        self.ctx.capture = lambda argv, timeout=30: (1, "")  # coverage.py is not installed
+        with self.assertRaisesRegex(cli.CliError, "pip install coverage"):
+            run.handler(self.ctx, run.parser().parse_args(["--coverage"]), [])
 
     def test_test_command_uses_the_right_folder(self):
         argv, _ = self.argv("test", "--", "-k", "panel")
@@ -525,6 +551,32 @@ class CleanTests(CliCase):
         self.main("clean", "--name", "other")
         self.assertFalse((other / "assets.json").exists())
         self.assertTrue((folder / "assets.json").exists())
+
+    def test_clean_retries_when_finder_refills_a_folder(self):
+        folder, _, _ = self.populate()
+        other = self.make_build("other")
+        for build in (folder, other):  # a QEMU source tree: removed with rmtree, where the race happens
+            (build / "qemu-10.2.1").mkdir()
+            (build / "qemu-10.2.1/configure").write_text("x")
+        real_rmtree = cli.shutil.rmtree
+        calls = []
+
+        def finder_race(path, *args, **kwargs):
+            calls.append(path)
+            if len(calls) == 1:  # the first attempt finds a .DS_Store that appeared meanwhile
+                raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
+            return real_rmtree(path, *args, **kwargs)
+
+        with mock.patch.object(cli.shutil, "rmtree", side_effect=finder_race), mock.patch.object(cli.time, "sleep"):
+            code, _, _ = self.main("clean", "--name", "other")
+        self.assertEqual(code, 0)
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertFalse((other / "assets.json").exists())
+        with mock.patch.object(cli.shutil, "rmtree", side_effect=OSError(errno.ENOTEMPTY, "Directory not empty")), \
+                mock.patch.object(cli.time, "sleep"):
+            code, _, err = self.main("clean", "--name", "sp16")
+        self.assertEqual(code, 1)
+        self.assertIn("close any Finder window", err)
 
     def test_everything_needs_confirmation_and_stays_inside_build(self):
         self.populate()
@@ -647,7 +699,7 @@ class HelpTests(CliCase):
             self.assertRegex(out, rf"(?m)^  {command.name}\s+\S")
         self.assertEqual(cli.main([], ctx=self.make_ctx()), 0)
         wanted = {"help", "doctor", "build", "run", "firmware", "diagnostics", "hwsuite", "mod", "ctl", "audio",
-                  "builds", "doctor", "test", "clean", "usb", "bootstrap"}
+                  "builds", "doctor", "test", "clean", "usb", "bootstrap", "smoke"}
         self.assertEqual(wanted, set(cli.BY_NAME))
 
     def test_every_command_documents_every_option_and_an_example(self):
@@ -655,7 +707,7 @@ class HelpTests(CliCase):
             for form in (["help", command.name], [command.name, "--help"]):
                 code, out, _ = self.main(*form)
                 self.assertEqual(code, 0)
-                self.assertIn(f"sp16emu {command.name}:", out)
+                self.assertIn(f"./sp16 {command.name}:", out)
                 self.assertIn("Examples:", out)
                 for opt in command.opts:
                     for flag in opt.flags:
@@ -674,7 +726,7 @@ class HelpTests(CliCase):
         code, _, err = self.main("run", "--name", "nope")
         self.assertEqual(code, 1)
         self.assertEqual(len(err.strip().splitlines()), 1)
-        self.assertTrue(err.startswith("sp16emu: "))
+        self.assertTrue(err.startswith("sp16: "))
 
     def test_source_is_python_39_syntax(self):
         ast.parse((TOOLS / "sp16emu.py").read_text(), feature_version=(3, 9))
@@ -717,8 +769,7 @@ class DriftTests(unittest.TestCase):
     def test_native_build_flags(self):
         tool = self.flags_of(str(TOOLS / "native.py"), "build")
         handled = self.reachable("build") | {"--output", "--decoupled", "--profile"}
-        legacy = {"--rootfs", "--mod", "--app-arg", "--no-persistence"}  # private builds only; reachable after `--`
-        self.assertEqual(tool - handled - legacy, set(), "native.py build has options sp16emu does not know")
+        self.assertEqual(tool - handled, set(), "native.py build has options ./sp16 does not know")
 
     def test_native_build_choices(self):
         text = subprocess.run([sys.executable, str(TOOLS / "native.py"), "build", "--help"], capture_output=True,
@@ -755,6 +806,10 @@ class DriftTests(unittest.TestCase):
     def test_hwsuite_flags(self):
         tool = self.flags_of(str(TOOLS / "hwsuite.py"))
         self.assertEqual(tool - self.reachable("hwsuite") - {"--build-dir", "--control-build"}, set())
+
+    def test_smoke_flags(self):
+        tool = self.flags_of(str(TOOLS / "smoke.py"))
+        self.assertEqual(tool - self.reachable("smoke") - {"--build-dir"}, set())
 
     def test_sessionctl_commands(self):
         usage = subprocess.run([sys.executable, str(TOOLS / "sessionctl.py"), "--help"], capture_output=True,

@@ -38,7 +38,7 @@ def framebuffer(**changes):
 
 class NativeTransportTests(unittest.TestCase):
     def test_host_app_survives_peer_close_sigpipe(self):
-        # PC-REL-3: a research client closing before the reply write raised SIGPIPE and silently killed the app.
+        # A research client closing before the reply write raised SIGPIPE and silently killed the app.
         source = (TOOLS / "native-window.swift").read_text()
         self.assertIn("signal(SIGPIPE, SIG_IGN)", source)
         self.assertGreaterEqual(source.count("SO_NOSIGPIPE"), 2)
@@ -46,46 +46,46 @@ class NativeTransportTests(unittest.TestCase):
     def test_trace_is_research_only_and_default_off(self):
         base = native.arguments(Path("/q"), Path("/g"), "/s")
         self.assertNotIn("sp16.trace", " ".join(base))
-        traced = native.arguments(Path("/q"), Path("/g"), "/s", None, "strace")
+        traced = native.arguments(Path("/q"), Path("/g"), "/s", trace="strace")
         self.assertIn("sp16.trace=strace", " ".join(traced))
         with self.assertRaises(ValueError):
-            native.arguments(Path("/q"), Path("/g"), "/s", None, "bogus")
+            native.arguments(Path("/q"), Path("/g"), "/s", trace="bogus")
         with self.assertRaises(ValueError):
-            native.build("x", "y", research=False, trace="strace")
+            native.build("y", research=False, trace="strace")
 
     def test_pcm_tap_is_a_research_trace_mode_off_by_default(self):
-        self.assertIn("sp16.trace=pcmtap", " ".join(native.arguments(Path("/q"), Path("/g"), "/s", None, "pcmtap")))
+        self.assertIn("sp16.trace=pcmtap", " ".join(native.arguments(Path("/q"), Path("/g"), "/s", trace="pcmtap")))
         self.assertNotIn("pcmtap", " ".join(native.arguments(Path("/q"), Path("/g"), "/s")))
         with self.assertRaises(ValueError):
-            native.build("x", "y", research=False, trace="pcmtap")
+            native.build("y", research=False, trace="pcmtap")
 
     def test_audio_transport_is_a_dedicated_port_off_by_default(self):
         base = " ".join(native.arguments(Path("/q"), Path("/g"), "/s"))
         self.assertNotIn("sp16.pcm", base)
         self.assertNotIn("sp16.audio", base)
-        audio = native.arguments(Path("/q"), Path("/g"), "/s", None, None, False, "file")
+        audio = native.arguments(Path("/q"), Path("/g"), "/s", audio="file")
         text = " ".join(audio)
         self.assertIn("name=sp16.pcm", text)
         self.assertIn("path=/s.pcm,server=on", text)
         self.assertIn("sp16.audio=file", text)
         self.assertIn("name=sp16.ui", text)
         with self.assertRaises(ValueError):
-            native.arguments(Path("/q"), Path("/g"), "/s", None, None, False, "device")
+            native.arguments(Path("/q"), Path("/g"), "/s", audio="device")
         with self.assertRaises(ValueError):
-            native.build("x", "y", research=False, profile=None, audio="file")
+            native.build("y", research=False, profile=None, audio="file")
         self.assertIn("audio-sink.swift", native.SWIFT_SOURCES)
         self.assertIn("audio-output.swift", native.SWIFT_SOURCES)
 
     def test_host_output_is_opt_in_and_guest_transport_is_unchanged(self):
         self.assertEqual(native.AUDIO_MODES, ("file", "coreaudio", "both"))
         for mode in ("coreaudio", "both"):
-            text = " ".join(native.arguments(Path("/q"), Path("/g"), "/s", None, None, False, mode))
+            text = " ".join(native.arguments(Path("/q"), Path("/g"), "/s", audio=mode))
             self.assertIn("sp16.audio=file", text)   # the guest only knows the transport, not the host sink
             self.assertIn("name=sp16.pcm", text)
         with self.assertRaises(ValueError):
-            native.build("x", "y", research=True, audio="file", audio_device="uid")
+            native.build("y", research=True, audio="file", audio_device="uid")
         with self.assertRaises(ValueError):
-            native.build("x", "y", research=True, audio="coreaudio", audio_device="bad\nuid")
+            native.build("y", research=True, audio="coreaudio", audio_device="bad\nuid")
 
     def test_fragmented_messages_preserve_frame_and_following_ack(self):
         payload = struct.pack(">HHI", 800, 480, 21) + b"pixel-data"
@@ -192,22 +192,17 @@ class BundleIdentityTests(unittest.TestCase):
                 app = native.bundle(output, Path("/q"), Path("/g"), **kwargs)
             return plistlib.loads((app / "Contents/Info.plist").read_bytes())
 
-    @unittest.skip("legacy build files are not part of the public repository")
-    def test_default_bundle_ids_unchanged(self):
-        self.assertEqual(self.plist_for()["CFBundleIdentifier"], "local.sp16-emulator.legacy")
+    def test_bundle_identity_is_the_decoupled_one(self):
+        self.assertEqual(self.plist_for()["CFBundleIdentifier"], "local.sp16-compatible.emulator")
         full = self.plist_for(profile="fullpanel")
-        self.assertEqual(full["CFBundleIdentifier"], "local.sp16-emulator.legacy.fullpanel")
-        self.assertEqual(full["CFBundleName"], "SP16 Emulator Full Panel")
-        mod = self.plist_for(variant="utility-label", profile="fullpanel")
-        self.assertEqual(mod["CFBundleIdentifier"],
-                         "local.sp16-emulator.legacy.utility-label.fullpanel")
+        self.assertEqual(full["CFBundleIdentifier"], "local.sp16-compatible.emulator.fullpanel")
+        self.assertEqual(full["CFBundleName"], "SP-16 Compatible Emulator")
+        self.assertEqual(full["CFBundleExecutable"], "SP16Emulator")
 
-    @unittest.skip("legacy build files are not part of the public repository")
     def test_suffix_appends_to_bundle_id_and_name(self):
         suffixed = self.plist_for(profile="fullpanel", bundle_suffix="devtest")
-        self.assertEqual(suffixed["CFBundleIdentifier"],
-                         "local.sp16-emulator.legacy.fullpanel.devtest")
-        self.assertEqual(suffixed["CFBundleName"], "SP16 Emulator Full Panel devtest")
+        self.assertEqual(suffixed["CFBundleIdentifier"], "local.sp16-compatible.emulator.fullpanel.devtest")
+        self.assertEqual(suffixed["CFBundleName"], "SP-16 Compatible Emulator devtest")
 
     def test_suffix_validation(self):
         for token in ["a", "devtest", "task-42", "0", "a" * 32]:
@@ -219,7 +214,7 @@ class BundleIdentityTests(unittest.TestCase):
 
     def test_build_rejects_bad_suffix_before_any_work(self):
         with self.assertRaises(ValueError):
-            native.build("x", "y", profile="fullpanel", bundle_suffix="Bad_Token")
+            native.build("y", profile="fullpanel", bundle_suffix="Bad_Token")
 
     def test_argument_parser_accepts_bundle_suffix(self):
         from unittest import mock
@@ -236,7 +231,7 @@ class BundleIdentityTests(unittest.TestCase):
         self.assertEqual(window.count("menu.addItem(editMenuItem())"), 2)  # import screen and library-only app
         main = (TOOLS / "native-window.swift").read_text()
         branch = main.split("if config.firmware != nil {", 1)[1].split("}", 1)[0]
-        self.assertIn("editMenuItem()", branch)  # decoupled only; legacy menus unchanged
+        self.assertIn("editMenuItem()", branch)  # decoupled only
         self.assertEqual(main.count("editMenuItem()"), 1)
 
     def test_code_created_windows_are_not_released_on_close(self):
@@ -268,27 +263,26 @@ class BundleIdentityTests(unittest.TestCase):
         with self.assertRaises(tarfile.FilterError):
             native.qemu_source_filter(escape, "/tmp/out")
 
-    def test_copy_without_legacy_files_is_decoupled_only(self):
-        """The public copy (no legacy guest Dockerfile): decoupled fullpanel by default, legacy options refused."""
+    def test_cli_build_is_fullpanel_and_refuses_the_removed_flags(self):
+        """The build takes the fullpanel profile only; the removed firmware-rootfs flags are refused."""
         import contextlib
         import io
         from unittest import mock
-        with mock.patch.object(native, "LEGACY_AVAILABLE", False), mock.patch.object(native, "build") as build, \
+        with mock.patch.object(native, "build") as build, \
                 mock.patch("sys.argv", ["native.py", "build", "--output", "o"]):
             native.main()
-        self.assertTrue(build.call_args.kwargs["decoupled"])
         self.assertEqual(build.call_args.kwargs["profile"], "fullpanel")
-        for extra in (["--rootfs", "r"], ["--mod", "utility-label"], ["--app-arg", "testmode"], ["--no-persistence"],
+        for extra in (["--rootfs", "r"], ["--app-arg", "testmode"], ["--no-persistence"],
                       ["--profile", "testmode"]):
             stderr = io.StringIO()
-            with mock.patch.object(native, "LEGACY_AVAILABLE", False), mock.patch.object(native, "build") as build, \
+            with mock.patch.object(native, "build") as build, \
                     mock.patch("sys.argv", ["native.py", "build", "--output", "o", *extra]), \
                     contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
                 native.main()
             build.assert_not_called()
-            self.assertIn("firmware-free apps only", stderr.getvalue())
+            self.assertIn("error:", stderr.getvalue())
         stdout = io.StringIO()
-        with mock.patch.object(native, "LEGACY_AVAILABLE", False), mock.patch("sys.argv", ["native.py", "build", "-h"]), \
+        with mock.patch("sys.argv", ["native.py", "build", "-h"]), \
                 contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit):
             native.main()
         for hidden in ("--rootfs", "--mod", "--app-arg", "--no-persistence"):
@@ -321,13 +315,11 @@ class GuestImageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "out"
             output.mkdir()
-            root = Path(folder) / "root"
-            root.mkdir()
             with mock.patch.object(native, "run", side_effect=fake_run), \
                  mock.patch.object(native.subprocess, "check_output", side_effect=fake_check_output), \
                  mock.patch.object(native.subprocess, "run", side_effect=fake_subprocess_run), \
                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
-                guest = native.build_guest(root, output, {"variant": "stock"})
+                guest = native.build_guest(output)
                 self.assertTrue((guest / "kernel").is_file())
                 leftovers = list(output.glob("iid-*"))
             return calls, err.getvalue(), leftovers
@@ -370,14 +362,6 @@ class PersistenceArgumentTests(unittest.TestCase):
         self.assertIn(" sp16.data=1", args[args.index("-append") + 1])
         self.assertIn("-nic", args)  # still offline
 
-    def test_persistence_only_for_fullpanel(self):
-        self.assertTrue(native.resolve_persistence("fullpanel"))
-        self.assertFalse(native.resolve_persistence("fullpanel", no_persistence=True))
-        for profile in (None, "testmode"):
-            self.assertFalse(native.resolve_persistence(profile))
-            with self.assertRaises(ValueError):
-                native.resolve_persistence(profile, no_persistence=True)
-
     def bundle_config(self, persistent):
         import json
         from unittest import mock
@@ -387,37 +371,36 @@ class PersistenceArgumentTests(unittest.TestCase):
                 app = native.bundle(output, Path("/q"), Path("/g"), profile="fullpanel", persistent=persistent)
             return json.loads((app / "Contents/Resources/default-config.json").read_text()), output
 
-    @unittest.skip("legacy build files are not part of the public repository")
     def test_bundle_config_carries_data_dir_only_when_persistent(self):
         config, output = self.bundle_config(True)
         self.assertEqual(config["data"], {"dir": str(output / "data"), "size": 1 << 30})
-        self.assertIn("-drive", config["arguments"])
+        self.assertIn(native.DATA_PLACEHOLDER, " ".join(config["arguments"]))  # the eMMC block device
         config, _ = self.bundle_config(False)
         self.assertNotIn("data", config)
-        self.assertNotIn("-drive", config["arguments"])
+        self.assertNotIn(native.DATA_PLACEHOLDER, " ".join(config["arguments"]))
 
-    @unittest.skip("legacy build files are not part of the public repository")
     def test_cli_flags(self):
         import subprocess
         out = subprocess.run([sys.executable, str(TOOLS / "native.py"), "build", "--help"],
                              capture_output=True, text=True).stdout
-        self.assertIn("--no-persistence", out)
+        self.assertIn("--decoupled", out)
+        for removed in ("--rootfs", "--app-arg", "--no-persistence"):
+            self.assertNotIn(removed, out)
         out = subprocess.run([sys.executable, str(TOOLS / "native.py"), "launch", "--help"],
                              capture_output=True, text=True).stdout
         self.assertIn("--ephemeral", out)
-        failed = subprocess.run([sys.executable, str(TOOLS / "native.py"), "build", "--rootfs", "x", "--output", "y",
+        failed = subprocess.run([sys.executable, str(TOOLS / "native.py"), "build", "--output", "y",
                                  "--no-persistence"], capture_output=True, text=True)
-        self.assertNotEqual(failed.returncode, 0)
-        self.assertIn("fullpanel", failed.stderr)
+        self.assertEqual(failed.returncode, 2)
+        self.assertIn("unrecognized arguments: --no-persistence", failed.stderr)
 
-    @unittest.skip("legacy build files are not part of the public repository")
     def test_guest_init_gates_persistence_on_cmdline_token(self):
         text = (TOOLS / "guest-init.sh").read_text()
         self.assertIn('*" sp16.data=1 "*) sp16_data=1', text)
         self.assertIn("mkfs.vfat", text)
         self.assertIn("fsck.vfat -a", text)
         self.assertIn("cp -an", text)  # never overwrite a newer persisted calibration
-        self.assertIn("dosfstools", (TOOLS / "Dockerfile.native-guest").read_text())
+        self.assertIn("dosfstools", (TOOLS / "Dockerfile.native-base").read_text())
 
 
 @unittest.skipUnless(shutil.which("swiftc"), "swiftc required")
@@ -469,12 +452,15 @@ class DataImageSwiftTests(unittest.TestCase):
             finally:
                 holder.kill()  # kill -9: no cleanup runs, the lock file keeps a dead PID
                 holder.wait()
+                holder.stdin.close()
+                holder.stdout.close()
             again = subprocess.Popen([str(self.binary), "lock", folder], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, text=True)
             self.assertEqual(again.stdout.readline().strip(), "locked")
             self.assertEqual((Path(folder) / "session.lock").read_text().strip(), str(again.pid))
             again.stdin.close()
             again.wait()
+            again.stdout.close()
 
     def test_clean_stop_waits_for_done_and_times_out(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as folder:
@@ -534,7 +520,7 @@ class HostLossGuestTests(unittest.TestCase):
         bridge = text.index("python3 -u /opt/sp16/guest-bridge.py")
         once = text.index("clean-stop.py once")
         self.assertGreater(once, bridge)
-        self.assertIn("clean-stop.py watch", text)  # the M3c host request path stays on the same script
+        self.assertIn("clean-stop.py watch", text)  # the host request path stays on the same script
         self.assertEqual(subprocess.run(["sh", "-n", str(TOOLS / "guest-init.sh")]).returncode, 0)
 
     def test_guest_init_never_execs_a_missing_poweroff_and_traps_exit(self):
@@ -564,7 +550,7 @@ WATCHER_ENV = {"SP16_DATA_DIR": _RUNTIME["data_dir"], "SP16_EMMC_MOUNT": _RUNTIM
 
 
 class VirtualUsbStickTests(unittest.TestCase):
-    """M3f: host-side image preparation and the trusted guest watcher's udev-style messages."""
+    """Host-side image preparation and the trusted guest watcher's udev-style messages."""
 
     @staticmethod
     def watcher_namespace():

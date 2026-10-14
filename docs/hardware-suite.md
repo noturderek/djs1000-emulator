@@ -1,8 +1,8 @@
 # Hardware conformance suite
 
 The suite proves that the emulated hardware works for a given firmware version, without testing that firmware's
-features. It is the only way a version's compatibility profile becomes `verified`, and only verified versions boot in
-a normal build.
+features. It is the only way a version's compatibility profile becomes `verified`. Versions without a verified profile
+still boot, marked unverified.
 
 ## Principle
 
@@ -51,8 +51,8 @@ The suite needs a research build that records audio to files (it never plays sou
 The suite starts and stops its own emulator sessions (by exact process id), so quit the research builds before you
 run it. It drives them only through the control socket and files, generates its own fixtures (test tones, FAT32
 stick images; no firmware content), and writes `hwsuite-result.json` and `hwsuite-report.md` under
-`build/sp16-dev/hwsuite/<run id>/`. It needs `pillow` and `numpy` (`python3 -m pip install pillow numpy`) and
-`tesseract` for LCD titles.
+`build/sp16-dev/hwsuite/<run id>/`. It needs `pillow` and `numpy` in the Python that runs the build tools
+(`./sp16 doctor` prints the exact install command) and `tesseract` for LCD titles.
 
 | Exit code | Meaning |
 |---|---|
@@ -67,7 +67,7 @@ or a high load average). Run the suite on an otherwise idle Mac.
 
 ## Marking a profile verified
 
-`hwsuite.py --mark-verified` writes the profile's verification block, and nothing else may. It requires one
+`./sp16 hwsuite --tier full --mark-verified` writes the profile's verification block, and nothing else may. It requires one
 full-tier run without `--only` in which every check is `PASS` or `N/A`, where every `N/A` matches a capability the
 profile declares absent, on the exact firmware image and profile being marked.
 

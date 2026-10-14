@@ -14,7 +14,6 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 
-RECIPE_DIR = Path(__file__).resolve().parent / "mods"
 SCHEMA = 1
 ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -68,15 +67,6 @@ def validate(recipe):
                          and len(pattern) == len(replacement), f"{path}: pattern_hex")
                 _require(count is not None, f"{path}: a pattern patch needs expected_count")
     return recipe
-
-
-def load(recipe_id, directory=None):
-    if not isinstance(recipe_id, str) or not ID_PATTERN.fullmatch(recipe_id):
-        raise ValueError("unknown patch recipe")
-    path = (Path(directory) if directory else RECIPE_DIR) / f"{recipe_id}.json"
-    if not path.is_file():
-        raise ValueError(f"unknown patch recipe {recipe_id}")
-    return load_path(path, recipe_id)
 
 
 def load_path(path, expected_id=None):

@@ -360,37 +360,35 @@ class PadCalibrationTests(unittest.TestCase):
         self.assertEqual(native.resolve_pad_calibration("fullpanel"), native.DEFAULT_PAD_CALIBRATION)
         self.assertEqual(native.resolve_pad_calibration("fullpanel", 300), 300)
         self.assertIsNone(native.resolve_pad_calibration("fullpanel", uncalibrated=True))
-        self.assertIsNone(native.resolve_pad_calibration("testmode"))
-        self.assertIsNone(native.resolve_pad_calibration(None))  # stock and MOD LAB builds stay untouched
+        self.assertIsNone(native.resolve_pad_calibration(None))  # no profile, no calibration file
         self.assertNotIn("padcal", native.PROFILES)
 
     def test_invalid_combinations_are_rejected(self):
-        for args in (("testmode", 242, False), (None, 242, False), (None, None, True),
-                     ("fullpanel", 242, True)):
+        for args in ((None, 242, False), (None, None, True), ("fullpanel", 242, True)):
             with self.assertRaises(ValueError):
                 native.resolve_pad_calibration(*args)
         with self.assertRaises(ValueError):
-            native.build("/nonexistent", "/nonexistent", profile="testmode", pad_calibration=242)
+            native.build("/nonexistent", profile="testmode", pad_calibration=242)
+        with self.assertRaises(ValueError):
+            native.build("/nonexistent", profile="fullpanel", uncalibrated=True, pad_calibration=242)
 
 
 class IconTests(unittest.TestCase):
-    @unittest.skip("legacy build files are not part of the public repository")
-    def test_icon_sources_exist_and_logo_is_flat_vector(self):
+    def test_icon_sources_exist_and_neutral_art_is_flat_vector(self):
         self.assertTrue((TOOLS / native.ICON_TOOL).is_file())
-        text = (TOOLS / native.ICON_LOGO).read_text()
-        self.assertIn("fill:#", text)  # the generator and panel renderer recolour `fill:#rrggbb`
+        text = (TOOLS / native.NEUTRAL_ICON).read_text()
+        self.assertIn('fill="#', text)  # the icon generator renders flat fills
         for forbidden in ("<image", "<text", "<script"):
             self.assertNotIn(forbidden, text)
 
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("swiftc") and shutil.which("iconutil"),
                          "needs the macOS toolchain")
-    @unittest.skip("legacy build files are not part of the public repository")
     def test_icon_builds_to_a_valid_icns(self):
         with tempfile.TemporaryDirectory() as directory:
             output, resources = Path(directory), Path(directory) / "Resources"
             resources.mkdir()
             native.build_icon(output, resources)
-            icns = (resources / f"{native.ICON_FILE}.icns").read_bytes()
+            icns = (resources / f"{native.DECOUPLED_ICON_FILE}.icns").read_bytes()
             self.assertEqual(icns[:4], b"icns")
             self.assertGreater(len(icns), 50_000)
 
@@ -548,12 +546,6 @@ class MapTests(unittest.TestCase):
         self.assertEqual(lamps[ids["bar3"]], (70, 140, 255))
         self.assertEqual(lamps[ids["step5"]], (0x20 * 255 // 74, 0x30 * 255 // 74, min(255, 0x40 * 255 // 74)))
         self.assertIsNone(panel_map.decode_lamps(bytes(128)))
-
-    def test_app_arguments_are_allowlisted(self):
-        arguments = native.arguments(Path("/q"), Path("/g"), "/s", "testmode")
-        self.assertTrue(arguments[arguments.index("-append") + 1].endswith(" sp16.app=testmode"))
-        with self.assertRaises(ValueError):
-            native.arguments(Path("/q"), Path("/g"), "/s", "root")
 
 
 class AccessibilityEnabledContract(unittest.TestCase):

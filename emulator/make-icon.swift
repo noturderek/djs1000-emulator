@@ -1,13 +1,13 @@
 // Renders the macOS app icon iconset: a dark rounded tile with a metal rim and a logo.
 //
-// usage: make-icon <legacy-logo.svg> <output.iconset>
+// usage: make-icon <icon.svg> <output.iconset>
 // The logo is a vector file such as assets/neutral-pads.svg, recoloured at load time (flat fills only).
 // native.py runs this during `build` and turns the iconset into an .icns with iconutil.
 import AppKit
 
 let arguments = CommandLine.arguments
 guard arguments.count == 3 else {
-    FileHandle.standardError.write(Data("usage: make-icon <legacy-logo.svg> <output.iconset>\n".utf8))
+    FileHandle.standardError.write(Data("usage: make-icon <icon.svg> <output.iconset>\n".utf8))
     exit(2)
 }
 

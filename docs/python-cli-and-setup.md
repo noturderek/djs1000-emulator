@@ -1,16 +1,3 @@
----
-title: Python CLI and Setup
-description: How the SP-16 command line launcher is laid out and how to install and use it.
-type: reference
-status: complete
-created: 2026-10-13
-tags:
-  - cli
-  - setup
-  - python
-  - sp16
----
-
 # Python CLI and Setup
 
 ## Command layout

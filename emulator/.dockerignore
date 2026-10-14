@@ -1,14 +1,8 @@
 *
-!Dockerfile
-!probe.sh
 !enter.py
 !hardware_stub.c
-!capture.py
 !input.py
-!publish.py
-!Dockerfile.native-guest
 !guest-init.sh
-!app_identity.py
 !guest-bridge.py
 !pack-guest.sh
 !protocol.py
@@ -17,7 +11,6 @@
 !profiles.py
 !recipes.py
 !profiles/*.json
-!mods/*.json
 !prepare.py
 !guest-firmware.py
 !Dockerfile.native-base

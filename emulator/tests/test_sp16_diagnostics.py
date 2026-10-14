@@ -100,6 +100,20 @@ class RedactorTests(unittest.TestCase):
         self.assertIn("malice alice2 stay", result)  # whole words only
         self.assertEqual(redactor.counts["email"], 2)
 
+    def test_crash_report_escaped_paths_and_machine_ids_are_redacted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = str(Path(folder) / "people/alice")
+            redactor = diagnostics.Redactor(home=home, user="", host="", full_name="")
+            escaped = home.replace("/", "\\/")
+            text = (f'{{"procPath":"{escaped}\\/src\\/build","crashReporterKey" : "1A2B-3C4D",'
+                    '"bootSessionUUID":"0F1E2D3C","sleepWakeUUID":"ABCD","bundleID":"local.sp16"}')
+            result = redactor.text(text)
+        self.assertIn('"procPath":"~\\/src\\/build"', result)
+        for value in ("1A2B-3C4D", "0F1E2D3C", "ABCD", "people"):
+            self.assertNotIn(value, result)
+        self.assertIn('"bundleID":"local.sp16"', result)
+        self.assertEqual((redactor.counts["home"], redactor.counts["machine_id"]), (1, 3))
+
     def test_short_or_generic_names_are_not_replaced(self):
         redactor = diagnostics.Redactor(home="/nonexistent-home-x", user="root", host="mac", full_name="")
         self.assertEqual(redactor.text("root mac /root/pdj"), "root mac /root/pdj")
@@ -199,6 +213,14 @@ class CollectTests(Fixture):
         self.assertTrue(sessions["native-dddd"]["ready_seen"])
         self.assertNotIn("sqfs", json.dumps(report["build_options"]))
 
+    def test_audio_device_uid_is_not_reported(self):
+        assets = json.loads((self.build / "assets.json").read_text())
+        (self.build / "assets.json").write_text(json.dumps({**assets, "audio": "coreaudio",
+                                                            "audio_device": "AppleUSBAudioEngine:Acme:SN12345:1"}))
+        options, _ = diagnostics.build_options(self.build)
+        self.assertEqual(options["assets"]["audio_device"], "<set>")
+        self.assertNotIn("SN12345", json.dumps(options))
+
     def test_key_in_contents_refuses_the_whole_zip(self):
         key_file = Path(self.work.name) / "the.key"
         key_file.write_bytes(KEY_TEXT + b"\n")
@@ -277,7 +299,7 @@ class SwiftSourceTests(unittest.TestCase):
         self.assertIn("helpMenuItem()", window.split("if config.firmware != nil {", 1)[1].split("let inputItem", 1)[0])
         self.assertEqual((TOOLS / "firmware-window.swift").read_text().count("menu.addItem(helpMenuItem())"), 2)
 
-    def test_legacy_builds_do_not_start_the_log_or_capture_stderr(self):
+    def test_app_log_starts_only_for_decoupled_builds(self):
         window = (TOOLS / "native-window.swift").read_text()
         self.assertIn("if decoded.firmware != nil {\n        // Decoupled builds: the app log", window)
         self.assertIn("if config.firmware == nil {\n            process.standardError = log\n        } else {", window)

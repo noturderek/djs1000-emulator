@@ -126,7 +126,6 @@
     {"type": "insert", "x": 95, "y": 183, "w": 95, "h": 243, "radius": 6},
     {"type": "text", "text": "↩ BACK", "x": 1618, "y": 201, "size": 14, "weight": "semibold", "align": "center", "color": "white"},
     {"type": "text", "text": "HOME", "x": 1695, "y": 201, "size": 14, "weight": "semibold", "align": "center", "color": "white"},
-    {"type": "text", "text": "SP-16", "x": 1652, "y": 611, "size": 28, "weight": "medium", "align": "center", "color": "white"},
     {"type": "text", "text": "PROFESSIONAL", "x": 1653, "y": 639, "size": 14, "weight": "semibold", "align": "center", "color": "white"},
     {"type": "text", "text": "SAMPLER", "x": 1653, "y": 656, "size": 14, "weight": "semibold", "align": "center", "color": "white"},
     {"type": "labelbox", "x": 1610, "y": 750, "w": 84, "h": 18, "fill": "lightgray"},

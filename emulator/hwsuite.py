@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SP-16 hardware conformance suite runner (docs/hardware-suite.md, section 5).
+"""SP-16 hardware conformance suite runner (docs/hardware-suite.md).
 
 45 checks (HW-01..HW-45) of the emulated hardware boundary, driven only through a research session's control socket,
 its files and process signals to exact PIDs. The firmware is the oracle for hardware outcomes only; per-version data
@@ -32,7 +32,7 @@ import wave
 TOOLS = Path(__file__).resolve().parent
 SUITE_NAME = "sp16-hardware-conformance"
 SUITE_VERSION = "1.0.0"
-# Bump when a change to the emulated hardware boundary (shim, bridge, panel model) can alter verdicts (spec 5.5 item 5).
+# Bump when a change to the emulated hardware boundary (shim, bridge, panel model) can alter verdicts.
 HARDWARE_EPOCH = 1
 # Sources whose hash forms the hardware fingerprint (the emulated boundary).
 FINGERPRINT_SOURCES = ("hardware_stub.c", "guest-bridge.py", "panel.py", "panel_map.py", "protocol.py", "input.py")
@@ -279,7 +279,7 @@ def render_report(result):
     na_subs = [(item["id"], s) for item in result["verdicts"] for s in item["subresults"] if s["status"] == "N/A"]
     lines += ["", "## N/A", ""] + ([f"- {item['id']}: {item['reason']}" for item in na] or ["- none (check level)"])
     lines += [f"- {hw} sub-result {s['name']}: {s.get('observed', '')}" for hw, s in na_subs]
-    lines += ["", "## Not emulated (stub register, spec section 4)", "",
+    lines += ["", "## Not emulated (stub register; see docs/hardware-suite.md, Not in this suite)", "",
               "MIDI IN/OUT/THRU and USB-B MIDI; sync sources and PRO DJ LINK; audio input, THROUGH and live sampling; "
               "output routing, headphone and multichannel outputs; analog filter, resonance and DSP; network and USB host "
               "hotplug beyond HW-36..39; physical pad force; the SHIFT lamp and strip LEDs 9-10.", ""]
@@ -2724,7 +2724,7 @@ class Runner:
             subs.append(sub(f"{name}: word linear within 1% of 1023, settle <= 2 s", not errors, str(errors[:3])))
         for name in ("lp_cutoff", "lp_resonance"):
             if name not in words:
-                subs.append(sub(name, True, "no ADC word: analog-only stub (owner-accepted)", na=True))
+                subs.append(sub(name, True, "no ADC word: analog-only stub (by design)", na=True))
         return from_subresults("HW-30", subs, {"worst_error": worst})
 
     # ------------------------------------------------------------------ checks: audio
@@ -3655,8 +3655,8 @@ def mark_verified(profile_path, result, result_path, result_sha256):
     if unjustified:
         raise EnvError(f"N/A without a declared hardware.absent reason: {unjustified}")
     if summary.get("needs_owner_signoff") and not profile.get("owner_signoff"):
-        raise EnvError("more than five N/A need an owner sign-off line in the profile")
-    try:  # record the stored result relative to the repository (it lives in the git-ignored private workspace)
+        raise EnvError("more than five N/A need a maintainer's sign-off line (owner_signoff) in the profile")
+    try:  # record the stored result relative to the repository (results live in the git-ignored private/ folder)
         result_path = Path(result_path).resolve().relative_to(TOOLS.parent)
     except ValueError:
         pass

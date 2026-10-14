@@ -20,8 +20,8 @@ def apply_file_size_limit(limit=FSIZE_LIMIT):
 
 
 def app_cwd():
-    """The application's working directory: /root/pdj (1.60, legacy builds) unless the decoupled init passes the
-    firmware profile's runtime.cwd in SP16_APP_CWD (a plain absolute path)."""
+    """The application's working directory: /root/pdj (the 1.60 default) unless the init passes the firmware
+    profile's runtime.cwd in SP16_APP_CWD (a plain absolute path)."""
     cwd = os.environ.get("SP16_APP_CWD", "/root/pdj")
     parts = cwd.split("/")
     if not cwd.startswith("/") or ".." in parts or any(not p.replace(".", "").replace("_", "").replace("-", "").isalnum()

@@ -58,7 +58,7 @@ enum LogRedactor {
 }
 
 /// Small file logger: timestamped lines appended with one write each (so a crash loses at most the line being
-/// written), a 2 MB cap and one rotation. Does nothing until `start` (legacy builds never start it).
+/// written), a 2 MB cap and one rotation. Does nothing until `start` (builds with firmware config call it).
 enum AppLog {
     static let limit = 2 * 1024 * 1024
     static let queue = DispatchQueue(label: "sp16.applog")

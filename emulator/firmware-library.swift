@@ -4,7 +4,7 @@ import Foundation
 /// Decoupled builds (docs/architecture.md, M3/M4): the firmware library written by `native.py firmware import`
 /// (or the app's import screen). Each entry is <library>/<id>/{manifest.json, entry.json, firmware.sqfs, data/}.
 /// Before boot the app classifies the entry against the profiles bundled in Resources/profiles (verified, or
-/// unverified and run on the reference measurements, owner decision of 2026-10-13) and re-checks the image SHA-256
+/// unverified and run on the reference measurements, D2 in docs/architecture.md) and re-checks the image SHA-256
 /// against the manifest; the guest checks the image and application hashes again.
 struct FirmwareConfig: Decodable {
     let library: String

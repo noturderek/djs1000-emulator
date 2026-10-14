@@ -11,7 +11,7 @@ runtime, app log, QEMU stderr, last screen; audio only with --include-audio), th
 
 Never included: firmware images, updates, keys, data images (any file ending in .key, .upd, .sqfs, .img, .iso, .sfs or
 .mot is refused by name). Every text file is redacted: the home folder becomes ~, the account name <user>, the host
-name <host>, e-mail addresses <email>. With --key-file the finished contents are also checked for the key in raw, hex and
+name <host>, e-mail addresses <email>, and crash reports' machine identifiers are blanked. With --key-file the finished contents are also checked for the key in raw, hex and
 base64 form (the key is held in memory and never printed); a hit refuses the whole zip.
 
 Stdlib only and compatible with the system Python 3.9 that the app uses.
@@ -48,6 +48,9 @@ TEXT_SUFFIXES = (".txt", ".json", ".jsonl", ".log", ".ips", ".md", ".1")
 TEXT_NAMES = ("clean-exit",)
 GENERIC_NAMES = {"root", "admin", "user", "guest", "test", "daemon", "nobody", "shell", "host", "localhost", "mac"}
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+# Stable machine and session identifiers that macOS writes into crash reports (.ips); their values are blanked.
+MACHINE_IDS = re.compile(r'("(?:crashReporterKey|bootSessionUUID|sleepWakeUUID|deviceIdentifierForVendor'
+                         r'|deviceIdentifierForAdvertising)"\s*:\s*)"[^"]*"')
 
 
 class DiagnosticsError(RuntimeError):
@@ -65,12 +68,13 @@ class Redactor:
 
     def __init__(self, home=None, user=None, host=None, full_name=None):
         home = home if home is not None else str(Path.home())
-        self.homes = sorted({h.rstrip("/") for h in (home, os.path.realpath(home)) if h and h.rstrip("/")},
-                            key=len, reverse=True)
+        homes = {h.rstrip("/") for h in (home, os.path.realpath(home)) if h and h.rstrip("/")}
+        # Crash reports are JSON with escaped slashes (\/Users\/name), so the escaped spelling is replaced too.
+        self.homes = sorted(homes | {h.replace("/", "\\/") for h in homes}, key=len, reverse=True)
         self.user = user if user is not None else _account_name()
         self.host = host if host is not None else socket.gethostname()
         self.full_name = full_name if full_name is not None else _full_name()
-        self.counts = {"email": 0, "home": 0, "user": 0, "host": 0, "name": 0}
+        self.counts = {"email": 0, "home": 0, "user": 0, "host": 0, "name": 0, "machine_id": 0}
         names = [self.host, self.host.split(".")[0]] if self.host else []
         self.host_pattern = self._words([n for n in names if len(n) >= 3 and n.lower() not in GENERIC_NAMES])
         self.user_pattern = self._words([self.user] if self.user and len(self.user) >= 3
@@ -94,6 +98,8 @@ class Redactor:
     def text(self, text):
         text, count = EMAIL.subn("<email>", text)
         self.counts["email"] += count
+        text, count = MACHINE_IDS.subn(r'\1"<redacted>"', text)
+        self.counts["machine_id"] += count
         for home in self.homes:
             count = text.count(home)
             if count:
@@ -206,6 +212,9 @@ def build_options(build):
     options = {"assets": {k: assets.get(k) for k in ("decoupled", "qemu_version", "profile", "research", "trace", "audio",
                                                       "audio_device", "pad_calibration", "persistent_data")
                           if k in assets}}
+    # A CoreAudio device UID can carry a USB serial number or a Bluetooth address: report only that one was chosen.
+    if options["assets"].get("audio_device"):
+        options["assets"]["audio_device"] = "<set>"
     config = None
     bundle = assets.get("app_bundle")
     candidates = [Path(bundle)] if bundle else []
@@ -219,7 +228,7 @@ def build_options(build):
     if config:
         options["default_config"] = {
             "variant": config.get("variant"), "profile": config.get("profile"), "research": config.get("research"),
-            "audio": config.get("audio"), "data_size": (config.get("data") or {}).get("size"),
+            "audio": (config.get("audio") or "").split(":")[0] or None, "data_size": (config.get("data") or {}).get("size"),
             "decoupled": "firmware" in config, "arguments": scrub_arguments(config.get("arguments"))}
     return options, assets
 
@@ -398,7 +407,8 @@ Never included: firmware images, update files, keys, the data image with your pr
 .upd, .sqfs, .img, .iso, .sfs or .mot.
 
 Redacted in every text file: your home folder ({home_note}), your account name (<user>), your Mac's name (<host>),
-your full name (<name>) and e-mail addresses (<email>). Redactions made: {counts}. Paths outside your home folder (for
+your full name (<name>) and e-mail addresses (<email>); crash reports' machine identifiers are blanked and an
+audio device UID is reported only as <set>. Redactions made: {counts}. Paths outside your home folder (for
 example an external drive name) are kept. {key_note}
 """
 

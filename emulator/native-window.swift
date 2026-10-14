@@ -107,10 +107,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         if let name = config.firmwareName {
             return "SP-16 Emulator — \(name)" + (unverifiedNotice == nil ? "" : " (unverified)")
         }
-        if config.variant == "utility-label" { return "SP16 Emulator — MOD LAB experiment" }
-        if config.profile == "fullpanel" { return "SP16 Emulator — Full Panel (experimental)" }
-        if config.profile == "testmode" { return "SP16 Emulator — OEM factory test (research)" }
-        return "SP16 Emulator — OEM 1.60"
+        return "SP16 Emulator"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -163,9 +160,10 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             panel.setStatus("Cannot start QEMU: \(error.localizedDescription)"); return
         }
         AppLog.log("QEMU started pid=\(process.processIdentifier)")
+        startQEMUReaper()
         panel.setStatus("Starting native QEMU…")
         if let audio = config.audio {
-            // "file" (M4b1): a WAV per playback stream. "coreaudio" (M4b2): host output only. "both": the two.
+            // "file": a WAV per playback stream. "coreaudio": host output only. "both": the two.
             // Optional ":<device UID>" or ":offline:<wav>[:rate[:ppm[:block]]]" follows the mode; no UID = system default.
             let parts = audio.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
             let mode = parts[0], device = parts.count > 1 && !parts[1].isEmpty ? parts[1] : nil
@@ -182,6 +180,29 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in self?.connectAndRead() }
         if config.research == true {
             DispatchQueue.global(qos: .utility).async { [weak self] in self?.serveResearchSocket() }
+        }
+    }
+
+    /// A kill -9 or crash of this app leaves no chance to run cleanup, so a small helper (qemu_reaper.py, stdlib only)
+    /// watches the app and ends QEMU when the app is gone: a guest clean stop first (persistent builds), then SIGTERM
+    /// and SIGKILL, only for the QEMU PID it was given and only while that process still belongs to this session.
+    func startQEMUReaper() {
+        guard let script = Bundle.main.url(forResource: "qemu_reaper", withExtension: "py") else {
+            AppLog.log("reaper: qemu_reaper.py missing from the app bundle; QEMU would outlive a killed app")
+            return
+        }
+        let reaper = Process()
+        reaper.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        var arguments = [script.path, "--qemu", "\(process.processIdentifier)", "--match", config.socket]
+        if config.data != nil { arguments += ["--control", config.socket + ".ctl"] }
+        reaper.arguments = arguments
+        reaper.standardOutput = FileHandle.nullDevice
+        reaper.standardError = FileHandle.nullDevice
+        do {
+            try reaper.run()
+            AppLog.log("reaper started pid=\(reaper.processIdentifier)")
+        } catch {
+            AppLog.log("reaper: cannot start: \(error)")
         }
     }
 
@@ -740,7 +761,7 @@ func attachData(_ config: Configuration, ephemeral: Bool, usbImage: String? = ni
         var extra: [String] = []
         if let usb = usbImage {
             try DataImage.validateUSBImage(usb)
-            // Virtual USB stick (M3f): a second virtio disk told apart by its serial; the guest formats it only if blank.
+            // Virtual USB stick: a second virtio disk told apart by its serial; the guest formats it only if blank.
             extra = ["-drive", "file=\(usb),format=raw,if=none,id=sp16usb",
                      "-device", "virtio-blk-device,drive=sp16usb,serial=sp16usb"]
         }
@@ -753,7 +774,7 @@ func attachData(_ config: Configuration, ephemeral: Bool, usbImage: String? = ni
 }
 
 /// Decoupled builds: pick the requested (or selected) firmware, check the image integrity, mark it unverified when no
-/// verified profile matches (it still boots, owner decision of 2026-10-13) and point the data image at that firmware's
+/// verified profile matches (it still boots, D2 in docs/architecture.md) and point the data image at that firmware's
 /// own data directory.
 /// Decoupled build with nothing to boot yet: the app shows the import screen (or the library) instead of a VM.
 var firmwareSetup: (config: Configuration, library: String)?
@@ -852,7 +873,7 @@ func configuration() -> Configuration? {
           let data = try? Data(contentsOf: url),
           let decoded = try? JSONDecoder().decode(Configuration.self, from: data) else { return nil }
     if decoded.firmware != nil {
-        // Decoupled builds: the app log and the diagnostics button work from here on (legacy builds are unchanged).
+        // Decoupled builds: the app log and the diagnostics button work from here on.
         let build = URL(fileURLWithPath: decoded.session).deletingLastPathComponent().path
         AppLog.start(buildDirectory: build)
         DiagnosticsController.shared.buildDirectory = build
@@ -920,13 +941,13 @@ enum Launcher {
                 }
                 exit(0)
             }
-            fputs("Usage: SP16LegacyEmulator --config /absolute/private/runtime.json\n", stderr)
+            fputs("Usage: SP16Emulator --config /absolute/private/runtime.json\n", stderr)
             exit(2)
         }
         // SIGTERM takes the same clean-stop path as Cmd-Q (guest sync + unmount) instead of killing the app.
         signal(SIGTERM, SIG_IGN)
         // A peer closing a socket mid-write (a timed-out sessionctl client, a stalled bridge) must surface as EPIPE,
-        // not kill the app silently: launchd logged "exited due to SIGPIPE" with no crash report (PC-REL-3).
+        // not kill the app silently: launchd logged "exited due to SIGPIPE" with no crash report.
         signal(SIGPIPE, SIG_IGN)
         let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         termination.setEventHandler { NSApp.terminate(nil) }

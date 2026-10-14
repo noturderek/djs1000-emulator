@@ -138,8 +138,7 @@ class FwdevHostTests(unittest.TestCase):
             fwdev.new(self.mod, "again")
         with self.assertRaises(fwdev.ModError):
             fwdev.new(self.dir / "x", "Bad_Id")
-        fwdev.new(self.dir / "from-recipe", "ul", "utility-label")
-        self.assertTrue((self.dir / "from-recipe/recipes/utility-label.json").is_file())
+        self.assertEqual(list((self.mod / "recipes").iterdir()), [])  # no recipe ships with the emulator
 
     def test_check_catches_wrong_base_missing_path_oem_copies_and_bad_preloads(self):
         (self.mod / "recipes/label.json").write_text(json.dumps(recipe()))

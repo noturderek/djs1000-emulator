@@ -44,7 +44,7 @@ It prints `FAIL` lines with a `fix:` each. Walk the user through the ones you ca
 | Xcode Command Line Tools | run `xcode-select --install` (a macOS dialog appears); it takes a few minutes |
 | Python 3.12 or later | `brew install python@3.12` (needs Homebrew, <https://brew.sh>) |
 | QEMU build tools | `brew install ninja pkgconf glib pixman` |
-| Docker running | start Docker Desktop or OrbStack and wait until it says it is running (only the first build needs it) |
+| Docker running | start Docker Desktop or OrbStack and wait until it says it is running (every build needs it; the emulator itself runs without it) |
 | Apple silicon, macOS 13+ | cannot be fixed; the emulator does not run on Intel Macs |
 
 Run `./sp16 doctor` again until it prints `Ready.`.
@@ -145,8 +145,8 @@ unpacked safely into a temporary folder that is deleted again), launch. The firs
 compiled, then Docker builds the guest image). If it stops, read the message: it names the fix, and the same command
 continues where it stopped. An existing build made with another audio mode is not touched unless you add `--rebuild`.
 
-If the user cannot hear anything: raise the track VOLUME in the emulator, check the Mac's output device, and read
-`docs/architecture.md` or use sp16-emulator-setup for the audio troubleshooting.
+If the user cannot hear anything: raise the track VOLUME in the emulator, check the Mac's output device, and see the
+README's "Audio" section and the sp16-emulator-setup skill's troubleshooting table ("Slow tempo or crackling").
 
 ## 8. You are running: checklist for the user
 

@@ -1,4 +1,4 @@
-"""Repacked updates (docs/architecture.md M6 part 6, D3): layer rewrite, mod trailer, mod verification refusals.
+"""Repacked updates (docs/architecture.md, M6 and D3): layer rewrite, mod trailer, mod verification refusals.
 Synthetic archives and mocked VMs only."""
 import hashlib
 import importlib.util
@@ -94,8 +94,12 @@ class ModVerificationTests(unittest.TestCase):
                      "image": {"file": "firmware.sqfs", "bytes": 4096, "sha256": "b" * 64},
                      "update": {"trailer_version": "1.60", "sha256": LEGACY["firmware"]["upd_sha256"]}, "files": {}}
         (entry / "manifest.json").write_text(json.dumps(self.base))
-        self.recipe = json.loads((TOOLS / "mods/utility-label.json").read_text())
-        self.mod = {"schema": 1, "kind": "sp16-mod-update", "id": "utility-label",
+        # A synthetic recipe: the verifier's rebuild is faked, so the patch itself never runs.
+        self.recipe = {"schema": 1, "id": "label-mod", "base_profile": "sp16-1.60",
+                       "files": {APP: {"base_sha256": LEGACY["firmware"]["app_sha256"], "result_sha256": "c" * 64,
+                                      "patches": [{"offset": 0, "original_hex": "55", "replacement_hex": "4d",
+                                                   "expected_count": 1}]}}}
+        self.mod = {"schema": 1, "kind": "sp16-mod-update", "id": "label-mod",
                     "base": {"upd_sha256": LEGACY["firmware"]["upd_sha256"], "version": "1.60",
                              "app_sha256": LEGACY["firmware"]["app_sha256"]},
                     "recipes": [self.recipe],
@@ -118,7 +122,7 @@ class ModVerificationTests(unittest.TestCase):
         self.assertEqual((result["verified"], result["base_id"], result["profile"]), (True, self.base_id, "sp16-1.60"))
         self.assertFalse((self.dir / "rebuild").exists())  # no work directory is left inside the new entry
         self.assertFalse((self.dir / "rebuilt.upd").exists())
-        manifest = {**self.base, "id": "sp16-1.60-mod-utility-label-eeeeeeeeeeee", "kind": "mod",
+        manifest = {**self.base, "id": "sp16-1.60-mod-label-mod-eeeeeeeeeeee", "kind": "mod",
                     "app_sha256": self.guest["app_sha256"], "mod": result}
         firmware.validate_manifest(manifest)
         self.assertEqual(firmware.boot_status(manifest, self.library)["status"], "verified")
@@ -126,7 +130,7 @@ class ModVerificationTests(unittest.TestCase):
     def test_unverifiable_mods_are_accepted_as_unverified_with_a_reason(self):
         mismatch = self.verify("f" * 64)
         self.assertFalse(mismatch["verified"])
-        self.assertEqual(mismatch["id"], "utility-label")
+        self.assertEqual(mismatch["id"], "label-mod")
         self.assertIn("content differs", mismatch["reason"])
         cases = [
             (lambda: self.mod.update(kind="other"), "sp16-mod.json"),
@@ -145,7 +149,7 @@ class ModVerificationTests(unittest.TestCase):
             self.assertRegex(result["reason"], reason)
             self.mod, self.guest = saved_mod, saved_guest
             self.guest["mod"] = self.mod
-        manifest = {**self.base, "id": "sp16-1.60-mod-utility-label-eeeeeeeeeeee", "kind": "mod",
+        manifest = {**self.base, "id": "sp16-1.60-mod-label-mod-eeeeeeeeeeee", "kind": "mod",
                     "app_sha256": "9" * 64, "mod": mismatch}
         firmware.validate_manifest(manifest)
         status = firmware.boot_status(manifest, self.library)

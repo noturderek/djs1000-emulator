@@ -1,4 +1,4 @@
-"""sp16emu bootstrap and firmware download: step planning, zip safety, the official-host allowlist, update checks.
+"""./sp16 bootstrap and firmware download: step planning, zip safety, the official-host allowlist, update checks.
 
 No test touches the network, a real disk image or a real firmware: the server, hdiutil, cp and the tools are faked."""
 import io

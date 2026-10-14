@@ -1,24 +1,13 @@
 #!/usr/bin/env python3
-"""Assemble a private SP-16 1.60 userspace without executing OEM programs."""
+"""Unpack an SP-16 update's layers into a guest tree without executing OEM programs (used by guest-firmware.py)."""
 
-import argparse
-import hashlib
-import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import tarfile
 
-import profiles
-
 REPO = Path(__file__).resolve().parents[1]
-# The legacy builds' pin, read from the verified 1.60 profile (docs/architecture.md, M1).
-LEGACY_PROFILE = profiles.legacy()
-EXPECTED_APP = LEGACY_PROFILE["firmware"]["app_sha256"]
-ROOTFS_LAYERS = tuple(f"rootfs{number}.tar.gz" for number in range(1, 5))
-SQUASHFS_LAYERS = (("lib", "usr/lib"), ("bin", "usr/bin"), ("share", "usr/share"))
-SOURCE_IMAGES = (*ROOTFS_LAYERS, "pdj.tar.gz", "lib.sfs", "bin.sfs", "share.sfs")
 
 
 def private_path(value, *, fresh=False):
@@ -128,19 +117,11 @@ def guest_file(root, guest_path):
     return root.joinpath(*current)
 
 
-LEGACY_LAYOUT = {
-    "tar_layers": [*({"file": name, "root": "/"} for name in ROOTFS_LAYERS), {"file": "pdj.tar.gz", "root": "/root"}],
-    "squashfs_layers": [{"file": f"{name}.sfs", "root": "/" + mount} for name, mount in SQUASHFS_LAYERS],
-    "mount_points": ["/dev", "/proc", "/sys", "/tmp", "/root/data", "/mnt/emmc"],
-}
-
-
-def assemble(images, root, extractor, layout=None):
+def assemble(images, root, extractor, layout):
     """Unpack an update's layers into the fresh directory `root`, drop credentials and keys, and create the mount
-    points. `layout` is the product descriptor's update section (the decoupled importer); the legacy prepare uses the
-    1.60 layout it has always used. Returns the number of skipped credential or special entries."""
+    points. `layout` is the product descriptor's update section (profiles/products/<product>.json). Returns the number
+    of skipped credential or special entries."""
     images = Path(images)
-    layout = layout or LEGACY_LAYOUT
     skipped = 0
     for layer in layout["tar_layers"]:
         skipped += unpack_layer(images / layer["file"], root, tuple(PurePosixPath(layer["root"]).parts[1:]))
@@ -168,48 +149,3 @@ def assemble(images, root, extractor, layout=None):
     for name in layout.get("mount_points", []):
         directory(root, tuple(PurePosixPath(name).parts[1:]))
     return skipped
-
-
-def prepare(workspace, output):
-    work = private_path(workspace)
-    root = private_path(output, fresh=True)
-    images = work / "update-payload/images"
-    extractor = shutil.which("unsquashfs")
-    if not extractor:
-        raise ValueError("unsquashfs is required")
-    root.mkdir(mode=0o700)
-    try:
-        skipped = assemble(images, root, extractor)
-        app = guest_file(root, "/root/pdj/EP085_Main_R")
-        digest = hashlib.sha256(app.read_bytes()).hexdigest()
-        if digest != EXPECTED_APP:
-            raise ValueError("sampler executable does not match validated OEM 1.60")
-        loader = guest_file(root, "/lib/ld-linux.so.3")
-        if not loader.is_file() or loader.read_bytes()[:4] != b"\x7fELF":
-            raise ValueError("stock ARM ELF loader is missing")
-        manifest = {
-            "status": "USERSPACE_ASSEMBLED_NOT_BOOTED", "firmware": LEGACY_PROFILE["firmware"]["version"],
-            "app_revision": LEGACY_PROFILE["firmware"]["app_revision"], "app_sha256": digest,
-            "loader_guest_path": "/lib/ld-linux.so.3",
-            "credential_or_special_entries_skipped": skipped,
-            "source_images": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                              for p in images.iterdir() if p.name in SOURCE_IMAGES},
-        }
-        (root / "sp16-emulator-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    except BaseException:
-        shutil.rmtree(root)
-        raise
-    print(json.dumps({"status": manifest["status"], "output": str(root), "firmware": manifest["firmware"]}))
-
-
-def main():
-    os.umask(0o077)
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workspace", required=True)
-    parser.add_argument("--output", required=True)
-    args = parser.parse_args()
-    prepare(args.workspace, args.output)
-
-
-if __name__ == "__main__":
-    main()
