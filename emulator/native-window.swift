@@ -39,6 +39,9 @@ struct DataConfig: Decodable {
 /// Held for the whole session; the kernel drops the flock if the app dies.
 var sessionLockFD: Int32 = -1
 var ephemeralImagePath: String?
+/// Bench mode (`--no-ui-input`): the panel ignores pointer, scroll, keyboard and accessibility input, and the app does
+/// not activate itself; the research control socket keeps driving the panel. For unattended test runs.
+var uiInputDisabled = false
 
 /// Host <-> guest message kinds; see protocol.py for the authoritative description.
 enum Kind {
@@ -123,8 +126,10 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         window.delegate = self
         window.center(); window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(panel)
-        NSApp.activate(ignoringOtherApps: true)
-        AppLog.log("main window opened: \(window.title)")
+        panel.uiInputEnabled = !uiInputDisabled
+        // Bench mode leaves focus with the app the user is working in (`open -g` started it in the background).
+        if !uiInputDisabled { NSApp.activate(ignoringOtherApps: true) }
+        AppLog.log("main window opened: \(window.title)" + (uiInputDisabled ? " (bench mode: panel input off)" : ""))
         DiagnosticsController.shared.checkPreviousRun(current: config.session)  // no-op unless a decoupled build set it up
         logLaunchSummary()
         if let notice = unverifiedNotice {
@@ -214,6 +219,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         AppLog.log("launch: library=\(config.firmware?.library ?? "?") qemu=\(config.qemu) session=\(config.session)")
         AppLog.log("launch: qemu arguments: " + config.arguments.joined(separator: " "))
         if let overlay = config.devOverlay { AppLog.log("launch: developer overlay \(overlay)") }
+        if uiInputDisabled { AppLog.log("launch: bench mode, panel input off (--no-ui-input)") }
     }
 
     func installMenus() {
@@ -844,6 +850,8 @@ func configuration() -> Configuration? {
     var arguments = CommandLine.arguments
     let ephemeral = arguments.contains("--ephemeral")
     arguments.removeAll { $0 == "--ephemeral" }
+    uiInputDisabled = arguments.contains("--no-ui-input")
+    arguments.removeAll { $0 == "--no-ui-input" }
     var requestedFirmware: String? = nil
     var devOverlay: String? = nil
     if let index = arguments.firstIndex(of: "--dev-overlay") {
@@ -913,6 +921,7 @@ func configuration() -> Configuration? {
         if let audio = config.audio { json["audio"] = audio }
         if let id = config.firmwareID { json["firmware"] = id }
         if let overlay = config.devOverlay { json["dev_overlay"] = overlay }
+        if uiInputDisabled { json["ui_input"] = false }
         if config.research == true { json["control_socket"] = socketDirectory + "/control.sock" }
         try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
             .write(to: URL(fileURLWithPath: session + "/runtime.json"), options: .atomic)

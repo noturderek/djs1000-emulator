@@ -515,7 +515,7 @@ def dev_overlay_path(folder):
     return str(path)
 
 
-def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overlay=None):
+def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overlay=None, no_ui_input=False):
     host_check()
     output = private_path(output)
     assets = validated_assets(output)
@@ -534,10 +534,13 @@ def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overla
                   "measurements.\n" + json.dumps(report, indent=2), file=sys.stderr)
     # LaunchServices supervises the app. Closing its window stops its own QEMU.
     # --ephemeral: disposable per-session data image and no profile lock (tests); persistent builds default to the profile image.
+    # --no-ui-input (bench mode): the window ignores pointer, scroll, keyboard and accessibility input, and `open -g` starts
+    # it without taking focus. macOS still sends scroll to the window under the pointer; only the app's gate stops it.
     app_args = (["--ephemeral"] if ephemeral else []) + (["--usb-image", prepare_usb_image(usb_image)] if usb_image else []) \
         + (["--firmware", firmware_id] if firmware_id else []) \
-        + (["--dev-overlay", dev_overlay_path(dev_overlay)] if dev_overlay else [])
-    run(["open", "-n", assets["app_bundle"], *(["--args", *app_args] if app_args else [])])
+        + (["--dev-overlay", dev_overlay_path(dev_overlay)] if dev_overlay else []) \
+        + (["--no-ui-input"] if no_ui_input else [])
+    run(["open", "-n", *(["-g"] if no_ui_input else []), assets["app_bundle"], *(["--args", *app_args] if app_args else [])])
     print(json.dumps({"status": "native_app_opened", "app": assets["app_bundle"],
                       "diagnostics": str(output / "sessions"), "runtime_requires_docker": False}))
 
@@ -667,6 +670,9 @@ def main():
     launcher.add_argument("--dev-overlay", metavar="DIR",
                           help="decoupled research builds: share this mod folder read-only over 9p; its files/, "
                                "recipes/ and preload/ are applied in the guest before each app start (fwdev.py)")
+    launcher.add_argument("--no-ui-input", action="store_true",
+                          help="bench mode: the window ignores clicks, drags, scrolling, keys and accessibility actions "
+                               "and opens without taking focus (open -g); the research control socket still works")
     fw = commands.add_parser("firmware", help="decoupled builds: import, list, check and manage user-supplied firmware")
     fw.add_argument("action", choices=("import", "list", "show", "check", "rename", "remove", "select", "audit",
                                        "profile"))
@@ -700,7 +706,7 @@ def main():
         elif args.command == "diagnostics":
             return diagnostics_command(args)
         else:
-            launch(args.output, args.ephemeral, args.usb_image, args.firmware, args.dev_overlay)
+            launch(args.output, args.ephemeral, args.usb_image, args.firmware, args.dev_overlay, args.no_ui_input)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         parser.exit(1, f"native emulator failed: {exc}\n")
 

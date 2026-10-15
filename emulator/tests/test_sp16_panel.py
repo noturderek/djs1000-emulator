@@ -1,6 +1,7 @@
 """Semantic panel protocol, RX frame model and layout/control-ID consistency."""
 import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 import struct
@@ -553,6 +554,134 @@ class AccessibilityEnabledContract(unittest.TestCase):
         src = (TOOLS / "panel-view.swift").read_text()
         self.assertIn("override func isAccessibilityEnabled() -> Bool", src)
         self.assertIn("func accessibilityEnabled(forControl", src)
+
+
+# Compiled with the real panel-view.swift: feeds the same NSEvents and accessibility actions to a panel with UI input on
+# and off (bench mode, `--no-ui-input`) and prints what reached the delegate for each.
+PANEL_INPUT_HARNESS = r"""import AppKit
+
+// Feeds the same real NSEvents and accessibility actions to a panel with UI input on and off; prints what reached the
+// delegate for each, plus the bench badge state, as JSON.
+final class Recorder: PanelViewDelegate {
+    var events: [String] = []
+    func panelControl(_ id: UInt8, action: UInt8, value: Int16) { events.append("control \(id) \(action)") }
+    func panelTouch(x: Int, y: Int, action: UInt8) { events.append("touch \(action)") }
+}
+
+func exercise(layout: URL, inputEnabled: Bool) -> [String: Any] {
+    let panel = PanelView(layoutURL: layout)
+    let recorder = Recorder()
+    panel.delegate = recorder
+    panel.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
+    panel.uiInputEnabled = inputEnabled
+    func at(_ p: NSPoint) -> NSPoint { panel.convert(p, to: nil) }
+    func centre(_ r: NSRect) -> NSPoint { NSPoint(x: r.midX, y: r.midY) }
+    func mouse(_ type: NSEvent.EventType, _ p: NSPoint) -> NSEvent {
+        NSEvent.mouseEvent(with: type, location: at(p), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                           eventNumber: 0, clickCount: 1, pressure: 1)!
+    }
+    func key(_ type: NSEvent.EventType, _ chars: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags = []) -> NSEvent {
+        NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
+                         characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+    }
+    func scroll(_ p: NSPoint) -> NSEvent {
+        // A CGEvent's location is in global coordinates; probe how NSEvent maps it, then aim at the view point.
+        let probe = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: 3, wheel2: 0, wheel3: 0)!
+        probe.location = .zero
+        let origin = NSEvent(cgEvent: probe)!.locationInWindow
+        let w = at(p)
+        probe.location = CGPoint(x: w.x - origin.x, y: origin.y - w.y)
+        return NSEvent(cgEvent: probe)!
+    }
+    var result: [String: Any] = [:]
+    func record(_ name: String, _ body: () -> Void) {
+        recorder.events = []
+        body()
+        result[name] = recorder.events
+    }
+    let pad = centre(panel.controlFrame(1)), pot = centre(panel.controlFrame(61)), lcd = centre(panel.lcdFrame)
+    record("click_pad") { panel.mouseDown(with: mouse(.leftMouseDown, pad)); panel.mouseUp(with: mouse(.leftMouseUp, pad)) }
+    record("right_click_pad") {     // a right click latches the pad; a second one releases it
+        for _ in 0..<2 { panel.rightMouseDown(with: mouse(.rightMouseDown, pad)); panel.rightMouseUp(with: mouse(.rightMouseUp, pad)) }
+    }
+    record("touch_lcd") {
+        panel.mouseDown(with: mouse(.leftMouseDown, lcd))
+        panel.mouseDragged(with: mouse(.leftMouseDragged, NSPoint(x: lcd.x + 20, y: lcd.y)))
+        panel.mouseUp(with: mouse(.leftMouseUp, lcd))
+    }
+    record("drag_pot") {
+        panel.mouseDown(with: mouse(.leftMouseDown, pot))
+        panel.mouseDragged(with: mouse(.leftMouseDragged, NSPoint(x: pot.x, y: pot.y - 60)))
+        panel.mouseUp(with: mouse(.leftMouseUp, NSPoint(x: pot.x, y: pot.y - 60)))
+    }
+    record("scroll_pot") { panel.scrollWheel(with: scroll(pot)) }
+    record("key_pad") { panel.keyDown(with: key(.keyDown, "z", 6)); panel.keyUp(with: key(.keyUp, "z", 6)) }
+    record("shift") {
+        panel.flagsChanged(with: key(.flagsChanged, "", 56, .shift))
+        panel.flagsChanged(with: key(.flagsChanged, "", 56))
+    }
+    let elements = (panel.accessibilityChildren() ?? []).compactMap { $0 as? PanelAccessibilityElement }
+    let label = { (id: UInt8) in panel.panelLayout!.controls.first { $0.id == id }!.accessibility }
+    let potElement = elements.first { $0.accessibilityLabel() == label(61) }!
+    let padElement = elements.first { $0.accessibilityLabel() == label(1) }!
+    record("ax_increment") { _ = potElement.accessibilityPerformIncrement() }
+    record("ax_press") {
+        _ = padElement.accessibilityPerformPress()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))     // the release follows after 40 ms
+    }
+    result["ax_enabled"] = potElement.isAccessibilityEnabled()
+    let toolbar = panel.subviews.compactMap { $0 as? PanelToolbar }.first!
+    result["badge_visible"] = !toolbar.benchBadge.isHidden
+    result["latch_visible"] = !toolbar.latch.isHidden
+    return result
+}
+
+let layout = URL(fileURLWithPath: CommandLine.arguments[1])
+let report = ["on": exercise(layout: layout, inputEnabled: true), "off": exercise(layout: layout, inputEnabled: false)]
+print(String(data: try! JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]), encoding: .utf8)!)
+"""
+
+
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("swiftc"), "macOS swiftc required")
+class BenchModeInputGateTests(unittest.TestCase):
+    """--no-ui-input: the window drops every pointer, scroll, key and accessibility input; nothing reaches the guest."""
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as work:
+            main = Path(work) / "main.swift"
+            main.write_text(PANEL_INPUT_HARNESS)
+            binary = Path(work) / "harness"
+            subprocess.run(["swiftc", main, TOOLS / "panel-view.swift", "-o", binary], check=True, capture_output=True)
+            output = subprocess.run([binary, TOOLS / "panel-layout.json"], check=True, capture_output=True, text=True,
+                                    timeout=60).stdout
+        cls.report = json.loads(output)
+
+    CASES = ("click_pad", "right_click_pad", "touch_lcd", "drag_pot", "scroll_pot", "key_pad", "shift", "ax_increment",
+             "ax_press")
+
+    def test_every_input_path_reaches_the_guest_when_input_is_on(self):
+        for case in self.CASES:
+            with self.subTest(case=case):
+                self.assertTrue(self.report["on"][case], f"{case} emitted nothing, so the off case would prove nothing")
+        self.assertEqual(self.report["on"]["scroll_pot"], ["control 61 3"])   # the AD TEST disturbance this guards
+        self.assertTrue(self.report["on"]["ax_enabled"])
+        self.assertFalse(self.report["on"]["badge_visible"])
+        self.assertTrue(self.report["on"]["latch_visible"])
+
+    def test_bench_mode_drops_every_input_path_and_shows_the_badge(self):
+        for case in self.CASES:
+            with self.subTest(case=case):
+                self.assertEqual(self.report["off"][case], [])
+        self.assertFalse(self.report["off"]["ax_enabled"])
+        self.assertTrue(self.report["off"]["badge_visible"])
+        self.assertFalse(self.report["off"]["latch_visible"])
+
+    def test_the_app_reads_the_flag_and_does_not_take_focus_in_bench_mode(self):
+        source = (TOOLS / "native-window.swift").read_text()
+        self.assertIn('uiInputDisabled = arguments.contains("--no-ui-input")', source)
+        self.assertIn("panel.uiInputEnabled = !uiInputDisabled", source)
+        self.assertIn("if !uiInputDisabled { NSApp.activate(ignoringOtherApps: true) }", source)
 
 
 if __name__ == "__main__":
