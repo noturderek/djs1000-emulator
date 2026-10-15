@@ -89,6 +89,19 @@ esac
 cp /usr/bin/qemu-arm-static /tmp/sp16-root/qemu-arm-static
 mkdir -p /tmp/sp16-root/opt/sp16 /tmp/sp16-root/dev
 cp /opt/sp16/libsp16-ui.so /tmp/sp16-root/opt/sp16/
+# Developer overlay only: show the read-only share to the firmware app too (it runs chrooted at /tmp/sp16-root and
+# cannot see /opt/sp16/dev-share otherwise). A preload library can then read a newer library from the host folder and
+# load it without an app restart. The share stays read-only (9p mount and bind); the app can read the mod folder you
+# chose and nothing else. Without sp16.dev=1 nothing is mounted, so a normal build is unchanged.
+if [ "$sp16_devlayer" = 1 ]; then
+  mkdir -p /tmp/sp16-root/opt/sp16/dev-share
+  if mount --bind /opt/sp16/dev-share /tmp/sp16-root/opt/sp16/dev-share \
+     && mount -o remount,bind,ro /tmp/sp16-root/opt/sp16/dev-share; then
+    echo 'SP16_DEV_SHARE app-visible=yes path=/opt/sp16/dev-share' > /dev/console
+  else
+    echo 'SP16_DEV_ERROR developer overlay share not visible to the app' > /dev/console
+  fi
+fi
 : > /tmp/sp16-root/dev/null
 : > /tmp/sp16-root/dev/full
 # Audio transport (native.py build --audio file): give the chroot the sp16.pcm port as a character node so the

@@ -112,6 +112,23 @@ counters move, and optionally that an LCD region changed against a stock baselin
   toolchain in a throwaway Docker container, with the same flags as the hardware shim. The library binds to the
   firmware's own C library at run time and is loaded after the shim.
 
+### Loading a library without restarting the app
+
+The firmware app runs chrooted at `/tmp/sp16-root`, which used to hide the mod folder: only the guest saw
+`/opt/sp16/dev-share`, and the app got copies of `preload/*.so` at each start. A developer-overlay build now also
+bind-mounts the folder **read-only** at `/opt/sp16/dev-share` *inside* the app's root, so code running in the app, such as
+a preload library, can read files that you change on the host while the app runs. The console shows
+`SP16_DEV_SHARE app-visible=yes path=/opt/sp16/dev-share` at boot when it is there, and `SP16_DEV_ERROR developer overlay
+share not visible to the app` when the bind failed. Without a developer overlay (`sp16.dev=1`) nothing is mounted.
+
+- It needs a guest image from this version: rebuild an older build in place
+  (`./sp16 build --name dev --rebuild --research --audio file --bundle-suffix dev`; options are not remembered).
+  An older guest simply does not have the path, so a library must treat it as optional.
+- The share is a 9p mount, which cannot be memory-mapped. To load a library from it, copy the file to `/tmp` first
+  (the app's tmpfs) and `dlopen` the copy; reading it with `open`/`read` works as on any file. A new host file appears
+  in the app within a moment (the mount does not cache), so a watcher thread can poll a small command file.
+- The app can read everything in the mod folder, including `files/` and `recipes/`. Keep it to the mod itself.
+
 ## Package a mod
 
 ```sh

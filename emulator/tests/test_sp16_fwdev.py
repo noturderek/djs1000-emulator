@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -204,6 +205,18 @@ class FwdevHostTests(unittest.TestCase):
             self.assertIn(op, swift)
         bridge = (TOOLS / "guest-bridge.py").read_text()
         self.assertIn('"[sp16-mod]"', bridge)
+
+    def test_dev_share_is_bound_read_only_into_the_app_root(self):
+        init = (TOOLS / "guest-init.sh").read_text()
+        bind = "mount --bind /opt/sp16/dev-share /tmp/sp16-root/opt/sp16/dev-share"
+        self.assertIn(bind, init)
+        self.assertIn("mount -o remount,bind,ro /tmp/sp16-root/opt/sp16/dev-share", init)
+        # the bind sits inside the developer-overlay branch, so a build without sp16.dev=1 mounts nothing
+        branch = init.split(bind, 1)[0].rsplit("\nif ", 1)[1]
+        self.assertTrue(branch.startswith('[ "$sp16_devlayer" = 1 ]'), branch)
+        # the share is in the app's root before the supervisor loop starts the app
+        self.assertLess(init.index(bind), init.index("enter.py /tmp/sp16-root"))
+        self.assertEqual(subprocess.run(["sh", "-n", str(TOOLS / "guest-init.sh")]).returncode, 0)
 
 
 if __name__ == "__main__":
