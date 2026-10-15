@@ -94,6 +94,10 @@ unverified (title "(unverified)", library status, a one-time notice); see sectio
 Confirm it booted: the newest `build/sp16/sessions/native-*/console.txt` contains `SP16_NATIVE_READY`. The window
 shows the panel; the LCD settles on the home screen after about 10 seconds.
 
+For an unattended, scripted run of a research build (driven by `./sp16 ctl` or the control socket), add
+`--no-ui-input`: the window then ignores clicks, scrolling, keys and accessibility actions and opens without taking
+focus, so someone using the Mac cannot change what the script measures (details: `docs/architecture.md`, Bench mode).
+
 ## 5a. Samples on the virtual USB stick
 
 The sampler loads samples from a virtual USB stick: `build/stick.img`, a FAT32 image that `./sp16 run` attaches

@@ -662,6 +662,9 @@ RUN_OPTS = [
     Opt("--ephemeral", "Use a disposable data image for this session (nothing persists; no lock on the firmware's "
         "data, so a second app can run the same firmware).", flag=True),
     Opt("--dev-overlay", "Research builds: share this mod folder into the guest (see `./sp16 mod`).", "DIR", path=True),
+    Opt("--no-ui-input", "Bench mode for unattended runs: the window ignores clicks, drags, scrolling, keys and "
+        "accessibility actions (a badge says so) and opens in the background without taking focus; the research "
+        "control socket, LCD snapshots and panelshots work as usual.", flag=True),
 ]
 
 
@@ -2910,14 +2913,19 @@ def make_commands():
         "run", "Build and run", "Launch a built emulator app",
         "Opens build/NAME with `open -n`; close the window to stop the emulator. The first boot of each firmware "
         "creates a 1 GB data image for it in the library; projects and settings persist there.",
-        opts=RUN_OPTS, usage="./sp16 run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR]",
+        opts=RUN_OPTS, usage="./sp16 run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR] [--no-ui-input]",
         examples=["./sp16 run", "./sp16 run --name sp16-dev --firmware ID",
-                  "./sp16 run --usb-image ~/sticks/other.img", "./sp16 run --no-usb", "./sp16 run --ephemeral"],
+                  "./sp16 run --usb-image ~/sticks/other.img", "./sp16 run --no-usb", "./sp16 run --ephemeral",
+                  "./sp16 run --name sp16-dev --ephemeral --no-ui-input   # unattended, scripted through ./sp16 ctl"],
         notes=["If the build does not exist, the error names the `./sp16 build` command that creates it.",
                "When build/stick.img exists (see `./sp16 usb`) it is attached as the virtual USB stick unless you give "
                "--usb-image or --no-usb, or another running emulator or this Mac already holds it (then a note says so "
                "and the emulator starts without it).",
-               "Two apps cannot use the same firmware's data image at once; give the second one --ephemeral."],
+               "Two apps cannot use the same firmware's data image at once; give the second one --ephemeral.",
+               "--no-ui-input is for scripts that drive a research build through `./sp16 ctl` or the control socket: "
+               "macOS sends scroll-wheel events to the window under the pointer even when another app is active, so "
+               "opening in the background alone does not protect a run; the app's input gate does. Quit with Cmd-Q "
+               "or the window's close button, which still work."],
         handler=plan_run)
     add("builds", "Build and run", "List the builds in build/ with the options each was built with",
         "Shows each build's state (built, running with its process ids, incomplete), audio mode, research socket, "

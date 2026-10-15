@@ -111,3 +111,14 @@ updates), M7 distribution packaging.
 Builds made with `--research` open an owner-only control socket per session; its path is in the session's
 `runtime.json`. `./sp16 ctl <command>` (it runs `emulator/sessionctl.py` against the newest research session) sends panel events, touches, raw frames,
 snapshots, USB attach and eject, `metrics`, `firmware` and `app-restart`. The hardware suite and `fwdev.py` use it.
+
+### Bench mode (`--no-ui-input`)
+
+A script that drives a session through the socket and compares the LCD against reference data can be disturbed by
+anyone using the Mac: macOS sends scroll-wheel events to the window under the pointer whether or not it is active, and
+a scroll over an analog pot moves it (the AD TEST page shows the new value). `./sp16 run --no-ui-input` starts the app
+in bench mode: the panel drops every click, drag, scroll, key and accessibility action before it reaches the guest,
+the toolbar's input controls are replaced by a "Bench mode: input off" badge, and the app opens with `open -g` and does
+not activate itself, so it takes no focus. Only the app's gate stops the scroll; opening in the background alone would
+not. The research socket, LCD snapshots and panelshots are unchanged (they never pass through the panel's input
+handlers), the window still closes and Cmd-Q still quits, and the session's `runtime.json` records `"ui_input": false`.

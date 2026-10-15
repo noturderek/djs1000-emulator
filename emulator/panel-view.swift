@@ -925,6 +925,8 @@ final class PanelToolbar: NSView {
     let velocity = NSPopUpButton(frame: .zero, pullsDown: false)
     let releaseAll = NSButton(title: "Release all", target: nil, action: nil)
     let lcdOnly = NSButton(checkboxWithTitle: "LCD only", target: nil, action: nil)
+    /// Shown instead of the controls above in bench mode (`PanelView.uiInputEnabled == false`).
+    let benchBadge = NSTextField(labelWithString: " Bench mode: input off ")
     let status = NSTextField(labelWithString: "")
 
     override init(frame: NSRect) {
@@ -949,8 +951,22 @@ final class PanelToolbar: NSView {
         status.alignment = .right
         status.lineBreakMode = .byTruncatingTail
         status.setAccessibilityLabel("Emulator status")
-        for v in [latch, velocityCaption, velocity, releaseAll, lcdOnly, status] as [NSView] { addSubview(v) }
+        benchBadge.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        benchBadge.textColor = .black
+        benchBadge.drawsBackground = true
+        benchBadge.backgroundColor = .systemOrange
+        benchBadge.toolTip = "Started with --no-ui-input: clicks, drags, scrolling, keys and accessibility actions are "
+            + "ignored; the research control socket still drives the panel"
+        benchBadge.isHidden = true
+        for v in [latch, velocityCaption, velocity, releaseAll, lcdOnly, benchBadge, status] as [NSView] { addSubview(v) }
         selectVelocity(100)
+    }
+
+    /// Bench mode hides the input controls and shows the badge in their place.
+    func setInputEnabled(_ enabled: Bool) {
+        for v in [latch, velocityCaption, velocity, releaseAll, lcdOnly] as [NSView] { v.isHidden = !enabled }
+        benchBadge.isHidden = enabled
+        needsLayout = true
     }
 
     required init?(coder: NSCoder) { nil }
@@ -963,7 +979,7 @@ final class PanelToolbar: NSView {
     override func layout() {
         super.layout()
         var x: CGFloat = 12
-        for v in [latch, velocityCaption, velocity, releaseAll, lcdOnly] as [NSControl] {
+        for v in [latch, velocityCaption, velocity, releaseAll, lcdOnly, benchBadge] as [NSControl] where !v.isHidden {
             v.sizeToFit()
             v.frame.origin = CGPoint(x: x, y: ((bounds.height - v.frame.height) / 2).rounded())
             x = v.frame.maxX + (v === velocityCaption ? 4 : 16)
@@ -1005,7 +1021,7 @@ final class PanelAccessibilityElement: NSAccessibilityElement {
     override func isAccessibilityEnabled() -> Bool { panel.accessibilityEnabled(forControl: controlID) }
     override func accessibilityFrame() -> NSRect { panel.screenFrame(forControl: controlID) }
     override func accessibilityValue() -> Any? { panel.accessibilityValueText(forControl: controlID) }
-    override func accessibilityPerformPress() -> Bool { panel.accessibilityActivate(controlID); return true }
+    override func accessibilityPerformPress() -> Bool { panel.accessibilityActivate(controlID) }
     override func accessibilityPerformIncrement() -> Bool { panel.accessibilityStep(controlID, by: 1) }
     override func accessibilityPerformDecrement() -> Bool { panel.accessibilityStep(controlID, by: -1) }
 }
@@ -1066,6 +1082,18 @@ final class PanelView: NSView, NSViewToolTipOwner {
     }
     /// Draws hit regions and control ids for calibration.
     var debugOverlay = false { didSet { state.debugOverlay = debugOverlay; needsDisplay = true } }
+    /// False in bench mode (`--no-ui-input`): the window drops every click, drag, scroll, key and accessibility action,
+    /// so an unattended run that drives the panel through the research control socket cannot be disturbed by someone
+    /// using the Mac (macOS sends scroll to the window under the pointer even when it is not active). The control
+    /// socket, the LCD and screenshots are unaffected: they never pass through these handlers.
+    var uiInputEnabled = true {
+        didSet {
+            guard uiInputEnabled != oldValue else { return }
+            releaseAll()
+            toolbar.setInputEnabled(uiInputEnabled)
+            NSAccessibility.post(element: self, notification: .layoutChanged)
+        }
+    }
 
     private(set) var panelLayout: PanelLayout?
     private(set) var feedbackGeneration: UInt32 = 0
@@ -1347,22 +1375,32 @@ final class PanelView: NSView, NSViewToolTipOwner {
     }
 
     // MARK: Pointer input
+    // Every NSEvent and accessibility entry point checks `uiInputEnabled` first; the handle* methods below stay
+    // ungated so they remain the testable model of what the input does.
 
     override func mouseDown(with event: NSEvent) {
+        guard uiInputEnabled else { return }
         window?.makeFirstResponder(self)
         handleMouseDown(at: convert(event.locationInWindow, from: nil), flags: event.modifierFlags, rightButton: false)
     }
     override func rightMouseDown(with event: NSEvent) {
+        guard uiInputEnabled else { return }
         window?.makeFirstResponder(self)
         handleMouseDown(at: convert(event.locationInWindow, from: nil), flags: event.modifierFlags, rightButton: true)
     }
-    override func mouseDragged(with event: NSEvent) { handleMouseDragged(to: convert(event.locationInWindow, from: nil)) }
-    override func mouseUp(with event: NSEvent) { handleMouseUp(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseDragged(with event: NSEvent) {
+        guard uiInputEnabled else { return }
+        handleMouseDragged(to: convert(event.locationInWindow, from: nil))
+    }
+    override func mouseUp(with event: NSEvent) {
+        guard uiInputEnabled else { return }
+        handleMouseUp(at: convert(event.locationInWindow, from: nil))
+    }
     override func rightMouseUp(with event: NSEvent) {}
     override func menu(for event: NSEvent) -> NSMenu? { nil }
 
     override func scrollWheel(with event: NSEvent) {
-        guard event.momentumPhase.isEmpty else { return }
+        guard uiInputEnabled, event.momentumPhase.isEmpty else { return }
         let consumed = handleScroll(at: convert(event.locationInWindow, from: nil), deltaY: event.scrollingDeltaY,
                                     precise: event.hasPreciseScrollingDeltas)
         if !consumed { super.scrollWheel(with: event) }
@@ -1537,16 +1575,19 @@ final class PanelView: NSView, NSViewToolTipOwner {
         "!": "1", "@": "2", "#": "3", "$": "4", "&": "7", "*": "8", "(": "9", ")": "0", ":": ";", "<": ",", ">": ".", "~": "`"
     ]
 
+    // Bench mode swallows keys silently (no beep); menu shortcuts such as Cmd-Q reach the menu before keyDown.
     override func keyDown(with event: NSEvent) {
+        guard uiInputEnabled else { return }
         let handled = handleKeyDown(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
                                     isRepeat: event.isARepeat, flags: event.modifierFlags)
         if !handled { super.keyDown(with: event) }
     }
     override func keyUp(with event: NSEvent) {
+        guard uiInputEnabled else { return }
         if !handleKeyUp(keyCode: event.keyCode) { super.keyUp(with: event) }
     }
     override func flagsChanged(with event: NSEvent) {
-        handleFlagsChanged(event.modifierFlags)
+        if uiInputEnabled { handleFlagsChanged(event.modifierFlags) }    // Shift is the SHIFT button
         super.flagsChanged(with: event)
     }
 
@@ -1663,6 +1704,7 @@ final class PanelView: NSView, NSViewToolTipOwner {
     }
 
     func accessibilityEnabled(forControl id: UInt8?) -> Bool {
+        guard uiInputEnabled else { return false }
         guard let id, let c = controlIndex[id] else { return true }
         return c.kind != .analog || Self.adcControls.contains(id)
     }
@@ -1677,26 +1719,29 @@ final class PanelView: NSView, NSViewToolTipOwner {
         }
     }
 
-    /// Accessibility press: press, then release after 40 ms.
-    func accessibilityActivate(_ id: UInt8?) {
+    /// Accessibility press: press, then release after 40 ms. False (nothing sent) in bench mode.
+    @discardableResult
+    func accessibilityActivate(_ id: UInt8?) -> Bool {
+        guard uiInputEnabled else { return false }
         guard let id else {
             let r = lcdFrame, mid = CGPoint(x: r.midX, y: r.midY)
-            guard let pt = lcdFramebufferPoint(at: mid, clamped: true) else { return }
+            guard let pt = lcdFramebufferPoint(at: mid, clamped: true) else { return false }
             delegate?.panelTouch(x: pt.x, y: pt.y, action: 1)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in self?.delegate?.panelTouch(x: pt.x, y: pt.y, action: 2) }
-            return
+            return true
         }
-        guard let c = controlIndex[id], c.kind != .lamp, c.kind != .analog, c.kind != .knob else { return }
+        guard let c = controlIndex[id], c.kind != .lamp, c.kind != .analog, c.kind != .knob else { return false }
         if c.kind == .strip {
             addSource(id, .accessibility, value: 500)
         } else {
             addSource(id, .accessibility)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in self?.removeSource(id, .accessibility) }
+        return true
     }
 
     func accessibilityStep(_ id: UInt8?, by detents: Int) -> Bool {
-        guard let id, let c = controlIndex[id] else { return false }
+        guard uiInputEnabled, let id, let c = controlIndex[id] else { return false }
         switch c.kind {
         case .knob, .selector: rotate(id, detents: detents)
         case .analog:

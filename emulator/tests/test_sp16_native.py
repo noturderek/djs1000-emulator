@@ -394,6 +394,18 @@ class PersistenceArgumentTests(unittest.TestCase):
         self.assertEqual(failed.returncode, 2)
         self.assertIn("unrecognized arguments: --no-persistence", failed.stderr)
 
+    def test_launch_opens_in_the_background_with_input_off_only_in_bench_mode(self):
+        from unittest import mock
+        assets = {"app_bundle": "/b/SP16.app", "decoupled": True, "research": True}
+        for bench, expected in ((False, ["open", "-n", "/b/SP16.app"]),
+                                (True, ["open", "-n", "-g", "/b/SP16.app", "--args", "--no-ui-input"])):
+            with self.subTest(bench=bench), mock.patch.object(native, "host_check"), \
+                    mock.patch.object(native, "private_path", side_effect=Path), \
+                    mock.patch.object(native, "validated_assets", return_value=assets), \
+                    mock.patch.object(native, "run") as run, mock.patch("builtins.print"):
+                native.launch("/b", no_ui_input=bench)
+                run.assert_called_once_with(expected)
+
     def test_guest_init_gates_persistence_on_cmdline_token(self):
         text = (TOOLS / "guest-init.sh").read_text()
         self.assertIn('*" sp16.data=1 "*) sp16_data=1', text)

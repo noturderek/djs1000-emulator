@@ -284,9 +284,9 @@ class RunTests(CliCase):
     def test_run_options(self):
         folder = self.make_build("dev", research=True)
         argv, _ = self.argv("run", "--build", "dev", "--firmware", "abc", "--usb-image", "stick.img", "--ephemeral",
-                            "--dev-overlay", "mod")
+                            "--dev-overlay", "mod", "--no-ui-input")
         self.assertEqual(argv, [PYTHON, self.tool("native.py"), "launch", "--output", str(folder), "--firmware", "abc",
-                                "--usb-image", "stick.img", "--ephemeral", "--dev-overlay", "mod"])
+                                "--usb-image", "stick.img", "--ephemeral", "--dev-overlay", "mod", "--no-ui-input"])
 
     def test_a_missing_build_names_the_command_that_creates_it(self):
         self.make_build("other")
