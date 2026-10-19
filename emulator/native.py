@@ -246,6 +246,12 @@ def arguments(qemu, guest, socket, trace=None, data=False, audio=None, firmware=
     # Audio transport: a dedicated virtio-serial port carrying playback frames to the host file sink.
     pcm = ["-chardev", f"socket,id=sp16pcm,path={socket}.pcm,server=on,wait=off",
            "-device", "virtserialport,chardev=sp16pcm,name=sp16.pcm"] if audio else []
+    # Research gdb bridge (--trace gdb): a dedicated virtio-serial port so the guest can tunnel the qemu-user
+    # gdbstub (127.0.0.1:1234 in the guest) out to the host, since the guest has no NIC beyond lo. The host end
+    # is the unix socket {socket}.gdb; the guest-init forwarder bridges the vport to the in-guest stub, and a tiny
+    # host bridge (emulator/gdb-bridge.py) re-exposes {socket}.gdb as TCP for lldb's `gdb-remote`.
+    gdb = ["-chardev", f"socket,id=sp16gdb,path={socket}.gdb,server=on,wait=off",
+           "-device", "virtserialport,chardev=sp16gdb,name=sp16.gdb"] if trace == "gdb" else []
     if padcal is not None and (not firmware or not PADCAL_PATTERN.fullmatch(str(padcal))):
         raise ValueError("padcal is default, off or a number, for decoupled builds only")
     fw = ["-drive", "file=@FWIMAGE@,format=raw,if=none,id=sp16fw,readonly=on",
@@ -263,7 +269,7 @@ def arguments(qemu, guest, socket, trace=None, data=False, audio=None, firmware=
                        + (f" sp16.padcal={padcal}" if firmware and padcal is not None else ""),
             "-device", "virtio-serial-device",
             "-chardev", f"socket,id=sp16,path={socket},server=on,wait=off",
-            "-device", "virtserialport,chardev=sp16,name=sp16.ui", *fw, *persistent, *pcm]
+            "-device", "virtserialport,chardev=sp16,name=sp16.ui", *fw, *persistent, *pcm, *gdb]
 
 
 def shipped_profile(profile):

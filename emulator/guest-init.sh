@@ -34,6 +34,7 @@ for sp16_port in /sys/class/virtio-ports/*; do
    sp16.ui) [ -e /dev/vport0p1 ] || ln -s "/dev/${sp16_port##*/}" /dev/vport0p1 ;;
    sp16.ctl) ln -sf "/dev/${sp16_port##*/}" /dev/sp16-ctl ;;
    sp16.pcm) ln -sf "/dev/${sp16_port##*/}" /dev/sp16-pcm ;;
+   sp16.gdb) ln -sf "/dev/${sp16_port##*/}" /dev/sp16-gdb ;;
   esac
 done
 # Firmware import boot (decoupled base image only, docs/architecture.md M2): the user's update and an output disk
@@ -205,8 +206,82 @@ case " $(cat /proc/cmdline) " in
   # No audio ever reaches a host device.
   sp16_pcmtap=1 ;;
  *" sp16.trace=gdb "*)
-  # qemu-user's gdbstub blocks the app until a debugger attaches. The guest has no NIC beyond lo.
-  sp16_trace_args="-g 1234" ;;
+  # qemu-user's gdbstub blocks the app until a debugger attaches. The guest has no NIC beyond lo, so a small
+  # forwarder tunnels the stub out over the dedicated sp16.gdb virtio-serial port (host end {socket}.gdb). It waits
+  # for the host (lldb, via emulator/gdb-bridge.py) to connect to the vport first, THEN dials the in-guest stub:
+  # qemu-arm -g 1234 does not listen until the app starts (below), and dialing it is what lets the app run, so the
+  # order keeps the app halted at entry until the debugger is actually attached.
+  sp16_trace_args="-g 1234"
+  if [ -e /dev/sp16-gdb ]; then
+    cat > /tmp/sp16-gdb-forward.py <<'PY'
+import os, select, socket, time
+
+VPORT = '/dev/sp16-gdb'
+HOST, PORT = '127.0.0.1', 1234
+
+
+def wait_for_host(vfd):
+    # A virtio-serial port read returns EOF (0 bytes) while no host is attached, so poll until the host
+    # (lldb via the bridge) connects and sends its first gdb-remote bytes; return them to forward first.
+    while True:
+        if select.select([vfd], [], [], 0.2)[0]:
+            data = os.read(vfd, 4096)
+            if data:
+                return data
+        time.sleep(0.05)
+
+
+def dial_stub():
+    # qemu-arm -g 1234 starts after this script (the app launch is later in init), so retry until it listens.
+    while True:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.connect((HOST, PORT))
+            return sock
+        except OSError:
+            sock.close()
+            time.sleep(0.1)
+
+
+def pump(vfd, sock, initial):
+    sock.sendall(initial)
+    sfd = sock.fileno()
+    while True:
+        for fd in select.select([vfd, sfd], [], [])[0]:
+            if fd == vfd:
+                data = os.read(vfd, 4096)
+                if not data:
+                    return            # host (lldb) detached
+                sock.sendall(data)
+            else:
+                data = sock.recv(4096)
+                if not data:
+                    return            # stub gone (app continued or exited)
+                os.write(vfd, data)
+
+
+def main():
+    while not os.path.exists(VPORT):
+        time.sleep(0.1)
+    vfd = os.open(VPORT, os.O_RDWR)
+    while True:                       # one gdb session at a time; loop so a re-attach works
+        initial = wait_for_host(vfd)
+        sock = dial_stub()
+        try:
+            pump(vfd, sock, initial)
+        except OSError:
+            pass
+        finally:
+            sock.close()
+
+
+main()
+PY
+    python3 -u /tmp/sp16-gdb-forward.py > /dev/console 2>&1 &
+    echo 'SP16_GDB forwarder=ready port=1234 vport=/dev/sp16-gdb' > /dev/console
+  else
+    echo 'SP16_GDB vport=missing; stub reachable only inside the guest' > /dev/console
+  fi ;;
 esac
 sp16_tap_env=
 if [ "${sp16_pcmtap:-0}" = 1 ]; then
