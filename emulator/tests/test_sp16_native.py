@@ -59,6 +59,67 @@ class NativeTransportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             native.build("y", research=False, trace="pcmtap")
 
+    def test_exec_trace_is_a_research_trace_mode_off_by_default(self):
+        self.assertIn("exec", native.TRACE_MODES)
+        text = " ".join(native.arguments(Path("/q"), Path("/g"), "/s", trace="exec"))
+        self.assertIn("sp16.trace=exec", text)
+        self.assertNotIn("sp16.gdb", text)  # no extra port: the addresses ride the serial console
+        self.assertNotIn("exec", " ".join(native.arguments(Path("/q"), Path("/g"), "/s")))
+        with self.assertRaises(ValueError):
+            native.build("y", research=False, trace="exec")
+
+    def test_guest_init_exec_trace_logs_a_text_range_through_a_deduping_filter(self):
+        text = (TOOLS / "guest-init.sh").read_text()
+        self.assertEqual(subprocess.run(["sh", "-n", str(TOOLS / "guest-init.sh")]).returncode, 0)
+        case = text.split('*" sp16.trace=exec "*)', 1)[1].split(";;", 1)[0]
+        self.assertIn("-d exec,nochain", case)
+        self.assertIn("-dfilter", case)
+        self.assertIn("-D /sp16-exec.fifo", case)
+        self.assertIn("sp16-exec-filter.py", case)
+        # The raw log (one line per executed block) never goes to the serial console: the filter reads the fifo and
+        # only its deduped output reaches /dev/console.
+        self.assertNotIn("< /tmp/sp16-root/sp16-exec.fifo", case)
+        self.assertIn("python3 -u /tmp/sp16-exec-filter.py /tmp/sp16-root/sp16-exec.fifo > /dev/console", case)
+        self.assertIn("SP16_EXEC_RANGE=0x116f8..0x831ca8", text.replace(" ", ""))
+
+    @staticmethod
+    def exec_filter(lines, extra=()):
+        text = (TOOLS / "guest-init.sh").read_text()
+        body = text.split("cat > /tmp/sp16-exec-filter.py <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "filter.py"
+            script.write_text(body + "\n")
+            fifo = Path(directory) / "exec.fifo"
+            os.mkfifo(fifo)
+            child = subprocess.Popen([sys.executable, "-I", str(script), str(fifo), "once", *extra],
+                                     stdout=subprocess.PIPE, text=True)
+            try:
+                with open(fifo, "wb") as writer:
+                    writer.write("".join(lines).encode())
+                out, _ = child.communicate(timeout=30)
+            finally:
+                child.kill()
+        return out.splitlines()
+
+    def test_exec_filter_prints_each_block_address_once_and_counts_them(self):
+        def trace(pc, symbol=""):
+            return "Trace 0: 0x7f5f6c000100 [00000000/%08x/00000010/00ff0000] %s\n" % (pc, symbol)
+        lines = [trace(0x116f8, "_start"), trace(0x11700), trace(0x116f8, "_start"), "noise line\n", trace(0x11700),
+                 "Trace 1: 0x7f5f6c000200 [00000000/00011800/00000010/00ff0000] \n", trace(0x116f8)]
+        out = self.exec_filter(lines)
+        addresses = [token for line in out if line.startswith("SP16_TB ") for token in line.split()[1:]]
+        self.assertEqual(addresses, ["000116f8", "00011700", "00011800"])
+        self.assertEqual(out[-1], "SP16_TB_END distinct=3 lines=6")
+        self.assertTrue(all(len(line) < 200 for line in out))
+
+    def test_exec_filter_stops_printing_at_its_cap_but_keeps_counting(self):
+        lines = ["Trace 0: 0x1 [00000000/%08x/00000010/00ff0000] \n" % pc for pc in range(0x20000, 0x20000 + 40, 4)]
+        out = self.exec_filter(lines, ("cap=3",))
+        addresses = [token for line in out if line.startswith("SP16_TB ") for token in line.split()[1:]]
+        self.assertEqual(addresses, ["00020000", "00020004", "00020008"])
+        self.assertIn("SP16_TB_CAPPED cap=3", out)
+        self.assertEqual(out[-1], "SP16_TB_END distinct=10 lines=10")
+
     def test_audio_transport_is_a_dedicated_port_off_by_default(self):
         base = " ".join(native.arguments(Path("/q"), Path("/g"), "/s"))
         self.assertNotIn("sp16.pcm", base)

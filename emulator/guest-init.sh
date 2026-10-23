@@ -200,6 +200,99 @@ case " $(cat /proc/cmdline) " in
   (grep -a --line-buffered -Ev '^[0-9]+ (_newselect|writev|rt_sigprocmask|rt_sigaction|fstat64|futex|gettid|clock_gettime|gettimeofday|clock_nanosleep|nanosleep|epoll_wait|madvise|_llseek|access|stat64|read|write)\(' \
     < /tmp/sp16-root/sp16-strace.fifo | sed -u 's/^/SP16_STRACE /' > /dev/console) &
   sp16_trace_args="-strace -D /sp16-strace.fifo" ;;
+ *" sp16.trace=exec "*)
+  # Research executed-block trace: qemu-user logs one line per executed translation block ("-d exec", unchained so
+  # every block shows) whose address lies in the app's text range ("-dfilter"). That is far too much for the serial
+  # console, so the log goes to a fifo and a small filter prints each block address once, in batches, as SP16_TB
+  # lines (host: emulator/exectrace.py). SP16_EXEC_RANGE is the 1.60 application's text range (begin..end, inclusive);
+  # change it for another firmware.
+  SP16_EXEC_RANGE=0x116f8..0x831ca8
+  mkfifo /tmp/sp16-root/sp16-exec.fifo
+  cat > /tmp/sp16-exec-filter.py <<'PY'
+import os, select, sys, time
+
+FIFO = sys.argv[1]
+ONCE = 'once' in sys.argv[2:]          # tests: stop at the first end of input instead of waiting for the next app start
+CAP = 1000000                          # distinct addresses printed at most (the text range cannot hold more)
+for argument in sys.argv[2:]:
+    if argument.startswith('cap='):
+        CAP = int(argument[4:])
+PER_LINE = 16
+FLUSH_EVERY = 0.5
+STATS_EVERY = 10.0
+
+seen = set()
+pending = []
+lines = 0
+capped = False
+
+
+def flush():
+    global pending
+    for start in range(0, len(pending), PER_LINE):
+        print('SP16_TB ' + ' '.join(pending[start:start + PER_LINE]), flush=True)
+    pending = []
+
+
+def feed(chunk):
+    # "Trace <cpu>: 0x<host tb> [<cs_base>/<pc>/<flags>/<cflags>] <symbol>": the block's guest address is the second field.
+    global lines, capped
+    for line in chunk.split(b'\n'):
+        start = line.find(b'[')
+        fields = line[start + 1:].split(b'/') if start >= 0 else []
+        if len(fields) < 3:
+            continue
+        lines += 1
+        pc = fields[1].decode('ascii', 'replace')
+        if pc in seen:
+            continue
+        seen.add(pc)
+        if len(seen) <= CAP:
+            pending.append(pc)
+        elif not capped:
+            capped = True
+            flush()
+            print('SP16_TB_CAPPED cap=%d' % CAP, flush=True)
+
+
+def drain(fd):
+    """Read one writer's output to its end; print new addresses at least every FLUSH_EVERY seconds."""
+    rest = b''
+    last_flush = last_stats = time.time()
+    shown = 0
+    while True:
+        if select.select([fd], [], [], FLUSH_EVERY)[0]:
+            data = os.read(fd, 1 << 16)
+            if not data:
+                break
+            data = rest + data
+            cut = data.rfind(b'\n')
+            rest = data[cut + 1:]
+            feed(data[:cut + 1])
+        now = time.time()
+        if pending and now - last_flush >= FLUSH_EVERY:
+            flush()
+            last_flush = now
+        if len(seen) != shown and now - last_stats >= STATS_EVERY:
+            print('SP16_TB_STATS distinct=%d lines=%d' % (len(seen), lines), flush=True)
+            last_stats = now
+            shown = len(seen)
+    feed(rest)
+    flush()
+
+
+while True:
+    fd = os.open(FIFO, os.O_RDONLY)    # blocks until qemu-user opens its log; again after each app restart
+    try:
+        drain(fd)
+    finally:
+        os.close(fd)
+    print('SP16_TB_END distinct=%d lines=%d' % (len(seen), lines), flush=True)
+    if ONCE:
+        break
+PY
+  python3 -u /tmp/sp16-exec-filter.py /tmp/sp16-root/sp16-exec.fifo > /dev/console 2>&1 &
+  sp16_trace_args="-d exec,nochain -dfilter $SP16_EXEC_RANGE -D /sp16-exec.fifo" ;;
  *" sp16.trace=pcmtap "*)
   # Research PCM tap: the stub copies each playback stream into a bounded file under /tmp; this helper
   # prints every finished capture to the console as gzip+base64 lines (SP16_PCM_DUMP) for host-side analysis.
