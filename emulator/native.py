@@ -648,7 +648,7 @@ def main():
                               "pcmtap records 4 s of each playback PCM from the first non-zero frame and prints it to "
                               "console.txt as SP16_PCM_DUMP gzip+base64 lines (no host audio output); "
                               "exec logs the qemu-user translator's executed translation-block addresses inside the app's "
-                              "text range, deduped per guest thread (cpu) in the guest, to console.txt as SP16_TB lines (read them with "
+                              "text range, deduped per app instance and guest thread (cpu) in the guest, to console.txt as SP16_TB lines (read them with "
                               "emulator/exectrace.py; slows the app a lot)")
     builder.add_argument("--audio", choices=AUDIO_MODES,
                          help="research or fullpanel only: carry the OEM playback PCM over a dedicated virtio-serial port "

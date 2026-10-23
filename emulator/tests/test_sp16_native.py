@@ -83,23 +83,36 @@ class NativeTransportTests(unittest.TestCase):
         self.assertIn("SP16_EXEC_RANGE=0x116f8..0x831ca8", text.replace(" ", ""))
 
     @staticmethod
-    def exec_filter(lines, extra=()):
+    def exec_filter(lines, extra=(), sessions=None):
+        """Run the embedded filter over fifo sessions (a list of line lists; `lines` alone is one session) and return
+        its stdout lines. The next session starts only after the filter printed the previous one's END line, as a
+        restarted app opens the log fifo after the old qemu-user closed it."""
         text = (TOOLS / "guest-init.sh").read_text()
         body = text.split("cat > /tmp/sp16-exec-filter.py <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        sessions = sessions if sessions is not None else [lines]
+        out = []
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "filter.py"
             script.write_text(body + "\n")
             fifo = Path(directory) / "exec.fifo"
             os.mkfifo(fifo)
-            child = subprocess.Popen([sys.executable, "-I", str(script), str(fifo), "once", *extra],
+            child = subprocess.Popen([sys.executable, "-I", str(script), str(fifo), "sessions=%d" % len(sessions), *extra],
                                      stdout=subprocess.PIPE, text=True)
             try:
-                with open(fifo, "wb") as writer:
-                    writer.write("".join(lines).encode())
-                out, _ = child.communicate(timeout=30)
+                for session in sessions:
+                    with open(fifo, "wb") as writer:
+                        writer.write("".join(session).encode())
+                    while True:
+                        line = child.stdout.readline()
+                        if not line:
+                            break
+                        out.append(line.rstrip("\n"))
+                        if line.startswith("SP16_TB_END"):
+                            break
             finally:
                 child.kill()
-        return out.splitlines()
+                child.communicate()
+        return out
 
     def test_exec_filter_prints_each_block_once_per_guest_thread_and_counts_them(self):
         def trace(pc, symbol="", cpu=0):
@@ -107,27 +120,47 @@ class NativeTransportTests(unittest.TestCase):
         lines = [trace(0x116f8, "_start"), trace(0x11700), trace(0x116f8, "_start"), "noise line\n", trace(0x11700),
                  trace(0x11800, cpu=1), trace(0x116f8, cpu=1), trace(0x11800, cpu=1), trace(0x116f8)]
         out = self.exec_filter(lines)
-        # First-execution order across threads: one SP16_TB line per run of the same cpu.
+        # First-execution order across threads: one SP16_TB line per run of the same cpu, tagged with the instance.
         batches = [line for line in out if line.startswith("SP16_TB ")]
-        self.assertEqual(batches, ["SP16_TB c0 000116f8 00011700", "SP16_TB c1 00011800 000116f8"])
-        self.assertEqual(out.count("SP16_TB_CPU c0 t=0.0"), 1)
-        self.assertEqual(sum(1 for line in out if line.startswith("SP16_TB_CPU c1 t=")), 1)
+        self.assertEqual(batches, ["SP16_TB i0 c0 000116f8 00011700", "SP16_TB i0 c1 00011800 000116f8"])
+        self.assertEqual(out[0], "SP16_TB_INSTANCE i0")
+        self.assertEqual(out.count("SP16_TB_CPU i0 c0 t=0.0"), 1)
+        self.assertEqual(sum(1 for line in out if line.startswith("SP16_TB_CPU i0 c1 t=")), 1)
         end = out[-1]
-        self.assertRegex(end, r"^SP16_TB_END distinct=4 lines=8 t=[0-9.]+ cpus=c0:2@0\.0,c1:2@[0-9.]+$")
+        self.assertRegex(end, r"^SP16_TB_END i0 distinct=4 lines=8 t=[0-9.]+ cpus=c0:2@0\.0,c1:2@[0-9.]+$")
         self.assertTrue(all(len(line) < 200 for line in out))
+
+    def test_exec_filter_keeps_an_app_restart_apart_from_the_instance_before(self):
+        # After `app-restart` the new qemu-user numbers its threads from cpu 0 again and runs the same blocks: they must
+        # be printed again and counted for the new instance, not suppressed by the old instance's (cpu, pc) pairs.
+        def trace(pc, cpu=0):
+            return "Trace %d: 0x7f5f6c000100 [00000000/%08x/00000010/00ff0000] \n" % (cpu, pc)
+        first = [trace(0x116f8), trace(0x11700), trace(0x11800, cpu=1)]
+        second = [trace(0x116f8), trace(0x11900), trace(0x116f8)]
+        out = self.exec_filter(None, sessions=[first, second])
+        batches = [line for line in out if line.startswith("SP16_TB ")]
+        self.assertEqual(batches, ["SP16_TB i0 c0 000116f8 00011700", "SP16_TB i0 c1 00011800",
+                                   "SP16_TB i1 c0 000116f8 00011900"])
+        self.assertEqual([line for line in out if line.startswith("SP16_TB_INSTANCE")],
+                         ["SP16_TB_INSTANCE i0", "SP16_TB_INSTANCE i1"])
+        # The second instance's cpu 0 is announced again and its counts and END line are its own.
+        self.assertEqual(sum(1 for line in out if line.startswith("SP16_TB_CPU i1 c0 t=0.0")), 1)
+        ends = [line for line in out if line.startswith("SP16_TB_END")]
+        self.assertRegex(ends[0], r"^SP16_TB_END i0 distinct=3 lines=3 t=[0-9.]+ cpus=c0:2@0\.0,c1:1@[0-9.]+$")
+        self.assertRegex(ends[1], r"^SP16_TB_END i1 distinct=2 lines=3 t=[0-9.]+ cpus=c0:2@0\.0$")
 
     def test_exec_filter_splits_long_runs_and_stops_printing_at_its_cap_but_keeps_counting(self):
         lines = ["Trace 0: 0x1 [00000000/%08x/00000010/00ff0000] \n" % pc for pc in range(0x20000, 0x20000 + 40, 4)]
         out = self.exec_filter(lines, ("cap=3",))
-        addresses = [token for line in out if line.startswith("SP16_TB ") for token in line.split()[2:]]
+        addresses = [token for line in out if line.startswith("SP16_TB ") for token in line.split()[3:]]
         self.assertEqual(addresses, ["00020000", "00020004", "00020008"])
-        self.assertIn("SP16_TB_CAPPED cap=3", out)
-        self.assertRegex(out[-1], r"^SP16_TB_END distinct=10 lines=10 t=[0-9.]+ cpus=c0:10@0\.0$")
+        self.assertIn("SP16_TB_CAPPED i0 cap=3", out)
+        self.assertRegex(out[-1], r"^SP16_TB_END i0 distinct=10 lines=10 t=[0-9.]+ cpus=c0:10@0\.0$")
         many = ["Trace 3: 0x1 [00000000/%08x/00000010/00ff0000] \n" % pc for pc in range(0x30000, 0x30000 + 80, 4)]
         out = self.exec_filter(many)
         batches = [line for line in out if line.startswith("SP16_TB ")]
-        self.assertEqual([len(line.split()) - 2 for line in batches], [16, 4])
-        self.assertTrue(all(line.startswith("SP16_TB c3 ") for line in batches))
+        self.assertEqual([len(line.split()) - 3 for line in batches], [16, 4])
+        self.assertTrue(all(line.startswith("SP16_TB i0 c3 ") for line in batches))
 
     def test_audio_transport_is_a_dedicated_port_off_by_default(self):
         base = " ".join(native.arguments(Path("/q"), Path("/g"), "/s"))

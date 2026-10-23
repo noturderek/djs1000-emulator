@@ -581,7 +581,7 @@ BUILD_OPTS = [
         "`./sp16 mod` and `./sp16 hwsuite`.", flag=True),
     Opt("--trace", "Research only: strace (syscall trace in console.txt), gdb (stub on port 1234, blocks the app "
         "until attached), pcmtap (records 4 s of each playback stream into console.txt; no host audio) or exec "
-        "(addresses of the translation blocks the app executes, each once per guest thread, as SP16_TB lines in console.txt; read "
+        "(addresses of the translation blocks the app executes, each once per app instance and guest thread, as SP16_TB lines in console.txt; read "
         "them with emulator/exectrace.py; slows the app a lot).", "MODE",
         choices=("strace", "gdb", "pcmtap", "exec")),
     Opt("--pad-calibration-value", "Stage a synthetic pad calibration N for all pads (default: the profile's own "
