@@ -111,10 +111,11 @@ updates), M7 distribution packaging.
 Builds made with `--research` open an owner-only control socket per session; its path is in the session's
 `runtime.json`. `./sp16 ctl <command>` (it runs `emulator/sessionctl.py` against the newest research session) sends panel events, touches, raw frames,
 snapshots, USB attach and eject, `metrics`, `firmware` and `app-restart`. The hardware suite and `fwdev.py` use it.
-Each call waits up to 60 s for the app's reply (`--timeout`, or `SP16_CONTROL_TIMEOUT`): a heavily loaded host can take
-well over 10 s to answer. A call with no usable reply ends in one line naming the operation, how long it waited and
-whether the app process is still running (the app hung up, did not answer in time, or answered something unreadable);
-after a timeout the client closes the connection, since a late reply would otherwise answer the next call.
+Each call waits up to 60 s for the app's whole reply (`--timeout`, or `SP16_CONTROL_TIMEOUT`; a reply arriving in pieces
+counts as one): a heavily loaded host can take well over 10 s to answer. A call with no usable reply ends in one line
+naming the operation, how long it waited and whether the app process is still running (the app hung up, did not answer
+in time, or answered something that is not one UTF-8 JSON object); an error the app reports is one line too. After a
+timeout the client closes the connection, since a late reply would otherwise answer the next call.
 
 ### Bench mode (`--no-ui-input`)
 

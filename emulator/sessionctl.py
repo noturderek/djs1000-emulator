@@ -54,7 +54,7 @@ class Session:
         except OSError as error:
             self.socket.close()
             raise ControlError(f"cannot connect to the control socket: {error} ({self.app_state()})") from None
-        self.reader = self.socket.makefile("r")
+        self.pending = b""                  # bytes after a reply's newline (the app answers one line per call, in order)
 
     def app_state(self):
         """Whether the app process of this session (app.pid) is running, and for how long: tells a slow app from a gone one."""
@@ -72,12 +72,28 @@ class Session:
             pass
         return f"app pid {pid} running, up {time.time() - started:.0f} s"
 
+    def read_line(self, deadline):
+        """One reply line (bytes, newline excluded), b"" at EOF; the whole line within `deadline` (time.monotonic), not
+        each read: a reply that arrives in pieces cannot take longer than the timeout."""
+        while b"\n" not in self.pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise socket.timeout()
+            self.socket.settimeout(remaining)
+            chunk = self.socket.recv(65536)
+            if not chunk:
+                return b""
+            self.pending += chunk
+        line, self.pending = self.pending.split(b"\n", 1)
+        return line
+
     def call(self, **command):
         op = command.get("op", "?")
         started = time.monotonic()
         try:
+            self.socket.settimeout(self.timeout)
             self.socket.sendall((json.dumps(command) + "\n").encode())
-            line = self.reader.readline()
+            line = self.read_line(started + self.timeout)
         except socket.timeout:
             self.close()                # a late reply would answer the next call: this connection is out of step
             raise ControlError(f"no reply to {op} within {self.timeout:g} s ({self.app_state()}); the app is slow or "
@@ -88,19 +104,26 @@ class Session:
         if not line:
             raise ControlError(f"the app closed the control socket during {op} after {time.monotonic() - started:.1f} s "
                                f"(EOF, no reply; {self.app_state()})")
+
+        def unreadable(why):
+            return ControlError(f"unreadable reply to {op} after {time.monotonic() - started:.1f} s ({self.app_state()}): "
+                                f"{why}: {line[:120]!r}")
         try:
-            reply = json.loads(line)
+            text = line.decode("utf-8")
+        except UnicodeDecodeError:
+            raise unreadable("not UTF-8") from None
+        try:
+            reply = json.loads(text)
         except ValueError:
-            raise ControlError(f"unreadable reply to {op}: {line[:120]!r}") from None
+            raise unreadable("not JSON") from None
+        if not isinstance(reply, dict):
+            raise unreadable("not a JSON object")
         if "error" in reply:
             raise RuntimeError(reply["error"])
         return reply
 
     def close(self):
-        try:
-            self.reader.close()
-        finally:
-            self.socket.close()
+        self.socket.close()
 
     @staticmethod
     def control(name):
@@ -179,6 +202,9 @@ def main():
         result = run_command(Session(args.runtime, args.timeout), args.command, args.args)
     except ControlError as error:
         print(f"sessionctl: {error}", file=sys.stderr)
+        sys.exit(1)
+    except RuntimeError as error:                       # the app answered with an error: one line too
+        print(f"sessionctl: the app refused {args.command}: {error}", file=sys.stderr)
         sys.exit(1)
     json.dump(result, sys.stdout, indent=2, sort_keys=True)
     print()

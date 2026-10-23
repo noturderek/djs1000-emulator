@@ -55,8 +55,7 @@ def inspect(runtime_path, expected, attempts=4):
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
         error = str(exc)
     finally:
-        session.reader.close()
-        session.socket.close()
+        session.close()
         for path in captures if passed else captures[:-1]:
             path.unlink(missing_ok=True)
     return {
