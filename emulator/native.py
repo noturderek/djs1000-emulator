@@ -218,7 +218,7 @@ def package_guest(output, image):
     return guest
 
 
-TRACE_MODES = ("strace", "gdb", "pcmtap")
+TRACE_MODES = ("strace", "gdb", "pcmtap", "exec")
 
 
 # Persistent per-profile eMMC image (fullpanel): <output>/data/emmc.img, sparse raw, formatted once by the guest.
@@ -646,7 +646,10 @@ def main():
                          help="research only: strace streams qemu-arm-static -strace to console.txt as SP16_STRACE lines; "
                               "gdb opens the qemu-user stub (-g 1234, guest loopback, blocks the app until attached); "
                               "pcmtap records 4 s of each playback PCM from the first non-zero frame and prints it to "
-                              "console.txt as SP16_PCM_DUMP gzip+base64 lines (no host audio output)")
+                              "console.txt as SP16_PCM_DUMP gzip+base64 lines (no host audio output); "
+                              "exec logs the qemu-user translator's executed translation-block addresses inside the app's "
+                              "text range, deduped per app instance and guest thread (cpu) in the guest, to console.txt as SP16_TB lines (read them with "
+                              "emulator/exectrace.py; slows the app a lot)")
     builder.add_argument("--audio", choices=AUDIO_MODES,
                          help="research or fullpanel only: carry the OEM playback PCM over a dedicated virtio-serial port "
                               "(sp16.pcm). file: one WAV per stream plus counters in the session directory (no sound reaches a "

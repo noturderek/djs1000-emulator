@@ -580,8 +580,10 @@ BUILD_OPTS = [
     Opt("--research", "Add the owner-only research socket (events, raw frames, snapshots), used by `./sp16 ctl`, "
         "`./sp16 mod` and `./sp16 hwsuite`.", flag=True),
     Opt("--trace", "Research only: strace (syscall trace in console.txt), gdb (stub on port 1234, blocks the app "
-        "until attached) or pcmtap (records 4 s of each playback stream into console.txt; no host audio).", "MODE",
-        choices=("strace", "gdb", "pcmtap")),
+        "until attached), pcmtap (records 4 s of each playback stream into console.txt; no host audio) or exec "
+        "(addresses of the translation blocks the app executes, each once per app instance and guest thread, as SP16_TB lines in console.txt; read "
+        "them with emulator/exectrace.py; slows the app a lot).", "MODE",
+        choices=("strace", "gdb", "pcmtap", "exec")),
     Opt("--pad-calibration-value", "Stage a synthetic pad calibration N for all pads (default: the profile's own "
         "value, not factory data).", "N"),
     Opt("--uncalibrated", "Stage no pad calibration so the firmware reports uncalibrated pads (they blink); the "
