@@ -204,7 +204,7 @@ case " $(cat /proc/cmdline) " in
   # Research executed-block trace: qemu-user logs one line per executed translation block ("-d exec", unchained so
   # every block shows) whose address lies in the app's text range ("-dfilter"). That is far too much for the serial
   # console, so the log goes to a fifo and a small filter prints each block address once, in batches, as SP16_TB
-  # lines (host: emulator/exectrace.py). SP16_EXEC_RANGE is the 1.60 application's text range (begin..end, inclusive);
+  # lines per guest thread (cpu index; host: emulator/exectrace.py). SP16_EXEC_RANGE is the 1.60 application's text range (begin..end, inclusive);
   # change it for another firmware.
   SP16_EXEC_RANGE=0x116f8..0x831ca8
   mkfifo /tmp/sp16-root/sp16-exec.fifo
@@ -221,34 +221,63 @@ PER_LINE = 16
 FLUSH_EVERY = 0.5
 STATS_EVERY = 10.0
 
-seen = set()
-pending = []
+seen = set()                           # (cpu, pc): a block is new per guest thread
+pending = []                           # new (cpu, pc) pairs in first-execution order
+per_cpu = {}                           # cpu -> distinct blocks printed or counted
+first_seen = {}                        # cpu -> seconds since the trace started, at that cpu's first block
+start = None                           # time of the first log byte
 lines = 0
 capped = False
 
 
 def flush():
+    # One SP16_TB line per run of the same cpu (at most PER_LINE addresses), so the global first-execution order holds.
     global pending
-    for start in range(0, len(pending), PER_LINE):
-        print('SP16_TB ' + ' '.join(pending[start:start + PER_LINE]), flush=True)
+    run = []
+    for cpu, pc in pending:
+        if run and (run[0][0] != cpu or len(run) == PER_LINE):
+            print('SP16_TB c%d %s' % (run[0][0], ' '.join(item[1] for item in run)), flush=True)
+            run = []
+        run.append((cpu, pc))
+    if run:
+        print('SP16_TB c%d %s' % (run[0][0], ' '.join(item[1] for item in run)), flush=True)
     pending = []
 
 
+def elapsed():
+    return time.time() - start if start is not None else 0.0
+
+
+def cpu_counts():
+    # "c0:123@0.0,c1:45@3.2": distinct blocks and first-seen second per guest thread, no spaces.
+    return ','.join('c%d:%d@%.1f' % (cpu, per_cpu[cpu], first_seen[cpu]) for cpu in sorted(per_cpu))
+
+
 def feed(chunk):
-    # "Trace <cpu>: 0x<host tb> [<cs_base>/<pc>/<flags>/<cflags>] <symbol>": the block's guest address is the second field.
-    global lines, capped
+    # "Trace <cpu>: 0x<host tb> [<cs_base>/<pc>/<flags>/<cflags>] <symbol>": the guest thread's cpu index starts the
+    # line, the block's guest address is the second field in the brackets. A line without both is not a block.
+    global lines, capped, start
+    if start is None and chunk:
+        start = time.time()
     for line in chunk.split(b'\n'):
-        start = line.find(b'[')
-        fields = line[start + 1:].split(b'/') if start >= 0 else []
-        if len(fields) < 3:
+        begin = line.find(b'[')
+        fields = line[begin + 1:].split(b'/') if begin >= 0 else []
+        head = line[:begin].split() if begin >= 0 else []
+        if len(fields) < 3 or len(head) < 2 or head[0] != b'Trace' or not head[1].rstrip(b':').isdigit():
             continue
         lines += 1
+        cpu = int(head[1].rstrip(b':'))
         pc = fields[1].decode('ascii', 'replace')
-        if pc in seen:
+        if (cpu, pc) in seen:
             continue
-        seen.add(pc)
+        seen.add((cpu, pc))
+        if cpu not in per_cpu:
+            per_cpu[cpu] = 0
+            first_seen[cpu] = elapsed()
+            print('SP16_TB_CPU c%d t=%.1f' % (cpu, first_seen[cpu]), flush=True)
+        per_cpu[cpu] += 1
         if len(seen) <= CAP:
-            pending.append(pc)
+            pending.append((cpu, pc))
         elif not capped:
             capped = True
             flush()
@@ -274,7 +303,7 @@ def drain(fd):
             flush()
             last_flush = now
         if len(seen) != shown and now - last_stats >= STATS_EVERY:
-            print('SP16_TB_STATS distinct=%d lines=%d' % (len(seen), lines), flush=True)
+            print('SP16_TB_STATS distinct=%d lines=%d t=%.1f cpus=%s' % (len(seen), lines, elapsed(), cpu_counts()), flush=True)
             last_stats = now
             shown = len(seen)
     feed(rest)
@@ -287,7 +316,7 @@ while True:
         drain(fd)
     finally:
         os.close(fd)
-    print('SP16_TB_END distinct=%d lines=%d' % (len(seen), lines), flush=True)
+    print('SP16_TB_END distinct=%d lines=%d t=%.1f cpus=%s' % (len(seen), lines, elapsed(), cpu_counts()), flush=True)
     if ONCE:
         break
 PY

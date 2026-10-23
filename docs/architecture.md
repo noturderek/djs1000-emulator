@@ -125,12 +125,16 @@ records the first 4 s of each playback stream, and `exec` records which translat
 
 `exec` runs the app with `-d exec,nochain -dfilter 0x116f8..0x831ca8` (the 1.60 app's text range; `SP16_EXEC_RANGE` in
 `guest-init.sh`). The raw log is one line per executed block, far too much for the serial console, so it goes to a fifo
-that a small guest filter reads: the filter prints each block address once, in batches, as `SP16_TB <hex> ...` lines in
-the session's `console.txt`, and `SP16_TB_END distinct=N lines=M` when the app exits (`SP16_TB_STATS` every 10 s while
-new blocks appear). The guest has no shared writable folder, so the console is the way to the host. The output is bounded
-by the number of distinct blocks (a 9-byte token each, at most 1,000,000 printed); another console writer can cut into a
-batch line, which the reader tolerates. `python3 emulator/exectrace.py
-<session>/console.txt --out tb.txt` collects them (distinct count, first five, range check) into one address per line.
+that a small guest filter reads. qemu-user gives each guest thread its own cpu index (the first field of every log
+line), so the filter dedupes on (cpu, address) and prints each pair once, in first-execution order, in batches as
+`SP16_TB c<cpu> <hex> ...` lines in the session's `console.txt`. It also prints `SP16_TB_CPU c<cpu> t=<s>` when a thread
+first appears, and `SP16_TB_END distinct=N lines=M t=<s> cpus=c0:n@t,...` when the app exits (`SP16_TB_STATS` with the
+same fields every 10 s while new blocks appear): `t` is seconds since the first log byte, `cpus` the distinct blocks and
+first-seen second per thread. The guest has no shared writable folder, so the console is the way to the host. The output
+is bounded by the number of distinct (cpu, address) pairs (a 9-byte token each, at most 1,000,000 printed); another
+console writer can cut into a batch line, which the reader tolerates. `python3 emulator/exectrace.py
+<session>/console.txt --out tb.txt` collects them (distinct count, per-cpu counts checked against the guest's, first
+five, range check) into one `c<cpu> 0x%08x` per line.
 Tracing every block slows the app a lot: expect a long boot. A clean stop (`SIGTERM` to the app's process id, or Cmd-Q)
 loses at most the last half second of addresses.
 

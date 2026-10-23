@@ -101,24 +101,33 @@ class NativeTransportTests(unittest.TestCase):
                 child.kill()
         return out.splitlines()
 
-    def test_exec_filter_prints_each_block_address_once_and_counts_them(self):
-        def trace(pc, symbol=""):
-            return "Trace 0: 0x7f5f6c000100 [00000000/%08x/00000010/00ff0000] %s\n" % (pc, symbol)
+    def test_exec_filter_prints_each_block_once_per_guest_thread_and_counts_them(self):
+        def trace(pc, symbol="", cpu=0):
+            return "Trace %d: 0x7f5f6c000100 [00000000/%08x/00000010/00ff0000] %s\n" % (cpu, pc, symbol)
         lines = [trace(0x116f8, "_start"), trace(0x11700), trace(0x116f8, "_start"), "noise line\n", trace(0x11700),
-                 "Trace 1: 0x7f5f6c000200 [00000000/00011800/00000010/00ff0000] \n", trace(0x116f8)]
+                 trace(0x11800, cpu=1), trace(0x116f8, cpu=1), trace(0x11800, cpu=1), trace(0x116f8)]
         out = self.exec_filter(lines)
-        addresses = [token for line in out if line.startswith("SP16_TB ") for token in line.split()[1:]]
-        self.assertEqual(addresses, ["000116f8", "00011700", "00011800"])
-        self.assertEqual(out[-1], "SP16_TB_END distinct=3 lines=6")
+        # First-execution order across threads: one SP16_TB line per run of the same cpu.
+        batches = [line for line in out if line.startswith("SP16_TB ")]
+        self.assertEqual(batches, ["SP16_TB c0 000116f8 00011700", "SP16_TB c1 00011800 000116f8"])
+        self.assertEqual(out.count("SP16_TB_CPU c0 t=0.0"), 1)
+        self.assertEqual(sum(1 for line in out if line.startswith("SP16_TB_CPU c1 t=")), 1)
+        end = out[-1]
+        self.assertRegex(end, r"^SP16_TB_END distinct=4 lines=8 t=[0-9.]+ cpus=c0:2@0\.0,c1:2@[0-9.]+$")
         self.assertTrue(all(len(line) < 200 for line in out))
 
-    def test_exec_filter_stops_printing_at_its_cap_but_keeps_counting(self):
+    def test_exec_filter_splits_long_runs_and_stops_printing_at_its_cap_but_keeps_counting(self):
         lines = ["Trace 0: 0x1 [00000000/%08x/00000010/00ff0000] \n" % pc for pc in range(0x20000, 0x20000 + 40, 4)]
         out = self.exec_filter(lines, ("cap=3",))
-        addresses = [token for line in out if line.startswith("SP16_TB ") for token in line.split()[1:]]
+        addresses = [token for line in out if line.startswith("SP16_TB ") for token in line.split()[2:]]
         self.assertEqual(addresses, ["00020000", "00020004", "00020008"])
         self.assertIn("SP16_TB_CAPPED cap=3", out)
-        self.assertEqual(out[-1], "SP16_TB_END distinct=10 lines=10")
+        self.assertRegex(out[-1], r"^SP16_TB_END distinct=10 lines=10 t=[0-9.]+ cpus=c0:10@0\.0$")
+        many = ["Trace 3: 0x1 [00000000/%08x/00000010/00ff0000] \n" % pc for pc in range(0x30000, 0x30000 + 80, 4)]
+        out = self.exec_filter(many)
+        batches = [line for line in out if line.startswith("SP16_TB ")]
+        self.assertEqual([len(line.split()) - 2 for line in batches], [16, 4])
+        self.assertTrue(all(line.startswith("SP16_TB c3 ") for line in batches))
 
     def test_audio_transport_is_a_dedicated_port_off_by_default(self):
         base = " ".join(native.arguments(Path("/q"), Path("/g"), "/s"))
