@@ -130,5 +130,6 @@ handlers), the window still closes and Cmd-Q still quits, and the session's `run
 An audio build (`--audio file` or `both`) writes three WAVs of about 9.5 MB a minute each into the session folder.
 `./sp16 run --no-audio-files` keeps the audio sink (it still reads every PCM packet from the guest and keeps the
 counters that `metrics` reports, so the guest's audio path and timing are those of a file build) but opens no WAV:
-for unattended runs that read no audio. The metrics' audio `mode` says `counters`, each stream's `wav` is empty, and
-`runtime.json` records `"audio_files": false`.
+for unattended runs that read no audio. A `both` build keeps playing through CoreAudio. The metrics' audio `mode` says
+`counters` for a `file` build and `coreaudio` for a `both` build, each stream's `wav` is empty, and `runtime.json`
+records `"audio_files": false`. The flag survives the relaunch after a firmware choice or import.

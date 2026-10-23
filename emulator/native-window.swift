@@ -223,7 +223,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         AppLog.log("launch: qemu arguments: " + config.arguments.joined(separator: " "))
         if let overlay = config.devOverlay { AppLog.log("launch: developer overlay \(overlay)") }
         if uiInputDisabled { AppLog.log("launch: bench mode, panel input off (--no-ui-input)") }
-        if audioFilesDisabled { AppLog.log("launch: Audio files: off (--no-audio-files), the sink only counts") }
+        if audioFilesDisabled { AppLog.log("launch: Audio files: off (--no-audio-files), no WAV is written") }
     }
 
     func installMenus() {

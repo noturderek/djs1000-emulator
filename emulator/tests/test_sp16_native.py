@@ -431,6 +431,16 @@ class PersistenceArgumentTests(unittest.TestCase):
         self.assertIn('output == nil ? (writeFiles ? "file" : "counters")', sink)
         self.assertIn('"wav": writeFiles ? s.path : ""', sink)
 
+    def test_a_firmware_relaunch_keeps_no_audio_files(self):
+        """Review of 2eeee12: choosing or importing firmware relaunches the app with --firmware only, so an app started with
+        --no-audio-files lost it and the replacement recorded WAVs again. The relaunch forwards it."""
+        source = (TOOLS / "firmware-window.swift").read_text()
+        relaunch = source.split("static func relaunch(firmware id: String) {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn('"--args"] + relaunchArguments(firmware: id)', relaunch)
+        self.assertIn('["--firmware", id] + (audioFilesDisabled ? ["--no-audio-files"] : [])', source)
+        window = (TOOLS / "native-window.swift").read_text()
+        self.assertNotIn("the sink only counts", window)     # a `both` build also keeps playing: the log says what is off
+
     def test_guest_init_gates_persistence_on_cmdline_token(self):
         text = (TOOLS / "guest-init.sh").read_text()
         self.assertIn('*" sp16.data=1 "*) sp16_data=1', text)
