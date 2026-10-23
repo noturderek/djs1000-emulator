@@ -406,6 +406,41 @@ class PersistenceArgumentTests(unittest.TestCase):
                 native.launch("/b", no_ui_input=bench)
                 run.assert_called_once_with(expected)
 
+    def test_launch_passes_no_audio_files_to_the_app(self):
+        from unittest import mock
+        assets = {"app_bundle": "/b/SP16.app", "decoupled": True, "research": True}
+        for bench, expected in ((False, ["open", "-n", "/b/SP16.app", "--args", "--no-audio-files"]),
+                                (True, ["open", "-n", "-g", "/b/SP16.app", "--args", "--no-ui-input", "--no-audio-files"])):
+            with self.subTest(bench=bench), mock.patch.object(native, "host_check"), \
+                    mock.patch.object(native, "private_path", side_effect=Path), \
+                    mock.patch.object(native, "validated_assets", return_value=assets), \
+                    mock.patch.object(native, "run") as run, mock.patch("builtins.print"):
+                native.launch("/b", no_ui_input=bench, no_audio_files=True)
+                run.assert_called_once_with(expected)
+
+    def test_the_app_keeps_the_audio_sink_without_files_when_asked(self):
+        """--no-audio-files: the sink still reads every PCM packet from the guest and keeps its counters (the guest's audio
+        path and timing are the same as a file build's); it opens no WAV, and metrics say so."""
+        window = (TOOLS / "native-window.swift").read_text()
+        sink = (TOOLS / "audio-sink.swift").read_text()
+        self.assertIn('audioFilesDisabled = arguments.contains("--no-audio-files")', window)
+        self.assertIn('arguments.removeAll { $0 == "--no-audio-files" }', window)
+        self.assertIn('writeFiles: (mode == "file" || mode == "both") && !audioFilesDisabled', window)
+        self.assertIn("Audio files: off (--no-audio-files)", window)       # the marker a script finds in the built app
+        self.assertIn('if audioFilesDisabled { json["audio_files"] = false }', window)   # runtime.json records it
+        self.assertIn('output == nil ? (writeFiles ? "file" : "counters")', sink)
+        self.assertIn('"wav": writeFiles ? s.path : ""', sink)
+
+    def test_a_firmware_relaunch_keeps_no_audio_files(self):
+        """Review of 2eeee12: choosing or importing firmware relaunches the app with --firmware only, so an app started with
+        --no-audio-files lost it and the replacement recorded WAVs again. The relaunch forwards it."""
+        source = (TOOLS / "firmware-window.swift").read_text()
+        relaunch = source.split("static func relaunch(firmware id: String) {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn('"--args"] + relaunchArguments(firmware: id)', relaunch)
+        self.assertIn('["--firmware", id] + (audioFilesDisabled ? ["--no-audio-files"] : [])', source)
+        window = (TOOLS / "native-window.swift").read_text()
+        self.assertNotIn("the sink only counts", window)     # a `both` build also keeps playing: the log says what is off
+
     def test_guest_init_gates_persistence_on_cmdline_token(self):
         text = (TOOLS / "guest-init.sh").read_text()
         self.assertIn('*" sp16.data=1 "*) sp16_data=1', text)
