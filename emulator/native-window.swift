@@ -42,6 +42,9 @@ var ephemeralImagePath: String?
 /// Bench mode (`--no-ui-input`): the panel ignores pointer, scroll, keyboard and accessibility input, and the app does
 /// not activate itself; the research control socket keeps driving the panel. For unattended test runs.
 var uiInputDisabled = false
+/// `--no-audio-files`: an audio build's sink still reads every PCM packet from the guest and keeps its counters (the
+/// guest's audio path and timing stay those of a file build) but opens no WAV. For unattended runs that read no audio.
+var audioFilesDisabled = false
 
 /// Host <-> guest message kinds; see protocol.py for the authoritative description.
 enum Kind {
@@ -178,7 +181,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                 output?.start()
             }
             let sink = AudioSink(socketPath: config.socket + ".pcm", directory: config.session,
-                                 writeFiles: mode == "file" || mode == "both", output: output,
+                                 writeFiles: (mode == "file" || mode == "both") && !audioFilesDisabled, output: output,
                                  isRunning: { [weak self] in self?.process.isRunning ?? false })
             audioSink = sink; sink.start()
         }
@@ -220,6 +223,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         AppLog.log("launch: qemu arguments: " + config.arguments.joined(separator: " "))
         if let overlay = config.devOverlay { AppLog.log("launch: developer overlay \(overlay)") }
         if uiInputDisabled { AppLog.log("launch: bench mode, panel input off (--no-ui-input)") }
+        if audioFilesDisabled { AppLog.log("launch: Audio files: off (--no-audio-files), no WAV is written") }
     }
 
     func installMenus() {
@@ -852,6 +856,8 @@ func configuration() -> Configuration? {
     arguments.removeAll { $0 == "--ephemeral" }
     uiInputDisabled = arguments.contains("--no-ui-input")
     arguments.removeAll { $0 == "--no-ui-input" }
+    audioFilesDisabled = arguments.contains("--no-audio-files")
+    arguments.removeAll { $0 == "--no-audio-files" }
     var requestedFirmware: String? = nil
     var devOverlay: String? = nil
     if let index = arguments.firstIndex(of: "--dev-overlay") {
@@ -922,6 +928,7 @@ func configuration() -> Configuration? {
         if let id = config.firmwareID { json["firmware"] = id }
         if let overlay = config.devOverlay { json["dev_overlay"] = overlay }
         if uiInputDisabled { json["ui_input"] = false }
+        if audioFilesDisabled { json["audio_files"] = false }
         if config.research == true { json["control_socket"] = socketDirectory + "/control.sock" }
         try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
             .write(to: URL(fileURLWithPath: session + "/runtime.json"), options: .atomic)

@@ -198,8 +198,8 @@ the Python 3.12+ for the build tools.
 | Command | What it does |
 |---|---|
 | `doctor` | Check your Mac (Apple silicon, macOS, Command Line Tools, Python, Docker, disk space, git) and print the fixes |
-| `build` | Build the app into `build/<name>`: `--audio`, `--audio-device`, `--research`, `--trace`, `--uncalibrated`, `--pad-calibration-value`, `--bundle-suffix`, `--library`, `--reuse-qemu-from`, `--rebuild` |
-| `run` | Launch a build: `--firmware`, `--usb-image` (default `build/stick.img` when it exists), `--no-usb`, `--ephemeral`, `--dev-overlay`, `--no-ui-input` (bench mode: the window ignores input, for scripted runs) |
+| `build` | Build the app into `build/<name>`: `--audio`, `--audio-device`, `--research`, `--trace` (strace, gdb, pcmtap, exec), `--uncalibrated`, `--pad-calibration-value`, `--bundle-suffix`, `--library`, `--reuse-qemu-from`, `--rebuild` |
+| `run` | Launch a build: `--firmware`, `--usb-image` (default `build/stick.img` when it exists), `--no-usb`, `--ephemeral`, `--dev-overlay`, `--no-ui-input` (bench mode: the window ignores input, for scripted runs), `--no-audio-files` (audio builds: count the audio, write no WAV) |
 | `bootstrap` | Everything in one go: `doctor`, build with audio, import and select firmware (`--update` or `--download-firmware`), fill the stick (`--samples`, `--projects`, folders or zips), launch; skips what is done, `--dry-run` lists the steps |
 | `usb create\|add\|ls\|mount\|unmount` | Prepare the virtual USB stick on the Mac without booting: load samples (`add --dest Projects` for project files), list, mount (see [Load your own samples](#5-load-your-own-samples-optional)) |
 | `builds` | List builds and the options each was built with |

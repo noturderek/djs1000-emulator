@@ -7,6 +7,7 @@ transport as the panel view, so results are correlated and counted identically.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import socket
 import sys
@@ -15,6 +16,20 @@ import time
 from panel_map import CONTROL_IDS
 
 ACTIONS = {"release": 0, "press": 1, "delta": 2, "value": 3}
+# How long a call waits for the app's reply. A host under heavy load can take well over 10 s to answer (the app serves
+# the socket on a background queue); SP16_CONTROL_TIMEOUT or --timeout overrides it.
+DEFAULT_TIMEOUT = 60.0
+
+
+class ControlError(RuntimeError):
+    """A call that got no usable reply: the app hung up, did not answer in time, or answered something unreadable. The
+    message names the operation, how long it waited and whether the app process is still running."""
+
+
+def reply_timeout(timeout=None):
+    if timeout is not None:
+        return float(timeout)
+    return float(os.environ.get("SP16_CONTROL_TIMEOUT") or DEFAULT_TIMEOUT)
 
 
 def adc_words(metrics):
@@ -26,22 +41,89 @@ def adc_words(metrics):
 
 
 class Session:
-    def __init__(self, runtime_json):
+    def __init__(self, runtime_json, timeout=None):
         runtime = json.loads(Path(runtime_json).read_text())
         if not runtime.get("control_socket"):
             raise ValueError("session was not built with --research")
         self.dir = Path(runtime["session"])
+        self.timeout = reply_timeout(timeout)
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.socket.settimeout(10)
-        self.socket.connect(runtime["control_socket"])
-        self.reader = self.socket.makefile("r")
+        self.socket.settimeout(self.timeout)
+        try:
+            self.socket.connect(runtime["control_socket"])
+        except OSError as error:
+            self.socket.close()
+            raise ControlError(f"cannot connect to the control socket: {error} ({self.app_state()})") from None
+        self.pending = b""                  # bytes after a reply's newline (the app answers one line per call, in order)
+
+    def app_state(self):
+        """Whether the app process of this session (app.pid) is running, and for how long: tells a slow app from a gone one."""
+        pid_file = self.dir / "app.pid"
+        try:
+            pid = int(pid_file.read_text().strip())
+            started = pid_file.stat().st_mtime
+        except (OSError, ValueError):
+            return "app pid unknown"
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return f"app pid {pid} is not running"
+        except PermissionError:
+            pass
+        return f"app pid {pid} running, up {time.time() - started:.0f} s"
+
+    def read_line(self, deadline):
+        """One reply line (bytes, newline excluded), b"" at EOF; the whole line within `deadline` (time.monotonic), not
+        each read: a reply that arrives in pieces cannot take longer than the timeout."""
+        while b"\n" not in self.pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise socket.timeout()
+            self.socket.settimeout(remaining)
+            chunk = self.socket.recv(65536)
+            if not chunk:
+                return b""
+            self.pending += chunk
+        line, self.pending = self.pending.split(b"\n", 1)
+        return line
 
     def call(self, **command):
-        self.socket.sendall((json.dumps(command) + "\n").encode())
-        reply = json.loads(self.reader.readline())
+        op = command.get("op", "?")
+        started = time.monotonic()
+        try:
+            self.socket.settimeout(self.timeout)
+            self.socket.sendall((json.dumps(command) + "\n").encode())
+            line = self.read_line(started + self.timeout)
+        except socket.timeout:
+            self.close()                # a late reply would answer the next call: this connection is out of step
+            raise ControlError(f"no reply to {op} within {self.timeout:g} s ({self.app_state()}); the app is slow or "
+                               "stuck (a heavily loaded host?), the connection is closed") from None
+        except OSError as error:
+            raise ControlError(f"the control socket failed during {op} after {time.monotonic() - started:.1f} s: "
+                               f"{error} ({self.app_state()})") from None
+        if not line:
+            raise ControlError(f"the app closed the control socket during {op} after {time.monotonic() - started:.1f} s "
+                               f"(EOF, no reply; {self.app_state()})")
+
+        def unreadable(why):
+            return ControlError(f"unreadable reply to {op} after {time.monotonic() - started:.1f} s ({self.app_state()}): "
+                                f"{why}: {line[:120]!r}")
+        try:
+            text = line.decode("utf-8")
+        except UnicodeDecodeError:
+            raise unreadable("not UTF-8") from None
+        try:
+            reply = json.loads(text)
+        except ValueError:
+            raise unreadable("not JSON") from None
+        if not isinstance(reply, dict):
+            raise unreadable("not a JSON object")
         if "error" in reply:
             raise RuntimeError(reply["error"])
         return reply
+
+    def close(self):
+        self.socket.close()
 
     @staticmethod
     def control(name):
@@ -113,45 +195,58 @@ def main():
                                             "snapshot", "metrics", "txlog", "period", "panelshot", "resize", "adc", "usb",
                                             "app-restart", "firmware"])
     parser.add_argument("args", nargs="*")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help=f"seconds to wait for each reply (default SP16_CONTROL_TIMEOUT or {DEFAULT_TIMEOUT:g})")
     args = parser.parse_args()
-    session = Session(args.runtime)
-    a = args.args
-    if args.command == "event":
+    try:
+        result = run_command(Session(args.runtime, args.timeout), args.command, args.args)
+    except ControlError as error:
+        print(f"sessionctl: {error}", file=sys.stderr)
+        sys.exit(1)
+    except RuntimeError as error:                       # the app answered with an error: one line too
+        print(f"sessionctl: the app refused {args.command}: {error}", file=sys.stderr)
+        sys.exit(1)
+    json.dump(result, sys.stdout, indent=2, sort_keys=True)
+    print()
+
+
+def run_command(session, command, a):
+    """One CLI command on an open session; returns what main prints."""
+    if command == "event":
         result = session.event(a[0], a[1], int(a[2]) if len(a) > 2 else 0)
-    elif args.command == "press":
+    elif command == "press":
         session.press(a[0], float(a[1]) if len(a) > 1 else .15, int(a[2]) if len(a) > 2 else 100)
         result = {"ok": True}
-    elif args.command == "turn":
+    elif command == "turn":
         session.turn(a[0], int(a[1]))
         result = {"ok": True}
-    elif args.command == "touch":
+    elif command == "touch":
         result = session.touch(int(a[0]), int(a[1]), ["move", "down", "up"].index(a[2]))
-    elif args.command == "raw":
+    elif command == "raw":
         result = session.raw(int(a[0], 0), bytes.fromhex(a[1]))
-    elif args.command == "clear":
+    elif command == "clear":
         result = session.clear()
-    elif args.command == "txlog":
+    elif command == "txlog":
         result = session.call(op="txlog", on=0 if a and a[0] == "off" else 1)
-    elif args.command == "period":
+    elif command == "period":
         result = session.period(int(a[0]))
-    elif args.command == "resize":
+    elif command == "resize":
         result = session.resize(int(a[0]), int(a[1]))
-    elif args.command == "panelshot":
+    elif command == "panelshot":
         result = {"path": str(session.panelshot(a[0]))}
-    elif args.command == "usb":
+    elif command == "usb":
         result = session.usb(a[0] if a else "eject")
-    elif args.command == "adc":
+    elif command == "adc":
         result = session.adc()
-    elif args.command == "app-restart":
+    elif command == "app-restart":
         result = session.app_restart()
-    elif args.command == "firmware":
+    elif command == "firmware":
         result = session.firmware()
-    elif args.command == "snapshot":
+    elif command == "snapshot":
         result = {"path": str(session.snapshot(a[0]))}
     else:
         result = session.metrics()
-    json.dump(result, sys.stdout, indent=2, sort_keys=True)
-    print()
+    return result
 
 
 if __name__ == "__main__":

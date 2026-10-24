@@ -336,12 +336,12 @@ final class AudioSink {
                 "format": AudioSink.formatName(s.format), "channels": s.channels, "first_channel": s.firstChannel,
                 "total_channels": s.totalChannels, "rate": s.rate, "frames": s.frames, "packets": s.packets,
                 "gap_frames": s.gapFrames, "overlap_frames": s.overlapFrames, "guest_drops": s.guestDrops,
-                "peak": s.peak, "nonzero_frames": s.nonzeroFrames, "wav": s.path] as [String: Any]
+                "peak": s.peak, "nonzero_frames": s.nonzeroFrames, "wav": writeFiles ? s.path : ""] as [String: Any]
         }
         var clock: [String: Any] = [:]
         if minRTT.isFinite { clock["min_rtt_ms"] = minRTT * 1000 }
         if let offset = offsetNs { clock["offset_ns"] = offset }
-        var result: [String: Any] = ["mode": output == nil ? "file" : (writeFiles ? "both" : "coreaudio"), "connected": connected, "packets": packets, "bytes": bytes, "seq_gaps": seqGaps,
+        var result: [String: Any] = ["mode": output == nil ? (writeFiles ? "file" : "counters") : (writeFiles ? "both" : "coreaudio"), "connected": connected, "packets": packets, "bytes": bytes, "seq_gaps": seqGaps,
                 "bad_packets": badPackets, "clock": clock, "latency_ms": latency.summary(), "late_over_20ms": late20,
                 "late_log": lateLog, "streams": out]
         if let output = output { result["output"] = output.snapshot() }

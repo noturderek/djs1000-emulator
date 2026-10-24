@@ -218,7 +218,7 @@ def package_guest(output, image):
     return guest
 
 
-TRACE_MODES = ("strace", "gdb", "pcmtap")
+TRACE_MODES = ("strace", "gdb", "pcmtap", "exec")
 
 
 # Persistent per-profile eMMC image (fullpanel): <output>/data/emmc.img, sparse raw, formatted once by the guest.
@@ -521,7 +521,8 @@ def dev_overlay_path(folder):
     return str(path)
 
 
-def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overlay=None, no_ui_input=False):
+def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overlay=None, no_ui_input=False,
+           no_audio_files=False):
     host_check()
     output = private_path(output)
     assets = validated_assets(output)
@@ -542,10 +543,11 @@ def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overla
     # --ephemeral: disposable per-session data image and no profile lock (tests); persistent builds default to the profile image.
     # --no-ui-input (bench mode): the window ignores pointer, scroll, keyboard and accessibility input, and `open -g` starts
     # it without taking focus. macOS still sends scroll to the window under the pointer; only the app's gate stops it.
+    # --no-audio-files: an audio build's sink keeps reading and counting the guest's PCM but writes no WAV.
     app_args = (["--ephemeral"] if ephemeral else []) + (["--usb-image", prepare_usb_image(usb_image)] if usb_image else []) \
         + (["--firmware", firmware_id] if firmware_id else []) \
         + (["--dev-overlay", dev_overlay_path(dev_overlay)] if dev_overlay else []) \
-        + (["--no-ui-input"] if no_ui_input else [])
+        + (["--no-ui-input"] if no_ui_input else []) + (["--no-audio-files"] if no_audio_files else [])
     run(["open", "-n", *(["-g"] if no_ui_input else []), assets["app_bundle"], *(["--args", *app_args] if app_args else [])])
     print(json.dumps({"status": "native_app_opened", "app": assets["app_bundle"],
                       "diagnostics": str(output / "sessions"), "runtime_requires_docker": False}))
@@ -644,7 +646,10 @@ def main():
                          help="research only: strace streams qemu-arm-static -strace to console.txt as SP16_STRACE lines; "
                               "gdb opens the qemu-user stub (-g 1234, guest loopback, blocks the app until attached); "
                               "pcmtap records 4 s of each playback PCM from the first non-zero frame and prints it to "
-                              "console.txt as SP16_PCM_DUMP gzip+base64 lines (no host audio output)")
+                              "console.txt as SP16_PCM_DUMP gzip+base64 lines (no host audio output); "
+                              "exec logs the qemu-user translator's executed translation-block addresses inside the app's "
+                              "text range, deduped per app instance and guest thread (cpu) in the guest, to console.txt as SP16_TB lines (read them with "
+                              "emulator/exectrace.py; slows the app a lot)")
     builder.add_argument("--audio", choices=AUDIO_MODES,
                          help="research or fullpanel only: carry the OEM playback PCM over a dedicated virtio-serial port "
                               "(sp16.pcm). file: one WAV per stream plus counters in the session directory (no sound reaches a "
@@ -679,6 +684,9 @@ def main():
     launcher.add_argument("--no-ui-input", action="store_true",
                           help="bench mode: the window ignores clicks, drags, scrolling, keys and accessibility actions "
                                "and opens without taking focus (open -g); the research control socket still works")
+    launcher.add_argument("--no-audio-files", action="store_true",
+                          help="audio builds: the sink keeps reading and counting the guest's PCM (metrics) but "
+                               "writes no WAV into the session folder")
     fw = commands.add_parser("firmware", help="decoupled builds: import, list, check and manage user-supplied firmware")
     fw.add_argument("action", choices=("import", "list", "show", "check", "rename", "remove", "select", "audit",
                                        "profile"))
@@ -712,7 +720,8 @@ def main():
         elif args.command == "diagnostics":
             return diagnostics_command(args)
         else:
-            launch(args.output, args.ephemeral, args.usb_image, args.firmware, args.dev_overlay, args.no_ui_input)
+            launch(args.output, args.ephemeral, args.usb_image, args.firmware, args.dev_overlay, args.no_ui_input,
+                   args.no_audio_files)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         parser.exit(1, f"native emulator failed: {exc}\n")
 

@@ -200,6 +200,147 @@ case " $(cat /proc/cmdline) " in
   (grep -a --line-buffered -Ev '^[0-9]+ (_newselect|writev|rt_sigprocmask|rt_sigaction|fstat64|futex|gettid|clock_gettime|gettimeofday|clock_nanosleep|nanosleep|epoll_wait|madvise|_llseek|access|stat64|read|write)\(' \
     < /tmp/sp16-root/sp16-strace.fifo | sed -u 's/^/SP16_STRACE /' > /dev/console) &
   sp16_trace_args="-strace -D /sp16-strace.fifo" ;;
+ *" sp16.trace=exec "*)
+  # Research executed-block trace: qemu-user logs one line per executed translation block ("-d exec", unchained so
+  # every block shows) whose address lies in the app's text range ("-dfilter"). That is far too much for the serial
+  # console, so the log goes to a fifo and a small filter prints each block address once, in batches, as SP16_TB
+  # lines per app instance and guest thread (cpu index; host: emulator/exectrace.py). SP16_EXEC_RANGE is the 1.60 application's text range (begin..end, inclusive);
+  # change it for another firmware.
+  SP16_EXEC_RANGE=0x116f8..0x831ca8
+  mkfifo /tmp/sp16-root/sp16-exec.fifo
+  cat > /tmp/sp16-exec-filter.py <<'PY'
+import os, select, sys, time
+
+FIFO = sys.argv[1]
+SESSIONS = 0                           # tests: stop after this many app instances (0: serve every app start)
+if 'once' in sys.argv[2:]:
+    SESSIONS = 1
+CAP = 1000000                          # distinct addresses printed at most per app instance (the text range cannot hold more)
+for argument in sys.argv[2:]:
+    if argument.startswith('cap='):
+        CAP = int(argument[4:])
+    elif argument.startswith('sessions='):
+        SESSIONS = int(argument[9:])
+PER_LINE = 16
+FLUSH_EVERY = 0.5
+STATS_EVERY = 10.0
+
+# One qemu-user per app start: after an app restart it numbers its guest threads from cpu 0 again, so a block is new per
+# (instance, cpu, pc), where the instance counts the app starts (each reopen of the fifo), and the counts and seconds
+# are kept per instance.
+instance = -1                          # the current app instance, from 0
+seen = set()                           # (instance, cpu, pc)
+pending = []                           # new (cpu, pc) pairs of the current instance in first-execution order
+per_cpu = {}                           # cpu -> distinct blocks printed or counted, this instance
+first_seen = {}                        # cpu -> seconds since this instance's first log byte, at that cpu's first block
+start = None                           # time of this instance's first log byte
+lines = 0                              # trace lines of this instance
+distinct = 0                           # distinct blocks of this instance
+capped = False
+
+
+def begin_instance():
+    global instance, pending, per_cpu, first_seen, start, lines, distinct, capped
+    instance += 1
+    pending, per_cpu, first_seen, start, lines, distinct, capped = [], {}, {}, None, 0, 0, False
+    print('SP16_TB_INSTANCE i%d' % instance, flush=True)
+
+
+def flush():
+    # One SP16_TB line per run of the same cpu (at most PER_LINE addresses), so the first-execution order holds.
+    global pending
+    run = []
+    for cpu, pc in pending:
+        if run and (run[0][0] != cpu or len(run) == PER_LINE):
+            print('SP16_TB i%d c%d %s' % (instance, run[0][0], ' '.join(item[1] for item in run)), flush=True)
+            run = []
+        run.append((cpu, pc))
+    if run:
+        print('SP16_TB i%d c%d %s' % (instance, run[0][0], ' '.join(item[1] for item in run)), flush=True)
+    pending = []
+
+
+def elapsed():
+    return time.time() - start if start is not None else 0.0
+
+
+def cpu_counts():
+    # "c0:123@0.0,c1:45@3.2": distinct blocks and first-seen second per guest thread of this instance, no spaces.
+    return ','.join('c%d:%d@%.1f' % (cpu, per_cpu[cpu], first_seen[cpu]) for cpu in sorted(per_cpu))
+
+
+def feed(chunk):
+    # "Trace <cpu>: 0x<host tb> [<cs_base>/<pc>/<flags>/<cflags>] <symbol>": the guest thread's cpu index starts the
+    # line, the block's guest address is the second field in the brackets. A line without both is not a block.
+    global lines, capped, start, distinct
+    if start is None and chunk:
+        start = time.time()
+    for line in chunk.split(b'\n'):
+        begin = line.find(b'[')
+        fields = line[begin + 1:].split(b'/') if begin >= 0 else []
+        head = line[:begin].split() if begin >= 0 else []
+        if len(fields) < 3 or len(head) < 2 or head[0] != b'Trace' or not head[1].rstrip(b':').isdigit():
+            continue
+        lines += 1
+        cpu = int(head[1].rstrip(b':'))
+        pc = fields[1].decode('ascii', 'replace')
+        key = (instance, cpu, pc)
+        if key in seen:
+            continue
+        seen.add(key)
+        distinct += 1
+        if cpu not in per_cpu:
+            per_cpu[cpu] = 0
+            first_seen[cpu] = elapsed()
+            print('SP16_TB_CPU i%d c%d t=%.1f' % (instance, cpu, first_seen[cpu]), flush=True)
+        per_cpu[cpu] += 1
+        if distinct <= CAP:
+            pending.append((cpu, pc))
+        elif not capped:
+            capped = True
+            flush()
+            print('SP16_TB_CAPPED i%d cap=%d' % (instance, CAP), flush=True)
+
+
+def drain(fd):
+    """Read one writer's output to its end; print new addresses at least every FLUSH_EVERY seconds."""
+    rest = b''
+    last_flush = last_stats = time.time()
+    shown = 0
+    while True:
+        if select.select([fd], [], [], FLUSH_EVERY)[0]:
+            data = os.read(fd, 1 << 16)
+            if not data:
+                break
+            data = rest + data
+            cut = data.rfind(b'\n')
+            rest = data[cut + 1:]
+            feed(data[:cut + 1])
+        now = time.time()
+        if pending and now - last_flush >= FLUSH_EVERY:
+            flush()
+            last_flush = now
+        if distinct != shown and now - last_stats >= STATS_EVERY:
+            print('SP16_TB_STATS i%d distinct=%d lines=%d t=%.1f cpus=%s' % (instance, distinct, lines, elapsed(), cpu_counts()), flush=True)
+            last_stats = now
+            shown = distinct
+    feed(rest)
+    flush()
+
+
+while True:
+    fd = os.open(FIFO, os.O_RDONLY)    # blocks until qemu-user opens its log; again after each app restart
+    begin_instance()
+    try:
+        drain(fd)
+    finally:
+        os.close(fd)
+    print('SP16_TB_END i%d distinct=%d lines=%d t=%.1f cpus=%s' % (instance, distinct, lines, elapsed(), cpu_counts()), flush=True)
+    if SESSIONS and instance + 1 >= SESSIONS:
+        break
+PY
+  python3 -u /tmp/sp16-exec-filter.py /tmp/sp16-root/sp16-exec.fifo > /dev/console 2>&1 &
+  sp16_trace_args="-d exec,nochain -dfilter $SP16_EXEC_RANGE -D /sp16-exec.fifo" ;;
  *" sp16.trace=pcmtap "*)
   # Research PCM tap: the stub copies each playback stream into a bounded file under /tmp; this helper
   # prints every finished capture to the console as gzip+base64 lines (SP16_PCM_DUMP) for host-side analysis.

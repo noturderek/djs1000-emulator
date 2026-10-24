@@ -29,7 +29,7 @@ class ScreenOracleTests(unittest.TestCase):
             path.write_bytes(b"capture")
             return path
 
-        self.session = SimpleNamespace(snapshot=snapshot, reader=Mock(), socket=Mock())
+        self.session = SimpleNamespace(snapshot=snapshot, close=Mock())
 
     def test_one_matching_frame_does_not_pass(self):
         outputs = ["HOME\n", "MIXER\n", "HOME\n", "UTILITY\n"]
@@ -51,8 +51,7 @@ class ScreenOracleTests(unittest.TestCase):
         self.assertEqual(result["status"], "FAIL")
         self.assertEqual(result["observed"]["error"], "OCR failed")
         self.assertTrue(Path(result["observed"]["failure_capture"]).exists())
-        self.session.reader.close.assert_called_once()
-        self.session.socket.close.assert_called_once()
+        self.session.close.assert_called_once()
 
 
 if __name__ == "__main__":

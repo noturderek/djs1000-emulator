@@ -77,11 +77,17 @@ enum FirmwareTool {
         return lines.joined(separator: "\n")
     }
 
+    /// The new instance's arguments: the chosen firmware, and --no-audio-files when this one was started with it, so a
+    /// relaunch after a firmware choice or import does not start recording WAVs again.
+    static func relaunchArguments(firmware id: String) -> [String] {
+        ["--firmware", id] + (audioFilesDisabled ? ["--no-audio-files"] : [])
+    }
+
     /// Start a new instance on the chosen firmware, then quit this one (its clean stop runs as usual).
     static func relaunch(firmware id: String) {
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        open.arguments = ["-n", Bundle.main.bundlePath, "--args", "--firmware", id]
+        open.arguments = ["-n", Bundle.main.bundlePath, "--args"] + relaunchArguments(firmware: id)
         try? open.run()
         open.waitUntilExit()
         NSApp.terminate(nil)

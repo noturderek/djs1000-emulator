@@ -59,6 +59,109 @@ class NativeTransportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             native.build("y", research=False, trace="pcmtap")
 
+    def test_exec_trace_is_a_research_trace_mode_off_by_default(self):
+        self.assertIn("exec", native.TRACE_MODES)
+        text = " ".join(native.arguments(Path("/q"), Path("/g"), "/s", trace="exec"))
+        self.assertIn("sp16.trace=exec", text)
+        self.assertNotIn("sp16.gdb", text)  # no extra port: the addresses ride the serial console
+        self.assertNotIn("exec", " ".join(native.arguments(Path("/q"), Path("/g"), "/s")))
+        with self.assertRaises(ValueError):
+            native.build("y", research=False, trace="exec")
+
+    def test_guest_init_exec_trace_logs_a_text_range_through_a_deduping_filter(self):
+        text = (TOOLS / "guest-init.sh").read_text()
+        self.assertEqual(subprocess.run(["sh", "-n", str(TOOLS / "guest-init.sh")]).returncode, 0)
+        case = text.split('*" sp16.trace=exec "*)', 1)[1].split(";;", 1)[0]
+        self.assertIn("-d exec,nochain", case)
+        self.assertIn("-dfilter", case)
+        self.assertIn("-D /sp16-exec.fifo", case)
+        self.assertIn("sp16-exec-filter.py", case)
+        # The raw log (one line per executed block) never goes to the serial console: the filter reads the fifo and
+        # only its deduped output reaches /dev/console.
+        self.assertNotIn("< /tmp/sp16-root/sp16-exec.fifo", case)
+        self.assertIn("python3 -u /tmp/sp16-exec-filter.py /tmp/sp16-root/sp16-exec.fifo > /dev/console", case)
+        self.assertIn("SP16_EXEC_RANGE=0x116f8..0x831ca8", text.replace(" ", ""))
+
+    @staticmethod
+    def exec_filter(lines, extra=(), sessions=None):
+        """Run the embedded filter over fifo sessions (a list of line lists; `lines` alone is one session) and return
+        its stdout lines. The next session starts only after the filter printed the previous one's END line, as a
+        restarted app opens the log fifo after the old qemu-user closed it."""
+        text = (TOOLS / "guest-init.sh").read_text()
+        body = text.split("cat > /tmp/sp16-exec-filter.py <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        sessions = sessions if sessions is not None else [lines]
+        out = []
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "filter.py"
+            script.write_text(body + "\n")
+            fifo = Path(directory) / "exec.fifo"
+            os.mkfifo(fifo)
+            child = subprocess.Popen([sys.executable, "-I", str(script), str(fifo), "sessions=%d" % len(sessions), *extra],
+                                     stdout=subprocess.PIPE, text=True)
+            try:
+                for session in sessions:
+                    with open(fifo, "wb") as writer:
+                        writer.write("".join(session).encode())
+                    while True:
+                        line = child.stdout.readline()
+                        if not line:
+                            break
+                        out.append(line.rstrip("\n"))
+                        if line.startswith("SP16_TB_END"):
+                            break
+            finally:
+                child.kill()
+                child.communicate()
+        return out
+
+    def test_exec_filter_prints_each_block_once_per_guest_thread_and_counts_them(self):
+        def trace(pc, symbol="", cpu=0):
+            return "Trace %d: 0x7f5f6c000100 [00000000/%08x/00000010/00ff0000] %s\n" % (cpu, pc, symbol)
+        lines = [trace(0x116f8, "_start"), trace(0x11700), trace(0x116f8, "_start"), "noise line\n", trace(0x11700),
+                 trace(0x11800, cpu=1), trace(0x116f8, cpu=1), trace(0x11800, cpu=1), trace(0x116f8)]
+        out = self.exec_filter(lines)
+        # First-execution order across threads: one SP16_TB line per run of the same cpu, tagged with the instance.
+        batches = [line for line in out if line.startswith("SP16_TB ")]
+        self.assertEqual(batches, ["SP16_TB i0 c0 000116f8 00011700", "SP16_TB i0 c1 00011800 000116f8"])
+        self.assertEqual(out[0], "SP16_TB_INSTANCE i0")
+        self.assertEqual(out.count("SP16_TB_CPU i0 c0 t=0.0"), 1)
+        self.assertEqual(sum(1 for line in out if line.startswith("SP16_TB_CPU i0 c1 t=")), 1)
+        end = out[-1]
+        self.assertRegex(end, r"^SP16_TB_END i0 distinct=4 lines=8 t=[0-9.]+ cpus=c0:2@0\.0,c1:2@[0-9.]+$")
+        self.assertTrue(all(len(line) < 200 for line in out))
+
+    def test_exec_filter_keeps_an_app_restart_apart_from_the_instance_before(self):
+        # After `app-restart` the new qemu-user numbers its threads from cpu 0 again and runs the same blocks: they must
+        # be printed again and counted for the new instance, not suppressed by the old instance's (cpu, pc) pairs.
+        def trace(pc, cpu=0):
+            return "Trace %d: 0x7f5f6c000100 [00000000/%08x/00000010/00ff0000] \n" % (cpu, pc)
+        first = [trace(0x116f8), trace(0x11700), trace(0x11800, cpu=1)]
+        second = [trace(0x116f8), trace(0x11900), trace(0x116f8)]
+        out = self.exec_filter(None, sessions=[first, second])
+        batches = [line for line in out if line.startswith("SP16_TB ")]
+        self.assertEqual(batches, ["SP16_TB i0 c0 000116f8 00011700", "SP16_TB i0 c1 00011800",
+                                   "SP16_TB i1 c0 000116f8 00011900"])
+        self.assertEqual([line for line in out if line.startswith("SP16_TB_INSTANCE")],
+                         ["SP16_TB_INSTANCE i0", "SP16_TB_INSTANCE i1"])
+        # The second instance's cpu 0 is announced again and its counts and END line are its own.
+        self.assertEqual(sum(1 for line in out if line.startswith("SP16_TB_CPU i1 c0 t=0.0")), 1)
+        ends = [line for line in out if line.startswith("SP16_TB_END")]
+        self.assertRegex(ends[0], r"^SP16_TB_END i0 distinct=3 lines=3 t=[0-9.]+ cpus=c0:2@0\.0,c1:1@[0-9.]+$")
+        self.assertRegex(ends[1], r"^SP16_TB_END i1 distinct=2 lines=3 t=[0-9.]+ cpus=c0:2@0\.0$")
+
+    def test_exec_filter_splits_long_runs_and_stops_printing_at_its_cap_but_keeps_counting(self):
+        lines = ["Trace 0: 0x1 [00000000/%08x/00000010/00ff0000] \n" % pc for pc in range(0x20000, 0x20000 + 40, 4)]
+        out = self.exec_filter(lines, ("cap=3",))
+        addresses = [token for line in out if line.startswith("SP16_TB ") for token in line.split()[3:]]
+        self.assertEqual(addresses, ["00020000", "00020004", "00020008"])
+        self.assertIn("SP16_TB_CAPPED i0 cap=3", out)
+        self.assertRegex(out[-1], r"^SP16_TB_END i0 distinct=10 lines=10 t=[0-9.]+ cpus=c0:10@0\.0$")
+        many = ["Trace 3: 0x1 [00000000/%08x/00000010/00ff0000] \n" % pc for pc in range(0x30000, 0x30000 + 80, 4)]
+        out = self.exec_filter(many)
+        batches = [line for line in out if line.startswith("SP16_TB ")]
+        self.assertEqual([len(line.split()) - 3 for line in batches], [16, 4])
+        self.assertTrue(all(line.startswith("SP16_TB i0 c3 ") for line in batches))
+
     def test_audio_transport_is_a_dedicated_port_off_by_default(self):
         base = " ".join(native.arguments(Path("/q"), Path("/g"), "/s"))
         self.assertNotIn("sp16.pcm", base)
@@ -405,6 +508,41 @@ class PersistenceArgumentTests(unittest.TestCase):
                     mock.patch.object(native, "run") as run, mock.patch("builtins.print"):
                 native.launch("/b", no_ui_input=bench)
                 run.assert_called_once_with(expected)
+
+    def test_launch_passes_no_audio_files_to_the_app(self):
+        from unittest import mock
+        assets = {"app_bundle": "/b/SP16.app", "decoupled": True, "research": True}
+        for bench, expected in ((False, ["open", "-n", "/b/SP16.app", "--args", "--no-audio-files"]),
+                                (True, ["open", "-n", "-g", "/b/SP16.app", "--args", "--no-ui-input", "--no-audio-files"])):
+            with self.subTest(bench=bench), mock.patch.object(native, "host_check"), \
+                    mock.patch.object(native, "private_path", side_effect=Path), \
+                    mock.patch.object(native, "validated_assets", return_value=assets), \
+                    mock.patch.object(native, "run") as run, mock.patch("builtins.print"):
+                native.launch("/b", no_ui_input=bench, no_audio_files=True)
+                run.assert_called_once_with(expected)
+
+    def test_the_app_keeps_the_audio_sink_without_files_when_asked(self):
+        """--no-audio-files: the sink still reads every PCM packet from the guest and keeps its counters (the guest's audio
+        path and timing are the same as a file build's); it opens no WAV, and metrics say so."""
+        window = (TOOLS / "native-window.swift").read_text()
+        sink = (TOOLS / "audio-sink.swift").read_text()
+        self.assertIn('audioFilesDisabled = arguments.contains("--no-audio-files")', window)
+        self.assertIn('arguments.removeAll { $0 == "--no-audio-files" }', window)
+        self.assertIn('writeFiles: (mode == "file" || mode == "both") && !audioFilesDisabled', window)
+        self.assertIn("Audio files: off (--no-audio-files)", window)       # the marker a script finds in the built app
+        self.assertIn('if audioFilesDisabled { json["audio_files"] = false }', window)   # runtime.json records it
+        self.assertIn('output == nil ? (writeFiles ? "file" : "counters")', sink)
+        self.assertIn('"wav": writeFiles ? s.path : ""', sink)
+
+    def test_a_firmware_relaunch_keeps_no_audio_files(self):
+        """Review of 2eeee12: choosing or importing firmware relaunches the app with --firmware only, so an app started with
+        --no-audio-files lost it and the replacement recorded WAVs again. The relaunch forwards it."""
+        source = (TOOLS / "firmware-window.swift").read_text()
+        relaunch = source.split("static func relaunch(firmware id: String) {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn('"--args"] + relaunchArguments(firmware: id)', relaunch)
+        self.assertIn('["--firmware", id] + (audioFilesDisabled ? ["--no-audio-files"] : [])', source)
+        window = (TOOLS / "native-window.swift").read_text()
+        self.assertNotIn("the sink only counts", window)     # a `both` build also keeps playing: the log says what is off
 
     def test_guest_init_gates_persistence_on_cmdline_token(self):
         text = (TOOLS / "guest-init.sh").read_text()
