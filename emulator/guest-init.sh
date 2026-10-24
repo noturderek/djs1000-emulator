@@ -498,6 +498,15 @@ fi
   set +e
   while :; do
     sp16_preload=/opt/sp16/libsp16-ui.so
+    # The real firmware's apl_start is not run in the emulator. Honor the marked
+    # preload launcher carried by an imported update, using its own
+    # preload library from the hash-checked read-only firmware image.
+    sp16_app_dir=${sp16_app_path%/*}
+    if [ -f "/tmp/sp16-root$sp16_app_dir/sp16-preload.so" ] &&
+       grep -q '^# SP16_PRELOAD_LAUNCHER$' "/tmp/sp16-root$sp16_app_dir/apl_start"; then
+      sp16_preload="$sp16_preload:$sp16_app_dir/sp16-preload.so"
+      echo "SP16_FW_LAUNCHER preload=$sp16_app_dir/sp16-preload.so" > /dev/console
+    fi
     if [ "$sp16_devlayer" = 1 ]; then
       if sp16_extra=$(env $sp16_profile_env python3 /opt/sp16/guest-firmware.py dev-apply 2>/dev/console); then
         sp16_preload="$sp16_preload${sp16_extra:+:$sp16_extra}"
