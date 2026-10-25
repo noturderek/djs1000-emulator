@@ -91,7 +91,18 @@ SELECTOR_PUSH = BUTTON_BITS.get("selector")
 # and RESONANCE have no field (pure analog hardware) and stay stubs. 10-bit full scale = 1023.
 ANALOG_WORDS = {name: (offset, inverted) for name, (offset, inverted) in PROFILE["panel"]["analog_words"].items()}
 ANALOG_FULL_SCALE = 1023
-ANALOG_DEFAULT = 500  # host value 0..1000; matches the view's centred knob
+# Where each analog knob starts, host value 0..1000 (the panel view starts its knobs from the same numbers: "initial" in
+# panel-layout.json, checked by a test). DRIVE, RESONANCE and HP CUTOFF at minimum with LP CUTOFF at maximum is the
+# filter wide open, the state the service manual's audio tests (MODE3) set; MAIN OUT starts centred. LP CUTOFF and
+# RESONANCE are host-only analog state and stay "never moved" until touched, which the shim treats as exactly these
+# positions (20 kHz, minimum resonance), so no value is sent for them at start.
+ANALOG_DEFAULTS = {"main_out": 500, "drive": 0, "lp_cutoff": 1000, "lp_resonance": 0, "hp_cutoff": 0}
+ANALOG_DEFAULT = 500  # any firmware-visible pot not listed above
+
+# Toggle buttons that start off. The stock app lights ACTIVE (the Send & Return filter in the signal path, filter-select
+# line high) at every start, observed on a fresh and on a saved data image, so the bridge presses the button until
+# its lamp is dark (panel.StartOff).
+START_OFF = ("active",)
 
 # Controls that move an int16 counter: name -> (frame offset, wire sign for host +1 detent), from the profile
 # (panel.counters). 1.60: E9 in the Utility list a counter increase moves the highlight down (next), so host +1 = next

@@ -146,7 +146,7 @@ class PanelModel:
         self.held = {}
         self.overrides = {}
         for name in panel_map.ANALOG_WORDS:
-            self._set_analog(name, panel_map.ANALOG_DEFAULT)
+            self._set_analog(name, panel_map.ANALOG_DEFAULTS.get(name, panel_map.ANALOG_DEFAULT))
         self.cdc_contact, self.cdc_position = False, 0
         self.cdc_override = None
         self.cdc_changed = False
@@ -378,3 +378,51 @@ class PanelModel:
             self.overrides.clear()
             self.cdc_override = None
             self.cdc_contact, self.cdc_changed, self.changed = False, True, True
+
+
+class StartOff:
+    """Presses toggle buttons after boot until their lamps are dark, so the firmware starts with them off.
+
+    The bridge asks once per streamer period. The app's lamp frames are dark for the first seconds of a boot and only
+    then show its start state, so darkness alone never ends the wait. A lamp that has stayed lit for SETTLE seconds is
+    pressed; a press the app was not yet listening for leaves the lamp lit, so it is repeated every RETRY seconds, at
+    most ATTEMPTS times. A control is dropped as soon as its lamp is dark after a press, or WINDOW seconds after the
+    first lamp frame; from then on the user's own presses are never second-guessed.
+    """
+
+    SETTLE = 3.0
+    RETRY = 2.5
+    ATTEMPTS = 4
+    WINDOW = 60.0
+
+    def __init__(self, names):
+        self.pending = {name: {"lit_since": None, "next": 0.0, "tries": 0} for name in names}
+        self.started = None
+
+    def step(self, now, lit):
+        """`lit` maps a control name to True or False, or to None while its lamp state is unknown.
+        Returns the names to press now."""
+        press = []
+        for name in list(self.pending):
+            state = lit.get(name)
+            if state is None:
+                continue
+            if self.started is None:
+                self.started = now
+            info = self.pending[name]
+            if now - self.started > self.WINDOW:
+                del self.pending[name]
+            elif not state:
+                info["lit_since"] = None
+                if info["tries"]:
+                    del self.pending[name]
+            else:
+                info["lit_since"] = now if info["lit_since"] is None else info["lit_since"]
+                if now - info["lit_since"] >= self.SETTLE and now >= info["next"]:
+                    if info["tries"] >= self.ATTEMPTS:
+                        del self.pending[name]
+                        continue
+                    info["tries"] += 1
+                    info["next"] = now + self.RETRY
+                    press.append(name)
+        return press
