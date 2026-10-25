@@ -87,6 +87,12 @@ class PanelModelTests(unittest.TestCase):
         self.assertEqual(model.frame(), before)
         self.assertEqual(model.apply(panel_map.CONTROL_IDS["lp_cutoff"], "press"), protocol.INPUT_INVALID)
 
+    def test_analog_knobs_start_with_the_filter_wide_open(self):
+        frame = panel.PanelModel().frame()
+        self.assertEqual(counter(frame, 0x28), 512)    # MAIN OUT centred, read directly
+        self.assertEqual(counter(frame, 0x26), 1023)   # DRIVE at minimum (shown as 1023 - raw = 0)
+        self.assertEqual(counter(frame, 0x2a), 1023)   # HP CUTOFF at minimum (shown as 1023 - raw = 0)
+
     def test_adc_readback_reports_the_words_in_the_frame_and_through_sessionctl(self):
         import sessionctl
         model = panel.PanelModel()
@@ -493,6 +499,12 @@ class MapTests(unittest.TestCase):
         fb = layout["lcd"]["framebuffer"]
         active = layout["lcd"]["active"]
         self.assertAlmostEqual(active["w"] / active["h"], fb["width"] / fb["height"], places=2)
+
+    def test_layout_starts_the_analog_knobs_where_the_panel_model_does(self):
+        layout = json.loads((TOOLS / "panel-layout.json").read_text())
+        initial = {c["name"]: c.get("initial") for c in layout["controls"] if c["kind"] == "analog"}
+        self.assertEqual(initial, panel_map.ANALOG_DEFAULTS)
+        self.assertTrue(all(0 <= value <= 1000 for value in initial.values()))
 
     def test_tx_channel_tables_cover_the_wire_frame_without_overlap(self):
         self.assertEqual(len(panel_map.RGB_CHANNELS), 32)

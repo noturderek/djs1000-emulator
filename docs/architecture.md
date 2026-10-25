@@ -55,6 +55,9 @@ audio paths run as on the hardware:
 - A control the host never moved is neutral (unity gain, low-pass open), so a session that does not touch them sounds
   as before. The cutoff laws (20 Hz to 20 kHz, exponential over the pot or DAC range) are assumptions, not
   measurements of the hardware.
+- The panel knobs start with the filter wide open: DRIVE, RESONANCE and HP CUTOFF at minimum, LP CUTOFF at maximum,
+  MAIN OUT centred (`ANALOG_DEFAULTS` in `panel_map.py`, mirrored as `initial` in `panel-layout.json`; a test keeps the
+  two equal). LP CUTOFF and RESONANCE are never sent at start because "never moved" already means exactly those positions.
 - Research stimuli (`./sp16 ctl event NAME value 0..1000`, 0 = off): `input_tone` puts a 1 kHz tone on the input
   jack, `filter_tone` one at the filter input. `input_level` and `power` (the power/standby key, RX bit 5.4) are host
   controls without a place on the panel drawing.

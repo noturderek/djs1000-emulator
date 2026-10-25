@@ -48,6 +48,7 @@ struct PanelLayout: Decodable {
         let w: CGFloat?, h: CGFloat?, r: CGFloat?, capR: CGFloat?, radius: CGFloat?
         let label: String?, style: String?
         let number: String?, numberDy: CGFloat?, numberAlign: String?, numberBox: Bool?
+        let initial: Int?   // analog only: where the knob starts, host value 0...1000 (panel_map.ANALOG_DEFAULTS)
 
         var isInput: Bool { kind != .lamp }
         var isCircle: Bool { shape == "circle" }
@@ -1119,6 +1120,10 @@ final class PanelView: NSView, NSViewToolTipOwner {
             panelLayout = l
             renderer = PanelRenderer(layout: l)
             controlIndex = Dictionary(uniqueKeysWithValues: l.controls.map { ($0.id, $0) })
+            // Analog knobs start where the panel model starts them (-135...135 degrees = host value 0...1000).
+            for c in l.controls where c.kind == .analog {
+                if let v = c.initial { state.knobAngle[c.id] = CGFloat(v) / 1000 * 270 - 135 }
+            }
         } catch {
             loadError = "\(error)"
         }

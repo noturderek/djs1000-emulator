@@ -146,7 +146,7 @@ class PanelModel:
         self.held = {}
         self.overrides = {}
         for name in panel_map.ANALOG_WORDS:
-            self._set_analog(name, panel_map.ANALOG_DEFAULT)
+            self._set_analog(name, panel_map.ANALOG_DEFAULTS.get(name, panel_map.ANALOG_DEFAULT))
         self.cdc_contact, self.cdc_position = False, 0
         self.cdc_override = None
         self.cdc_changed = False
