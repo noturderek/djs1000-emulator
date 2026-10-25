@@ -1067,7 +1067,7 @@ final class PanelView: NSView, NSViewToolTipOwner {
     static let adcTooltip = "Analog pot — only the firmware's ADC readback is emulated (no audio effect)"
     /// MAIN OUT, DRIVE and HP CUTOFF have a proven firmware ADC field (AD TEST page); the others do not.
     /// DJS-1000: FX LEVEL/DEPTH, headphone LEVEL and the tempo slider (the guest ignores ids its profile lacks).
-    static let adcControls: Set<UInt8> = [61, 62, 65, 101, 102, 104]
+    static let adcControls: Set<UInt8> = [61, 62, 65, 111, 112, 114]
 
     private func analogNote(_ c: PanelLayout.Control) -> String {
         c.kind != .analog ? c.accessibility
