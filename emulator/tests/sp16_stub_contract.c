@@ -3,10 +3,12 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <net/if.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 struct spi_message { uint8_t multi_id,reserved,part_id,part_num; uint32_t bytes; uint64_t tx_buf; };
@@ -40,6 +42,13 @@ int main(void) {
     assert(media>=0); event=(struct epoll_event){.events=EPOLLIN,.data.fd=media};
     assert(epoll_ctl(ep,EPOLL_CTL_ADD,media,&event)==0 && epoll_wait(ep,&event,1,0)==0);
     assert(execl("/bin/sh","sh","-c","echo prohibited",(char *)0)==-1 && errno==ENOTSUP);
+    /* Without SP16_FAKE_ETH0 the guest has no eth0 and the shim must not invent one. */
+    int net=socket(AF_INET,SOCK_DGRAM,0);
+    struct ifreq ifr;
+    assert(net>=0);
+    memset(&ifr,0,sizeof ifr); strcpy(ifr.ifr_name,"eth0");
+    assert(ioctl(net,0x8927,&ifr)==-1 && ioctl(net,0x8915,&ifr)==-1);
+    assert(close(net)==0);
     assert(close(media)==0 && close(panel)==0 && close(cdc)==0 && close(dac)==0 && close(ep)==0);
     return 0;
 }

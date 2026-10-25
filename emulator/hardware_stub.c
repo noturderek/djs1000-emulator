@@ -6,6 +6,10 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <net/if_arp.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <sys/mman.h>
 #include <stdarg.h>
@@ -453,13 +457,73 @@ static void note_ioctl(unsigned long request, enum device kind) {
     fprintf(stderr, "[sp16-ui-stub] ioctl accepted request=0x%lx device=%s\n", request, names[kind]);
 }
 
+/* Fake eth0 (SP16_FAKE_ETH0=1, set with the factory test mode): the guest has only lo, but the DEVICE TEST page
+ * (page 8) reads the MAC (retrying with 250 ms sleeps until bytes 3..5 are not all zero) and the IP of eth0 on the
+ * UI thread, so without an interface it never returns. Every value below is fake: a locally administered MAC
+ * (02:00:5e:10:00:01), 192.0.2.16/24 (TEST-NET-1) and an interface that is up. Link data (SIOCETHTOOL) is not
+ * faked: it fails with EOPNOTSUPP. Off in normal runs, where eth0 stays absent. */
+#define SP16_SIOCGIFFLAGS 0x8913UL
+#define SP16_SIOCGIFADDR 0x8915UL
+#define SP16_SIOCGIFNETMASK 0x891bUL
+#define SP16_SIOCGIFHWADDR 0x8927UL
+#define SP16_SIOCETHTOOL 0x8946UL
+static int fake_eth0_enabled(void) {
+    static int enabled=-1;
+    if (enabled<0) { const char *v=getenv("SP16_FAKE_ETH0"); enabled = v && !strcmp(v,"1"); }
+    return enabled;
+}
+
+static void fake_eth0_address(struct ifreq *ifr, uint32_t host_order_address) {
+    struct sockaddr_in *in=(struct sockaddr_in *)&ifr->ifr_addr;
+    memset(&ifr->ifr_addr, 0, sizeof ifr->ifr_addr);
+    in->sin_family=AF_INET;
+    in->sin_addr.s_addr=htonl(host_order_address);
+}
+
+/* Returns 1 and sets *result when the request is a fake-eth0 one, 0 to pass it on. */
+static int fake_eth0_ioctl(unsigned long request, void *arg, int *result) {
+    static const char *kinds[]={"SIOCGIFHWADDR","SIOCGIFADDR","SIOCGIFNETMASK","SIOCGIFFLAGS","SIOCETHTOOL"};
+    static int logged[5];
+    int kind;
+    switch (request) {
+    case SP16_SIOCGIFHWADDR: kind=0; break;
+    case SP16_SIOCGIFADDR: kind=1; break;
+    case SP16_SIOCGIFNETMASK: kind=2; break;
+    case SP16_SIOCGIFFLAGS: kind=3; break;
+    case SP16_SIOCETHTOOL: kind=4; break;
+    default: return 0;
+    }
+    struct ifreq *ifr=arg;
+    if (!fake_eth0_enabled() || !ifr) return 0;
+    if (strncmp(ifr->ifr_name,"eth0",IFNAMSIZ)) return 0;
+    if (!__atomic_exchange_n(&logged[kind], 1, __ATOMIC_RELAXED))
+        fprintf(stderr, "[sp16-ui-stub] fake eth0 %s\n", kinds[kind]);
+    switch (kind) {
+    case 0: {
+        static const uint8_t mac[6]={0x02,0x00,0x5e,0x10,0x00,0x01};
+        memset(&ifr->ifr_hwaddr, 0, sizeof ifr->ifr_hwaddr);
+        ifr->ifr_hwaddr.sa_family=ARPHRD_ETHER;
+        memcpy(ifr->ifr_hwaddr.sa_data, mac, sizeof mac);
+        *result=0; break; }
+    case 1: fake_eth0_address(ifr, 0xc0000210UL); *result=0; break;
+    case 2: fake_eth0_address(ifr, 0xffffff00UL); *result=0; break;
+    case 3: ifr->ifr_flags=IFF_UP|IFF_RUNNING|IFF_BROADCAST; *result=0; break;
+    default: errno=EOPNOTSUPP; *result=-1; break;
+    }
+    return 1;
+}
+
 static int device_ioctl(struct state *s, int fd, unsigned long request, void *arg);
 
 int ioctl(int fd, unsigned long request, ...) {
     if (!original_ioctl) original_ioctl=dlsym(RTLD_NEXT,"ioctl");
     va_list args; va_start(args, request); void *arg=va_arg(args, void *); va_end(args);
     struct state *s = device(fd);
-    if (!s) return original_ioctl(fd, request, arg);
+    if (!s) {
+        int fake_result;
+        if (fake_eth0_ioctl(request, arg, &fake_result)) return fake_result;
+        return original_ioctl(fd, request, arg);
+    }
     int result = device_ioctl(s, fd, request, arg);
     if (result==0) note_ioctl(request, s->kind);
     return result;

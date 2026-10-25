@@ -193,9 +193,10 @@ for sp16_token in $(cat /proc/cmdline); do
 done
 # With a profile app argument (1.60: the factory test mode) the DIN MIDI ports get a virtual OUT -> IN cable for the
 # DEVICE TEST page (the shim serves /dev/ttymxc1 and /dev/din_midi as one loopback). Off in normal runs, where
-# looping the app's own MIDI back into it would feed it its own clock.
+# looping the app's own MIDI back into it would feed it its own clock. The same page reads eth0's MAC and IP, which the
+# guest does not have (only lo): SP16_FAKE_ETH0 makes the shim answer those ioctls with fake values.
 sp16_midi_env=
-if [ -n "$sp16_app_arg" ]; then sp16_midi_env="-E SP16_MIDI_LOOPBACK=1"; fi
+if [ -n "$sp16_app_arg" ]; then sp16_midi_env="-E SP16_MIDI_LOOPBACK=1 -E SP16_FAKE_ETH0=1"; fi
 # Research builds only (native.py --research --trace): opt-in QEMU user-mode tracing, default off.
 sp16_trace_args=
 case " $(cat /proc/cmdline) " in

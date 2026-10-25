@@ -2,10 +2,15 @@
  * (low-pass, input tone) and the DIN MIDI loopback cable.
  * Build twice, as sp16_hwparams_contract.c does:
  * -DSP16_FAKE_ALSA -shared -fPIC -> libsp16-fake-alsa.so (fake libasound whose reads leave the buffer alone)
- * normal -> test, linked to that library; run with the ARM UI preload, SP16_ANALOG=<file> and SP16_MIDI_LOOPBACK=1.
+ * normal -> test, linked to that library; run with the ARM UI preload, SP16_ANALOG=<file> and SP16_MIDI_LOOPBACK=1 and SP16_FAKE_ETH0=1.
  */
 #define _GNU_SOURCE
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <net/if.h>
+#include <net/if_arp.h>
+#include <netinet/in.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <stdint.h>
@@ -13,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 typedef struct _snd_pcm snd_pcm_t;
@@ -165,6 +171,27 @@ int main(void) {
     assert(lseek(h,4*32+5,SEEK_SET)==4*32+5 && read(h,&level,1)==1 && level==0);
     assert(lseek(h,7*32+1,SEEK_SET)==-1);
     assert(close(g)==0 && close(h)==0);
+    /* 7. Fake eth0 (SP16_FAKE_ETH0=1): MAC with bytes 3..5 non-zero, 192.0.2.16/24, up; no ethtool data; other
+     * interfaces are not faked. */
+    int net=socket(AF_INET,SOCK_DGRAM,0);
+    assert(net>=0);
+    struct ifreq ifr;
+    memset(&ifr,0,sizeof ifr); strcpy(ifr.ifr_name,"eth0");
+    assert(ioctl(net,0x8927,&ifr)==0 && ifr.ifr_hwaddr.sa_family==ARPHRD_ETHER);
+    assert(!memcmp(ifr.ifr_hwaddr.sa_data,"\x02\x00\x5e\x10\x00\x01",6));
+    memset(&ifr,0,sizeof ifr); strcpy(ifr.ifr_name,"eth0");
+    assert(ioctl(net,0x8915,&ifr)==0 && ifr.ifr_addr.sa_family==AF_INET);
+    assert(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr.s_addr==htonl(0xc0000210u));
+    memset(&ifr,0,sizeof ifr); strcpy(ifr.ifr_name,"eth0");
+    assert(ioctl(net,0x891b,&ifr)==0);
+    assert(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr.s_addr==htonl(0xffffff00u));
+    memset(&ifr,0,sizeof ifr); strcpy(ifr.ifr_name,"eth0");
+    assert(ioctl(net,0x8913,&ifr)==0 && ifr.ifr_flags==(IFF_UP|IFF_RUNNING|IFF_BROADCAST));
+    memset(&ifr,0,sizeof ifr); strcpy(ifr.ifr_name,"eth0");
+    assert(ioctl(net,0x8946,&ifr)==-1 && errno==EOPNOTSUPP);
+    memset(&ifr,0,sizeof ifr); strcpy(ifr.ifr_name,"eth1");
+    assert(ioctl(net,0x8927,&ifr)==-1);
+    assert(close(net)==0);
     return 0;
 }
 #endif
