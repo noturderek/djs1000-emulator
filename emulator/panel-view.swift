@@ -1237,6 +1237,18 @@ final class PanelView: NSView, NSViewToolTipOwner {
         return .fit(canvas: layout.canvas.size, in: avail)
     }
 
+    /// The window content size at which the chassis fills the view exactly (no letterbox): the largest size that
+    /// fits inside `size` with the layout's aspect ratio, plus the margins and the toolbar. nil in LCD-only mode or
+    /// before the layout is known. A portrait panel (the DJS-1000) and a landscape one (the SP-16) both use it.
+    func chassisFittedContentSize(within size: CGSize) -> CGSize? {
+        guard let layout = panelLayout, !lcdOnly else { return nil }
+        let m = Self.margin, footer = PanelToolbar.height
+        let c = layout.canvas.size
+        let s = min((size.width - 2 * m) / c.width, (size.height - footer - 2 * m) / c.height)
+        guard s > 0 else { return nil }
+        return CGSize(width: (c.width * s + 2 * m).rounded(), height: (c.height * s + footer + 2 * m).rounded())
+    }
+
     /// Frame of a control in view coordinates (.zero when unknown or hidden by LCD-only mode).
     func controlFrame(_ id: UInt8) -> NSRect {
         guard !lcdOnly, let t = panelTransform, let c = controlIndex[id] else { return .zero }

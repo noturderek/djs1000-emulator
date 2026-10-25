@@ -123,12 +123,23 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         installMenus()
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+        // The window starts at the panel's own shape (a portrait DJS-1000 gets a tall window, the landscape SP-16 a
+        // wide one), as large as the screen allows up to the canvas's natural size, so the chassis fills the view.
+        let visible = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 800)
+        var start = CGSize(width: 1280, height: 800)
+        var minimum = CGSize(width: 960, height: 640)
+        if let c = panel.panelLayout?.canvas.size {
+            let limit = CGSize(width: min(visible.width * 0.95, c.width + 2 * PanelView.margin),
+                               height: min(visible.height * 0.92 - 28, c.height + PanelToolbar.height + 2 * PanelView.margin))
+            start = panel.chassisFittedContentSize(within: limit) ?? start
+            minimum = panel.chassisFittedContentSize(within: CGSize(width: 480, height: 480)) ?? minimum
+        }
+        window = NSWindow(contentRect: NSRect(origin: .zero, size: start),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.title = title
-        window.contentMinSize = NSSize(width: 960, height: 640)
+        window.contentMinSize = minimum
         window.contentView = panel
         window.delegate = self
         window.center(); window.makeKeyAndOrderFront(nil)
@@ -701,6 +712,13 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     // MARK: Lifecycle
+
+    /// Keep the window the shape of the panel, so resizing never leaves empty bars around the chassis.
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        let content = sender.contentRect(forFrameRect: NSRect(origin: .zero, size: frameSize)).size
+        guard let fitted = panel.chassisFittedContentSize(within: content) else { return frameSize }
+        return sender.frameRect(forContentRect: NSRect(origin: .zero, size: fitted)).size
+    }
 
     func windowDidResignKey(_ notification: Notification) { panel.releaseAll() }
     func windowShouldClose(_ sender: NSWindow) -> Bool { AppLog.log("main window closed: quitting"); NSApp.terminate(nil); return false }
