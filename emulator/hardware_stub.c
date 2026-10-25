@@ -598,13 +598,12 @@ int snd_pcm_hw_params_set_access(snd_pcm_t *handle,snd_pcm_hw_params_t *params,i
     return result;
 }
 /* The AK4452 codec driver of the SP-16 kernel declares S16_LE, S24_LE and S20_3LE only (its DAI stream tables); the
- * null plugin also takes FLOAT_LE, which the app's format search tries first, so by default the board streams run a
- * sample path the unit never runs. SP16_PCM_CODEC_FORMATS=1 (research, off by default) refuses the formats the codec
- * lacks, so the app settles on S24_LE as on the unit. It stays off until a known difference is explained: with it the
- * master level on ch12/ch14 no longer follows a track's VOLUME (hardware suite HW-34). */
+ * null plugin also takes FLOAT_LE, which the app's format search tries first, so without a restriction the board
+ * streams run a sample path the unit never runs. The shim therefore refuses the formats the codec lacks by default, so
+ * the app settles on S24_LE as on the unit. SP16_PCM_ANY_FORMAT=1 (research) restores the null plugin's answer. */
 static int codec_refuses(const struct pcm_state *s,int format) {
-    const char *on=getenv("SP16_PCM_CODEC_FORMATS");
-    if (!s || !on || strcmp(on,"1") || strncmp(s->name,"hw:ak4452audio,",15)) return 0;
+    const char *any=getenv("SP16_PCM_ANY_FORMAT");
+    if (!s || (any && !strcmp(any,"1")) || strncmp(s->name,"hw:ak4452audio,",15)) return 0;
     return format!=2 && format!=6 && format!=36;
 }
 int snd_pcm_hw_params_set_format(snd_pcm_t *handle,snd_pcm_hw_params_t *params,int format) {
@@ -1141,11 +1140,14 @@ static void main_out_scale(struct ax_ring *r,uint8_t *data,uint32_t frames) {
     unsigned w=r->width, count=frames*r->sent_ch;
     for (unsigned i=0;i<count;i++) bm_put(data+(size_t)i*w,(int)r->fmt,bm_get(data+(size_t)i*w,(int)r->fmt)*a.main_gain);
 }
-/* Input jack: silence unless the host turned on the test tone; INPUT LEVEL scales it. */
+/* Input jack: silence unless the host turned on the test tone; INPUT LEVEL scales it. The null plugin leaves a capture
+ * buffer untouched, so silence is written (all-zero bytes are 0 in every format the codec takes, and 0.0 in FLOAT_LE)
+ * or the app's reused buffer would keep the last tone samples. */
 static void input_fill(struct pcm_state *s,void *buffer,snd_pcm_sframes_t frames) {
     struct analog a=analog_now;
     unsigned w=bm_width(s->format);
-    if (!w || !s->channels || frames<=0 || !buffer || a.tone_amp<=0) return;
+    if (!w || !s->channels || frames<=0 || !buffer) return;
+    if (a.tone_amp<=0) { memset(buffer,0,(size_t)frames*w*s->channels); return; }
     float rate=(float)(s->rate?s->rate:44100), step=2*BM_PI*a.tone_hz/rate, amp=a.tone_amp*a.input_gain;
     uint8_t *p=buffer; unsigned bpf=w*s->channels;
     for (snd_pcm_sframes_t i=0;i<frames;i++,p+=bpf) {

@@ -90,7 +90,7 @@ int main(void) {
     assert(snd_pcm_writei(handle,buffer,960)==960);
     assert(snd_pcm_readi(handle,buffer,0)==0);
     assert(snd_pcm_close(handle)==0);
-    /* With SP16_PCM_CODEC_FORMATS=1 (set for this run): the AK4452 codec lists S16_LE, S24_LE and S20_3LE, so FLOAT_LE
+    /* By default: the AK4452 codec lists S16_LE, S24_LE and S20_3LE, so FLOAT_LE
      * and S32_LE are refused as the unit's driver would and the app's format search settles on S24_LE; the master
      * codec stream is not filtered. */
     assert(snd_pcm_open(&handle,"hw:ak4452audio,0",1,0)==0);

@@ -129,10 +129,11 @@ int main(void) {
         for (int i=0;i<N;i++) assert(tone[2*i]==tone[2*i+1]);
     }
     assert(top>30000);
-    /* Tone off: the input capture stays silent (the fake library leaves the buffer as given). */
+    /* Tone off: the input capture is written with silence; the fake library (like the null plugin) leaves the
+     * buffer as given, so it starts as the last tone samples would leave it, non-zero. */
     analog(state,0xffff,0);
     settle(send);
-    memset(tone,0,sizeof tone);
+    memset(tone,0x5a,sizeof tone);
     assert(snd_pcm_readi(in,tone,N)==N);
     for (int i=0;i<N*2;i++) assert(tone[i]==0);
     assert(close(dac)==0 && snd_pcm_close(send)==0 && snd_pcm_close(ret)==0 && snd_pcm_close(in)==0);

@@ -2793,9 +2793,9 @@ class Runner:
     def hw46(self):
         """The Dave Smith filter is an analog insert loop (service manual): the send DAC feeds the low-pass (CUTOFF,
         RESONANCE, never seen by an MCU) and the DAC7811-driven high-pass, the return ADC brings it back, and ACTIVE
-        drives the filter select line GPIO5_IO05 through /dev/gpiodrv. A tone at the filter input (research
-        stimulus FILTER TONE) must reach the headphone output while ACTIVE is on and not while it is off, and the
-        lowest CUTOFF must cut it by more than 20 dB."""
+        drives the filter select line GPIO5_IO05 through /dev/gpiodrv. Gating: ACTIVE drives that line, and the shim's
+        loop returns the research FILTER TONE (return peak above 0.1). The headphone level with ACTIVE on or off and
+        with the lowest CUTOFF are informational (levels recorded in the observed values, not gating)."""
         s = self.session
         self.normalize()
         subs = []
@@ -2832,13 +2832,14 @@ class Runner:
         subs.append(sub("headphone 1 kHz level, CUTOFF open vs lowest (informational)", True,
                         f"open {on_peak}, lowest {closed_peak}"))
         report = (self.fresh_guest().get("board") or {}).get("filter_loop") or {}
-        subs.append(sub("the shim's loop returns the filter-input tone (return peak reported)", report.get("return_peak", 0) > .1
-                        or report.get("frames", 0) > 0, str(report)))
+        subs.append(sub("the shim's loop returns the filter-input tone (return peak reported)", report.get("return_peak", 0) > .1,
+                        str(report)))
         s.event("lp_cutoff", "value", 1000)
         s.event("filter_tone", "value", 0)
         subs.append(sub("send stream from a track insert: not observed yet (informational)", True,
                         "the app left the send playback silent in every insert setting tried; " + str(report)))
-        return from_subresults("HW-46", subs, {"on": on_peak, "off": off_peak, "lowest": closed_peak})
+        return from_subresults("HW-46", subs, {"on": on_peak, "off": off_peak, "lowest": closed_peak,
+                                           "filter_loop": report})
 
     # ------------------------------------------------------------------ checks: audio
     def hw31(self):
