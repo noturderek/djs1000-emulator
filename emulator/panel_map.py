@@ -99,6 +99,11 @@ ANALOG_FULL_SCALE = 1023
 ANALOG_DEFAULTS = {"main_out": 500, "drive": 0, "lp_cutoff": 1000, "lp_resonance": 0, "hp_cutoff": 0}
 ANALOG_DEFAULT = 500  # any firmware-visible pot not listed above
 
+# Toggle buttons that start off. The stock app lights ACTIVE (the Send & Return filter in the signal path, filter-select
+# line high) at every start, observed on a fresh and on a saved data image, so the bridge presses the button until
+# its lamp is dark (panel.StartOff).
+START_OFF = ("active",)
+
 # Controls that move an int16 counter: name -> (frame offset, wire sign for host +1 detent), from the profile
 # (panel.counters). 1.60: E9 in the Utility list a counter increase moves the highlight down (next), so host +1 = next
 # = counter +1; E8 counter +N is shown as encoder +N.

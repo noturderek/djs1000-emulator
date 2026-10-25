@@ -15,7 +15,7 @@ from protocol import (ACK, CONTROL, FRAME, INPUT_FAILED, INPUT_INVALID, INPUT_UN
                       RESEARCH, TOUCH, TX_FRAME, WHEEL, decode_control, decode_key,
                       decode_research, decode_touch, decode_wheel, encode_feedback,
                       encode_result, encode_stats, frame_pixels, message, receive)
-from panel import AnalogStateFile, PanelModel, crc16
+from panel import AnalogStateFile, PanelModel, StartOff, crc16
 
 spec = importlib.util.spec_from_file_location("sp16_input", "/opt/sp16/input.py")
 controls = importlib.util.module_from_spec(spec)
@@ -129,6 +129,7 @@ def main():
     lock = threading.Lock()
     stopped = threading.Event()
     model = PanelModel(pad_curve=panel_map.PAD_CURVE)
+    start_off = StartOff(panel_map.START_OFF)
     counters = Counters()
     state = {"txlog": False, "generation": 0, "lamps": {}, "live": False}
     logged_lines = 0
@@ -217,6 +218,14 @@ def main():
                     analog.update()
                 due = model.step()
                 now = time.monotonic()
+                if start_off.pending:
+                    # Lamp colour per control id from the OEM TX frames; unknown until the first lamp frame.
+                    lit = {name: any(state["lamps"].get(panel_map.CONTROL_IDS[name], (0, 0, 0))) if state["live"] else None
+                           for name in start_off.pending}
+                    for name in start_off.step(now, lit):
+                        model.apply(panel_map.CONTROL_IDS[name], "press")
+                        model.apply(panel_map.CONTROL_IDS[name], "release")
+                        print(f"SP16_START_OFF {name} pressed", flush=True)
                 if not baseline or due or model.active() or now - last >= HEARTBEAT:
                     datagram(out, panel_target, model.frame(), "rx_frames", "rx_drops")
                     baseline, last = True, now

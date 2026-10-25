@@ -291,6 +291,70 @@ class PanelModelTests(unittest.TestCase):
         self.assertEqual(model.apply(strip, "press", 1001), protocol.INPUT_INVALID)
 
 
+class StartOffTests(unittest.TestCase):
+    def test_start_off_controls_are_buttons_with_a_lamp(self):
+        for name in panel_map.START_OFF:
+            self.assertIn(name, panel_map.BUTTON_BITS)
+            self.assertIn(name, panel_map.LAMP_ROLES)
+
+    def test_a_lamp_that_stays_dark_is_never_pressed(self):
+        start = panel.StartOff(("active",))
+        presses = [n for t in range(61) for n in start.step(float(t), {"active": False})]
+        self.assertEqual(presses, [])
+        start.step(start.WINDOW + 1, {"active": False})
+        self.assertEqual(start.pending, {})
+
+    def test_a_lamp_that_is_dark_for_the_first_seconds_of_a_boot_is_still_handled(self):
+        start = panel.StartOff(("active",))
+        for t in range(10):
+            self.assertEqual(start.step(float(t), {"active": False}), [])
+        self.assertEqual(start.step(10.0, {"active": True}), [])
+        self.assertEqual(start.step(13.0, {"active": True}), ["active"])
+
+    def test_a_lit_lamp_is_pressed_once_it_has_settled_then_left_alone_when_it_goes_dark(self):
+        start = panel.StartOff(("active",))
+        self.assertEqual(start.step(0.0, {"active": True}), [])
+        self.assertEqual(start.step(2.9, {"active": True}), [])
+        self.assertEqual(start.step(3.0, {"active": True}), ["active"])
+        self.assertEqual(start.step(3.2, {"active": True}), [])    # the lamp has not followed yet: wait
+        self.assertEqual(start.step(3.4, {"active": False}), [])
+        self.assertEqual(start.pending, {})
+        self.assertEqual(start.step(9.0, {"active": True}), [])    # the user's own later presses are never undone
+
+    def test_a_press_the_app_missed_is_retried_a_bounded_number_of_times(self):
+        start = panel.StartOff(("active",))
+        times = [t / 10 for t in range(0, 200)]
+        pressed = [t for t in times if start.step(t, {"active": True})]
+        self.assertEqual(pressed, [3.0, 5.5, 8.0, 10.5])
+        self.assertEqual(start.pending, {})
+
+    def test_an_unknown_lamp_state_waits_and_does_not_use_up_the_window(self):
+        start = panel.StartOff(("active",))
+        self.assertEqual([n for t in range(300) for n in start.step(float(t), {"active": None})], [])
+        self.assertEqual(start.step(300.0, {"active": True}), [])
+        self.assertEqual(start.step(303.0, {"active": True}), ["active"])
+
+    def test_a_lamp_that_flickers_dark_before_lighting_is_still_handled(self):
+        start = panel.StartOff(("active",))
+        self.assertEqual(start.step(0.0, {"active": False}), [])
+        self.assertEqual(start.step(1.0, {"active": False}), [])
+        self.assertEqual(start.step(1.5, {"active": True}), [])
+        self.assertEqual(start.step(4.4, {"active": True}), [])
+        self.assertEqual(start.step(4.5, {"active": True}), ["active"])
+
+    def test_nothing_is_pressed_after_the_window(self):
+        start = panel.StartOff(("active",))
+        self.assertEqual(start.step(0.0, {"active": True}), [])
+        self.assertEqual(start.step(start.WINDOW + 1, {"active": True}), [])
+        self.assertEqual(start.pending, {})
+
+    def test_bridge_wires_the_helper_to_the_decoded_lamps(self):
+        source = (TOOLS / "guest-bridge.py").read_text()
+        self.assertIn("start_off = StartOff(panel_map.START_OFF)", source)
+        self.assertIn("start_off.step(now, lit)", source)
+        self.assertIn('state["lamps"].get(panel_map.CONTROL_IDS[name]', source)
+
+
 class BoardModelTests(unittest.TestCase):
     """Host side of the shim's analog board model: the shared state file and the board-model metrics lines."""
 
