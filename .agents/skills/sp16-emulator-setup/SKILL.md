@@ -37,7 +37,7 @@ options; `make help` lists the ready-made configurations). Commands assume the d
 ./sp16 doctor
 ```
 
-It checks Apple silicon and macOS 13+, the Xcode Command Line Tools (`swiftc`, `codesign`, `/usr/bin/python3`), a
+It checks for a supported Mac (Apple silicon or Intel) and macOS 13+, the Xcode Command Line Tools (`swiftc`, `codesign`, `/usr/bin/python3`), a
 Python 3.12+ for the build tools, the QEMU build tools (`ninja`, `pkgconf`, `glib`, `pixman`), Docker running (builds
 only), free disk space, and the git set-up (a clone whose `build/` is git-ignored). Report each `FAIL` with its `fix:`
 line and stop until they are fixed. Typical fixes: `xcode-select --install`,

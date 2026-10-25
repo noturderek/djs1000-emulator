@@ -1,4 +1,9 @@
-# SP16 Emulator
+# DJS1K Replicator: mattpstv's fork of the SP16 Emulator
+
+> **This fork** (mattpstv) extends noturderek's [sp16-emulator](https://github.com/noturderek/sp16-emulator) toward
+> booting the **DJS-1000** firmware (`EP113_Main_R`, 1.22) on the same emulated hardware, and runs on **Intel Macs as
+> well as Apple silicon**. Everything below this box is upstream's README and still applies. Fork status and changes:
+> [docs/djs-fork.md](docs/djs-fork.md).
 
 A macOS emulator of the sampler hardware that is compatible with the TORAIZ SP-16. It emulates the machine (panel,
 pads, encoders, lamps, LCD, touch strip, audio codec, USB stick and internal storage) and boots a firmware update
@@ -12,7 +17,8 @@ from that update; this repository contains none of it.
 
 ## What you need
 
-- A Mac with Apple silicon (the emulator uses Hypervisor.framework), macOS 13 or later.
+- A Mac with Apple silicon or an Intel CPU (the emulator uses Hypervisor.framework; an aarch64 guest on Apple
+  silicon, an x86_64 guest on Intel), macOS 13 or later.
 - Xcode Command Line Tools (`xcode-select --install`): Swift, `codesign`, `make`, and `/usr/bin/python3` (Python 3.9),
   which is enough to start `./sp16` and which the app uses to import firmware.
 - Python 3.12 or later for the build tools (for example `brew install python@3.12`). `./sp16` finds it by
@@ -66,7 +72,7 @@ cd sp16-emulator
 
 The first build downloads and compiles QEMU and builds the guest base image with Docker: a few minutes on a recent
 Mac (about 2 minutes measured), longer while Docker first downloads the Debian packages. The result
-is `build/sp16/SP-16 Compatible Emulator.app`. Everything under `build/` is ignored by git and readable only by
+is `build/sp16/DJS1K Replicator.app`. Everything under `build/` is ignored by git and readable only by
 you; the build tool refuses any other place, and `./sp16` creates `build/` for you.
 
 Every later build (`--name` picks the folder, `./sp16 build --name second`) copies the verified QEMU from an
@@ -122,7 +128,7 @@ file, wrong key, not an update for this sampler, already imported) leave nothing
 ./sp16 run          # or: make run
 ```
 
-or open `build/sp16/SP-16 Compatible Emulator.app`. The first boot creates a 1 GB internal storage image for that
+or open `build/sp16/DJS1K Replicator.app`. The first boot creates a 1 GB internal storage image for that
 firmware; projects and settings persist there across launches. Close the window to stop the emulator. If you built
 under another name, `./sp16 run --name <name>` launches that one; if the build does not exist, the error says
 which `./sp16 build` command creates it.

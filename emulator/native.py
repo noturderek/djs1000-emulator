@@ -20,6 +20,7 @@ import urllib.request
 from prepare import private_path
 import diagnostics
 import firmware
+import hostarch
 import profiles
 
 TOOLS = Path(__file__).resolve().parent
@@ -40,14 +41,14 @@ OLD_ICON_NAME = "sp16-emulator"
 PROFILES = ("fullpanel",)
 # Decoupled builds (docs/architecture.md M7, design decision D4): neutral product name and bundle id, no vendor
 # logos, a project-made icon, the firmware library tool and third-party notices.
-DECOUPLED_APP_NAME = "SP-16 Compatible Emulator.app"
-DECOUPLED_PRODUCT = "SP-16 Compatible Emulator"
-DECOUPLED_EXECUTABLE = "SP16Emulator"
-DECOUPLED_BUNDLE_ID = "local.sp16-compatible.emulator"
+DECOUPLED_APP_NAME = "DJS1K Replicator.app"
+DECOUPLED_PRODUCT = "DJS1K Replicator"
+DECOUPLED_EXECUTABLE = "DJS1KReplicator"
+DECOUPLED_BUNDLE_ID = "local.djs1k-replicator"
 DECOUPLED_RESOURCES = ("panel-layout.json", "qemu_reaper.py")
 NEUTRAL_ICON = "assets/neutral-pads.svg"
-DECOUPLED_ICON_FILE = "sp16-compatible-emulator"
-FWLIB_FILES = ("firmware.py", "profiles.py", "recipes.py", "fwpack.py", "diagnostics.py")
+DECOUPLED_ICON_FILE = "djs1k-replicator"
+FWLIB_FILES = ("firmware.py", "profiles.py", "recipes.py", "fwpack.py", "diagnostics.py", "hostarch.py")
 
 # Optional per-task suffix (e.g. a task id) so a dev build gets its own bundle ID and quitting one app by ID
 # never quits another. Without it the bundle IDs are unchanged.
@@ -119,8 +120,8 @@ def apple_binutils_env():
 
 
 def host_check():
-    if platform.system() != "Darwin" or platform.machine() != "arm64":
-        raise ValueError("this native HVF build currently requires an Apple Silicon Mac")
+    """The guest for this Mac (hostarch.py): an aarch64 guest on Apple silicon, an x86_64 guest on Intel."""
+    return hostarch.current()
 
 
 def qemu_source_filter(member, path):
@@ -132,7 +133,8 @@ def qemu_source_filter(member, path):
         return None
 
 
-def build_qemu(output):
+def build_qemu(output, arch=None):
+    arch = arch or hostarch.current()
     archive = output / f"qemu-{QEMU_VERSION}.tar.xz"
     if not archive.exists():
         print("Downloading pinned official QEMU source…", flush=True)
@@ -155,7 +157,7 @@ def build_qemu(output):
     build = output / "qemu-build"
     build.mkdir(mode=0o700, exist_ok=True)
     if not (build / "build.ninja").exists():
-        flags = ["--target-list=aarch64-softmmu", "--enable-hvf", "--disable-pvg",
+        flags = [f"--target-list={arch['qemu_target']}", "--enable-hvf", "--disable-pvg",
                  "--disable-docs", "--disable-tools", "--disable-guest-agent", "--disable-cocoa",
                  "--disable-sdl", "--disable-gtk", "--disable-opengl", "--disable-vnc",
                  "--disable-slirp", "--disable-libssh", "--disable-gnutls", "--disable-nettle",
@@ -165,9 +167,26 @@ def build_qemu(output):
         run([str(build / "pyvenv/bin/meson"), "configure", "-Dpvg=disabled"], cwd=build,
             log=output / "qemu-configure-refresh.log")
     print("Building native QEMU with Hypervisor.framework…", flush=True)
-    run(["ninja", "-j", str(min(12, os.cpu_count() or 4)), "qemu-system-aarch64"],
+    run(["ninja", "-j", str(min(12, os.cpu_count() or 4)), arch["qemu_binary"]],
         cwd=build, log=output / "qemu-build.log")
-    return build / "qemu-system-aarch64"
+    stage_qemu_firmware(source / "pc-bios", build / arch["qemu_binary"], arch)
+    return build / arch["qemu_binary"]
+
+
+def stage_qemu_firmware(source, qemu, arch):
+    """Copy the guest's QEMU firmware files (hostarch.py; none on Apple silicon) from source into the folder the QEMU
+    binary at qemu is pointed at with -L."""
+    if not arch["firmware_files"]:
+        return
+    missing = [name for name in arch["firmware_files"] if not (Path(source) / name).is_file()]
+    if missing:
+        raise ValueError(f"QEMU firmware file {', '.join(missing)} is missing from {source}")
+    target = hostarch.firmware_dir(qemu)
+    if target.resolve() == Path(source).resolve():
+        return  # a rebuild in place reuses its own QEMU and firmware folder
+    target.mkdir(mode=0o700, exist_ok=True)
+    for name in arch["firmware_files"]:
+        shutil.copy2(Path(source) / name, target / name)
 
 
 def remove_guest_image(image):
@@ -180,7 +199,8 @@ def remove_guest_image(image):
               file=sys.stderr, flush=True)
 
 
-def build_guest(output):
+def build_guest(output, arch=None):
+    arch = arch or hostarch.current()
     print("Packaging offline Linux guest (Docker is build tooling only)…", flush=True)
     # No shared tag: --iidfile records this build's image ID, so parallel builds cannot
     # package each other's guest code.
@@ -189,6 +209,7 @@ def build_guest(output):
     image = None
     try:
         run(["docker", "build", "-f", str(TOOLS / "Dockerfile.native-base"),
+             "--platform", arch["docker_platform"], "--build-arg", f"KERNEL_PACKAGE={arch['kernel_package']}",
              "--iidfile", str(iidfile), str(TOOLS)], log=output / "guest-build.log")
         built = iidfile.read_text().strip()
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", built):
@@ -235,13 +256,16 @@ FIRMWARE_PLACEHOLDERS = ("@FWIMAGE@", "@FWSHA@", "@FWBYTES@", "@FWAPP@", "@FWBAS
 PADCAL_PATTERN = re.compile(r"default|off|[0-9]{1,5}")
 
 
-def arguments(qemu, guest, socket, trace=None, data=False, audio=None, firmware=False, padcal=None, app_arg=None):
+def arguments(qemu, guest, socket, trace=None, data=False, audio=None, firmware=False, padcal=None, app_arg=None,
+              arch=None):
+    arch = arch or hostarch.current()
+    blk, serial = hostarch.virtio("blk", arch), hostarch.virtio("serial", arch)
     if audio is not None and audio not in AUDIO_MODES:
         raise ValueError("unsupported audio mode")
     if trace is not None and trace not in TRACE_MODES:
         raise ValueError("unsupported trace mode")
     persistent = ["-drive", f"file={DATA_PLACEHOLDER},format=raw,if=none,id=sp16emmc",
-                  "-device", "virtio-blk-device,drive=sp16emmc,serial=sp16emmc",
+                  "-device", f"{blk},drive=sp16emmc,serial=sp16emmc",
                   "-chardev", f"socket,id=sp16ctl,path={socket}.ctl,server=on,wait=off",
                   "-device", "virtserialport,chardev=sp16ctl,name=sp16.ctl"] if data else []
     # Audio transport: a dedicated virtio-serial port carrying playback frames to the host file sink.
@@ -258,12 +282,12 @@ def arguments(qemu, guest, socket, trace=None, data=False, audio=None, firmware=
     if padcal is not None and (not firmware or not PADCAL_PATTERN.fullmatch(str(padcal))):
         raise ValueError("padcal is default, off or a number, for decoupled builds only")
     fw = ["-drive", "file=@FWIMAGE@,format=raw,if=none,id=sp16fw,readonly=on",
-          "-device", "virtio-blk-device,drive=sp16fw,serial=sp16fw"] if firmware else []
-    return ["-machine", "virt,gic-version=3", "-cpu", "host", "-accel", "hvf",
+          "-device", f"{blk},drive=sp16fw,serial=sp16fw"] if firmware else []
+    return [*hostarch.vm_arguments(arch, qemu),
             "-smp", "4", "-m", "4096", "-nodefaults", "-display", "none",
             "-monitor", "none", "-serial", "stdio", "-nic", "none", "-no-reboot",
             "-kernel", str(guest / "kernel"), "-initrd", str(guest / "guest.cpio.gz"),
-            "-append", "console=ttyAMA0 rdinit=/init panic=-1 oops=panic random.trust_cpu=on"
+            "-append", f"console={arch['console']} rdinit=/init panic=-1 oops=panic random.trust_cpu=on"
                        + (f" sp16.trace={trace}" if trace else "")
                        + (" sp16.data=1" if data else "")
                        + (" sp16.audio=file" if audio else "")
@@ -271,7 +295,7 @@ def arguments(qemu, guest, socket, trace=None, data=False, audio=None, firmware=
                           " sp16.fwver=@FWVER@ sp16.app_path=@FWAPPPATH@" if firmware else "")
                        + (f" sp16.padcal={padcal}" if firmware and padcal is not None else "")
                        + (f" sp16.app={app_arg}" if app_arg else ""),
-            "-device", "virtio-serial-device",
+            "-device", serial,
             "-chardev", f"socket,id=sp16,path={socket},server=on,wait=off",
             "-device", "virtserialport,chardev=sp16,name=sp16.ui", *fw, *persistent, *pcm, *gdb]
 
@@ -289,19 +313,21 @@ def third_party_notices(guest):
     copyright files collected by pack-guest.sh) and how to obtain their sources."""
     packages = (guest / "third-party-packages.txt").read_text() if (guest / "third-party-packages.txt").exists() else ""
     kernel = next((line.split()[1] for line in packages.splitlines() if line.startswith("linux-image-")), "unknown")
+    arch = hostarch.current()
+    debian_arch = arch["kernel_package"].rsplit("-", 1)[1]
     return f"""# Third-party notices
 
 {DECOUPLED_PRODUCT} contains no firmware, firmware-derived files or key material. The user imports their own update.
 
 ## QEMU {QEMU_VERSION}
 
-`qemu-system-aarch64`, built from the official source archive `https://download.qemu.org/qemu-{QEMU_VERSION}.tar.xz`
+`{arch["qemu_binary"]}`, built from the official source archive `https://download.qemu.org/qemu-{QEMU_VERSION}.tar.xz`
 (SHA-256 `{QEMU_ARCHIVE_SHA256}`) with Hypervisor.framework support. QEMU is licensed under the GNU General Public
 License version 2; see `COPYING` in that archive. The configure options are recorded in `native.py` (`build_qemu`).
 
-## Guest base image (Debian 12 "bookworm", arm64)
+## Guest base image (Debian 12 "bookworm", {debian_arch})
 
-The guest kernel (Debian `linux-image-arm64`, kernel package {kernel}) and initramfs are built from Debian packages
+The guest kernel (Debian `{arch["kernel_package"]}`, kernel package {kernel}) and initramfs are built from Debian packages
 plus this project's own scripts and hardware shim. `ThirdParty/packages.txt` lists every package with its version and
 source package; `ThirdParty/copyright.txt` holds each package's copyright and licence file. The corresponding sources
 are the Debian source packages of those exact versions (`https://snapshot.debian.org/`, `apt-get source`).
@@ -342,6 +368,9 @@ def bundle(output, qemu, guest, variant="stock", profile=None, research=False, t
         log=output / "swift-build.log")
     for name in DECOUPLED_RESOURCES:
         shutil.copy2(TOOLS / name, resources / Path(name).name)
+    # Per-firmware panel layouts (panel-layout-<profile id>.json); the app picks the one for the booted profile.
+    for source in sorted(TOOLS.glob("panel-layout-*.json")):
+        shutil.copy2(source, resources / source.name)
     # The app checks the selected firmware against these profiles before boot (D2); the firmware library tool
     # (import screen, library window) is the same code as `native.py firmware`.
     fwlib = resources / "fwlib"
@@ -452,7 +481,7 @@ def build(output, *, reuse_qemu_from=None, profile="fullpanel", research=False, 
         raise ValueError("--uncalibrated and --pad-calibration-value are mutually exclusive")
     # The range and format are the active firmware profile's; the guest validates the value at boot.
     padcal = "off" if uncalibrated else ("default" if pad_calibration is None else str(int(pad_calibration)))
-    host_check()
+    arch = host_check()
     output = private_path(output, fresh=not Path(output).exists())
     if (output / "assets.json").exists():
         previous = json.loads((output / "assets.json").read_text())
@@ -468,14 +497,15 @@ def build(output, *, reuse_qemu_from=None, profile="fullpanel", research=False, 
         previous = validated_assets(private_path(reuse_qemu_from))
         if previous.get("qemu_version") != QEMU_VERSION:
             raise ValueError("reused QEMU must match the pinned version")
-        qemu = output / "qemu-system-aarch64"
+        qemu = output / arch["qemu_binary"]
         if Path(previous["qemu"]).resolve() != qemu.resolve():
             shutil.copy2(previous["qemu"], qemu)
         if digest(qemu) != previous["hashes"][previous["qemu"]]:
             raise ValueError("reused QEMU copy differs")
+        stage_qemu_firmware(hostarch.firmware_dir(previous["qemu"]), qemu, arch)
     else:
-        qemu = build_qemu(output)
-    guest = build_guest(output)
+        qemu = build_qemu(output, arch)
+    guest = build_guest(output, arch)
     app = bundle(output, qemu, guest, "stock", profile, research, trace, bundle_suffix, True, audio, audio_device,
                  library=library, padcal=padcal, app_arg=app_arg)
     assets = {"decoupled": True, "firmware": None, "qemu_version": QEMU_VERSION,
@@ -530,12 +560,14 @@ def dev_overlay_path(folder):
 
 
 def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overlay=None, no_ui_input=False,
-           no_audio_files=False):
+           no_audio_files=False, testmode=False):
     host_check()
     output = private_path(output)
     assets = validated_assets(output)
     if dev_overlay is not None and not (assets.get("decoupled") is True and assets.get("research")):
         raise ValueError("--dev-overlay needs a decoupled research build")
+    if testmode and not (assets.get("decoupled") is True and assets.get("research")):
+        raise ValueError("--testmode needs a decoupled research build")
     if firmware_id is not None:
         if assets.get("decoupled") is not True:
             raise ValueError("--firmware applies to decoupled builds only")
@@ -555,7 +587,8 @@ def launch(output, ephemeral=False, usb_image=None, firmware_id=None, dev_overla
     app_args = (["--ephemeral"] if ephemeral else []) + (["--usb-image", prepare_usb_image(usb_image)] if usb_image else []) \
         + (["--firmware", firmware_id] if firmware_id else []) \
         + (["--dev-overlay", dev_overlay_path(dev_overlay)] if dev_overlay else []) \
-        + (["--no-ui-input"] if no_ui_input else []) + (["--no-audio-files"] if no_audio_files else [])
+        + (["--no-ui-input"] if no_ui_input else []) + (["--no-audio-files"] if no_audio_files else []) \
+        + (["--testmode"] if testmode else [])
     run(["open", "-n", *(["-g"] if no_ui_input else []), assets["app_bundle"], *(["--args", *app_args] if app_args else [])])
     print(json.dumps({"status": "native_app_opened", "app": assets["app_bundle"],
                       "diagnostics": str(output / "sessions"), "runtime_requires_docker": False}))
@@ -698,6 +731,9 @@ def main():
     launcher.add_argument("--no-audio-files", action="store_true",
                           help="audio builds: the sink keeps reading and counting the guest's PCM (metrics) but "
                                "writes no WAV into the session folder")
+    launcher.add_argument("--testmode", action="store_true",
+                          help="decoupled research builds: start the firmware's factory test UI (its testmode "
+                               "argument, when the firmware profile allows it)")
     fw = commands.add_parser("firmware", help="decoupled builds: import, list, check and manage user-supplied firmware")
     fw.add_argument("action", choices=("import", "list", "show", "check", "rename", "remove", "select", "audit",
                                        "profile"))
@@ -732,7 +768,7 @@ def main():
             return diagnostics_command(args)
         else:
             launch(args.output, args.ephemeral, args.usb_image, args.firmware, args.dev_overlay, args.no_ui_input,
-                   args.no_audio_files)
+                   args.no_audio_files, args.testmode)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         parser.exit(1, f"native emulator failed: {exc}\n")
 

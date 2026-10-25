@@ -559,6 +559,8 @@ class MapTests(unittest.TestCase):
         by_id = {c["id"]: c for c in layout["controls"]}
         self.assertEqual(len(by_id), len(layout["controls"]))
         for control_id, name in panel_map.CONTROL_NAMES.items():
+            if control_id >= 90:
+                continue  # DJS-1000 controls: panel-layout-djs-1.22.json (test_sp16_djs_layout.py)
             self.assertEqual(by_id[control_id]["name"], name)
         fb = layout["lcd"]["framebuffer"]
         active = layout["lcd"]["active"]

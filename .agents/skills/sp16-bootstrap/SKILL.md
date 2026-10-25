@@ -45,7 +45,7 @@ It prints `FAIL` lines with a `fix:` each. Walk the user through the ones you ca
 | Python 3.12 or later | `brew install python@3.12` (needs Homebrew, <https://brew.sh>) |
 | QEMU build tools | `brew install ninja pkgconf glib pixman` |
 | Docker running | start Docker Desktop or OrbStack and wait until it says it is running (every build needs it; the emulator itself runs without it) |
-| Apple silicon, macOS 13+ | cannot be fixed; the emulator does not run on Intel Macs |
+| Supported Mac (Apple silicon or Intel), macOS 13+ | cannot be fixed on other systems; on Apple silicon open a native terminal, not one under Rosetta |
 
 Run `./sp16 doctor` again until it prints `Ready.`.
 

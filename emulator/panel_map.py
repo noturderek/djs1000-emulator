@@ -25,6 +25,9 @@ Wire format (the panel MCU's 128-byte frames; offsets are frame bytes):
      k -> bytes 0x31+3k (k = 0..15); 35 mono lamp channels bit-packed into bytes 0x61..0x65, most with a
      second flag in 0x69..0x6b; extra flags at 0x66, 0x67, 0x68 (bit 0) and a 1..4 level at 0x6e.
      Channel -> physical lamp assignments are recorded below only when observed.
+  E15 DJS-1000 1.22 (EP113): same header, marker, CRC and RGB channels, but the single-colour lamps are 2-bit
+     fields, four per byte from bit 0, in bytes 0x61..0x6b ("pair" channel = 4 x (byte - 0x61) + field):
+     00 off, 01 full, 11 dim (the idle pad-mode keys); 10 was never seen. The level byte is 0x6d.
 
 Per-version measurements (lamp roles, pad curve limits, the selector window) live in the firmware's compatibility
 profile (profiles/<id>.json, docs/architecture.md M1). SP16_PROFILE selects it; the default is the 1.60 profile.
@@ -46,6 +49,10 @@ CONTROL_NAMES = {
     53: "selector", 54: "back", 55: "home", 56: "mode", 57: "hold", 58: "strip",
     59: "usb_stop", 60: "active",
     61: "main_out", 62: "drive", 63: "lp_cutoff", 64: "lp_resonance", 65: "hp_cutoff",
+    # DJS-1000 controls (panel-layout-djs-1.22.json); each works only where the firmware profile gives it a role.
+    90: "hot_slice", 91: "project", 92: "sampling", 93: "fx_select", 94: "fx_on_off", 95: "nudge_minus",
+    96: "nudge_plus", 97: "tempo_reset", 98: "tempo_range", 99: "sync", 100: "sync_master",
+    101: "fx_level_depth", 102: "headphone_level", 103: "input_level", 104: "tempo_slider",
 }
 # Controls with no place in the panel layout (driven through the research socket): POWER/STANDBY is the M1 key that M2
 # relays as RX bit (5,4) (service manual key matrix; the app's PowerManager handles button object 14); INPUT LEVEL is
@@ -62,9 +69,12 @@ HOST_ANALOG = ("main_out", "input_level", "lp_cutoff", "lp_resonance", "input_to
 INPUT_TONE_HZ = 1000
 
 FRAME_BYTES = 128
-PAD_A_OFFSET, PAD_B_OFFSET = 0x06, 0x3f
-KNOB_COUNTERS = tuple(0x30 + 2 * i for i in range(6))
-SELECTOR_COUNTER = 0x3c
+# Byte order of the RX frame's 16-bit fields and the pad word offsets, from the profile (panel.word_order,
+# panel.pad_words; the 1.60 values when absent). E1 1.60: big-endian, pads at 0x06/0x3f. The DJS-1000 1.22 panel
+# (EP113) uses the same frame and CRC with little-endian fields and pads at 0x16/0x36.
+WORD = "<H" if PROFILE["panel"].get("word_order") == "little" else ">H"
+_PAD_WORDS = PROFILE["panel"].get("pad_words") or {"a": 0x06, "b": 0x3f}
+PAD_A_OFFSET, PAD_B_OFFSET = _PAD_WORDS["a"], _PAD_WORDS["b"]
 
 # E2: button object index -> (frame byte, bit). Dispatch order, not physical order.
 BUTTON_OBJECTS = (
@@ -89,7 +99,12 @@ SELECTOR_PUSH = BUTTON_BITS.get("selector")
 # E11: analog pots with a firmware ADC field (PAGE 5 AD TEST): name -> (frame offset, inverted), from the profile
 # (panel.analog). 1.60: MASTER reads the word directly; DSF DRIVE and DSF HIGHPASS read 1023 minus the word. LP CUTOFF
 # and RESONANCE have no field (pure analog hardware) and stay stubs. 10-bit full scale = 1023.
-ANALOG_WORDS = {name: (offset, inverted) for name, (offset, inverted) in PROFILE["panel"]["analog_words"].items()}
+# An optional third element [offset, word] is a fixed reference word sent next to the pot (DJS tempo slider: wiper B at
+# 0x58, the zero-point word A at 0x56). The DJS reads the slider relative to A, each half scaled to the end
+# stop: (B - A) / (1023 - A) x range above A, (B - A) / A x range below (raw-word sweep, 2026-10-18). A = 512 puts
+# the centre at host value 500.
+ANALOG_WORDS = {name: tuple(value[:2]) for name, value in PROFILE["panel"]["analog_words"].items()}
+ANALOG_REFERENCE = {name: tuple(value[2]) for name, value in PROFILE["panel"]["analog_words"].items() if len(value) > 2}
 ANALOG_FULL_SCALE = 1023
 # Where each analog knob starts, host value 0..1000 (the panel view starts its knobs from the same numbers: "initial" in
 # panel-layout.json, checked by a test). DRIVE, RESONANCE and HP CUTOFF at minimum with LP CUTOFF at maximum is the
@@ -108,8 +123,12 @@ START_OFF = ("active",)
 # (panel.counters). 1.60: E9 in the Utility list a counter increase moves the highlight down (next), so host +1 = next
 # = counter +1; E8 counter +N is shown as encoder +N.
 COUNTERS = {name: (offset, sign) for name, (offset, sign) in PROFILE["panel"]["counters"].items()}
+KNOB_COUNTERS = tuple(COUNTERS[f"knob{i}"][0] for i in range(1, 7) if f"knob{i}" in COUNTERS)
+SELECTOR_COUNTER = COUNTERS["selector"][0] if "selector" in COUNTERS else None
 
-TX_LENGTH, TX_HEADER, TX_MARKER_OFFSET, TX_MARKER = 128, 2, 0x77, 0xaa
+TX_LENGTH, TX_HEADER, TX_MARKER_OFFSET = 128, 2, 0x77
+# E4: 1.60 frames carry 0xaa at 0x77; the DJS-1000 1.22 frames do not (panel.tx_marker null).
+TX_MARKER = PROFILE["panel"].get("tx_marker", 0xaa)
 
 # E7: RGB lamp channel -> first of three consecutive bytes in the TX frame.
 RGB_CHANNELS = {**{0x10 + k: 1 + 3 * k for k in range(16)}, **{k: 0x31 + 3 * k for k in range(16)}}
@@ -128,14 +147,25 @@ MONO_CHANNELS = {
 }
 
 
+# E15: 2-bit lamp fields (DJS-1000): channel -> (byte, shift); 44 channels in bytes 0x61..0x6b.
+PAIR_BASE = 0x61
+PAIR_CHANNELS = {ch: (PAIR_BASE + ch // 4, 2 * (ch % 4)) for ch in range(44)}
+# E12/E15: the PAD/BUTTON BRIGHTNESS level byte (1.60: 0x6e), from the profile (panel.tx_level_offset).
+TX_LEVEL_OFFSET = PROFILE["panel"].get("tx_level_offset", 0x6e)
+
+
 def decode_tx(frame):
-    """E7: a complete OEM TX frame -> raw lamp channel state, or None if it is not one."""
-    if len(frame) != TX_LENGTH or frame[0] != TX_HEADER or frame[TX_MARKER_OFFSET] != TX_MARKER:
+    """E7: a complete OEM TX frame -> raw lamp channel state, or None if it is not one.
+
+    "pair" (E15) gives each 2-bit field as (lit, dim) like "mono": 01 -> (1, 0), 11 or 10 -> (1, 1)."""
+    if (len(frame) != TX_LENGTH or frame[0] != TX_HEADER
+            or (TX_MARKER is not None and frame[TX_MARKER_OFFSET] != TX_MARKER)):
         return None
     rgb = {ch: tuple(frame[off:off + 3]) for ch, off in RGB_CHANNELS.items()}
     mono = {ch: (frame[b] >> bit & 1, None if second is None else frame[second] >> bit & 1)
             for ch, (b, bit, second) in MONO_CHANNELS.items()}
-    return {"rgb": rgb, "mono": mono, "level": frame[0x6e],
+    pair = {ch: (int(frame[b] >> shift & 3 != 0), frame[b] >> shift >> 1 & 1) for ch, (b, shift) in PAIR_CHANNELS.items()}
+    return {"rgb": rgb, "mono": mono, "pair": pair, "level": frame[TX_LEVEL_OFFSET],
             "extra": (frame[0x66] & 1, frame[0x67] & 1, frame[0x68] & 1)}
 
 
@@ -164,8 +194,12 @@ MONO_COLORS = {"over_led": (255, 40, 40), "rec": (255, 40, 40), "active": (255, 
                "lamp_user1": (150, 255, 90), "lamp_user2": (150, 255, 90),
                **{f"bar_led{i}": (60, 255, 90) for i in range(1, 5)},
                **{f"bar{i}": (70, 140, 255) for i in range(1, 5)},
-               **{f"strip_led{i}": (70, 130, 255) for i in range(1, 9)}}
+               **{f"strip_led{i}": (70, 130, 255) for i in range(1, 9)},
+               # optional per-firmware presentation colours (panel.lamp_colors)
+               **{role: tuple(rgb) for role, rgb in (PROFILE["panel"].get("lamp_colors") or {}).items()}}
 DIM = 0.35
+# Roles whose dim code reads as dark on the unit (panel.lamp_dim_off; DJS USB ring: 11 after USB STOP, seen dark).
+DIM_OFF = frozenset(PROFILE["panel"].get("lamp_dim_off") or ())
 # E12: TX byte 0x6e is the PAD/BUTTON BRIGHTNESS level (Utility: NORMAL = 4, DIMMED 1..3 = 3..1).
 # The firmware already scales the RGB lamp bytes with it (step lamp 0x4a/0x25/0x18/0x12 at levels
 # 4..1); mono lamp bits carry no level, so the host scales those by level/4. Other values
@@ -221,8 +255,8 @@ def decode_lamps(frame):
         if kind == "rgb":
             lamps[ids[role]] = tuple(min(255, v * 255 // RGB_FULL) for v in raw["rgb"][channel])
             continue
-        lit, flag = raw["mono"][channel]
+        lit, flag = raw[kind][channel]
         base = MONO_COLORS.get(role, (255, 255, 255))
-        scale = 0.0 if not lit else (DIM if flag else 1.0) * level
+        scale = 0.0 if not lit or (flag and role in DIM_OFF) else (DIM if flag else 1.0) * level
         lamps[ids[role]] = tuple(round(c * scale) for c in base)
     return lamps

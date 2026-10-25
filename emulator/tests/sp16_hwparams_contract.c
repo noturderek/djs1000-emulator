@@ -22,6 +22,11 @@ static uintptr_t sentinels[4];
 static int stored_access, stored_format, stored_dir;
 static unsigned stored_channels, stored_rate, stored_periods;
 static snd_pcm_uframes_t stored_period, stored_buffer;
+static unsigned stored_channels_max;
+unsigned sp16_fake_channels_max(void) { return stored_channels_max; }
+int snd_pcm_hw_params_any(snd_pcm_t *p,snd_pcm_hw_params_t *q) { (void)p; (void)q; stored_channels_max=0; return 0; }
+int snd_pcm_hw_params_set_channels_max(snd_pcm_t *p,snd_pcm_hw_params_t *q,unsigned *c) {
+    (void)p; (void)q; stored_channels_max=*c; return 0; }
 int snd_pcm_open(snd_pcm_t **out,const char *name,int stream,int mode) {
     (void)stream; (void)mode;
     assert(!strcmp(name,"null") || !strcmp(name,"unmodeled"));
@@ -58,6 +63,8 @@ IO(snd_pcm_writen,void **)
 #else
 int snd_pcm_open(snd_pcm_t **,const char *,int,int);
 int snd_pcm_close(snd_pcm_t *);
+int snd_pcm_hw_params_any(snd_pcm_t *,snd_pcm_hw_params_t *);
+unsigned sp16_fake_channels_max(void);
 int snd_pcm_hw_params_set_access(snd_pcm_t *,snd_pcm_hw_params_t *,int);
 int snd_pcm_hw_params_set_format(snd_pcm_t *,snd_pcm_hw_params_t *,int);
 int snd_pcm_hw_params_set_channels(snd_pcm_t *,snd_pcm_hw_params_t *,unsigned);
@@ -75,6 +82,9 @@ int main(void) {
     unsigned rate=44100, periods=4; int dir=0;
     snd_pcm_uframes_t period=512, size=2048;
     assert(snd_pcm_open(&handle,"hw:ak4452audio,1",0,0)==0);
+    /* The configuration space is limited to the codec's channel ceiling: an AK4452 link is stereo. */
+    assert(snd_pcm_hw_params_any(handle,p)==0);
+    assert(sp16_fake_channels_max()==2);
     /* Every setter must return the real result (0) and keep the handle usable. */
     assert(snd_pcm_hw_params_set_access(handle,p,3)==0);
     assert(snd_pcm_hw_params_set_format(handle,p,2)==0);

@@ -288,6 +288,23 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(firmware.FirmwareError, "already in the library"):
             self.import_synthetic()
 
+    def test_djs_application_imports_as_the_djs1000_product(self):
+        def factory(meta, image):
+            manifest = guest_manifest(app_sha="f" * 64, version=meta["trailer_version"], crc=meta["crc32"], image=image)
+            manifest["app_path"] = "/root/pdj/EP113_Main_R"
+            manifest["files"] = {"/root/pdj/EP113_Main_R": manifest["files"].pop("/root/pdj/EP085_Main_R")}
+            return manifest
+        (entry_id, report), _ = self.import_synthetic(factory, version=b"1.22")
+        self.assertRegex(entry_id, r"^djs-1\.22-[0-9a-f]{12}$")
+        self.assertEqual(self.library.manifest(entry_id)["product"], "djs1000")
+        self.assertEqual(json.loads((self.library.entry_dir(entry_id) / "entry.json").read_text())["name"],
+                         "DJS-1000 1.22")
+        self.assertEqual(report["profile"], "djs-1.22")
+        broken = copy.deepcopy(self.library.manifest(entry_id))
+        broken["product"] = "cdj3000"
+        with self.assertRaisesRegex(firmware.FirmwareError, "product"):
+            firmware.validate_manifest(broken)
+
     def test_unknown_application_imports_and_boots_marked_unverified(self):
         (entry_id, report), _ = self.import_synthetic(
             lambda meta, image: guest_manifest(app_sha="e" * 64, version=meta["trailer_version"], crc=meta["crc32"],

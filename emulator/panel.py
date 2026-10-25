@@ -165,9 +165,11 @@ class PanelModel:
         offset, inverted = panel_map.ANALOG_WORDS[name]
         word = round(value * panel_map.ANALOG_FULL_SCALE / 1000)
         self._set_word(offset, panel_map.ANALOG_FULL_SCALE - word if inverted else word)
+        if name in panel_map.ANALOG_REFERENCE:
+            self._set_word(*panel_map.ANALOG_REFERENCE[name])
 
     def _set_word(self, offset, value):
-        struct.pack_into(">H", self.raw, offset, value & 0xffff)
+        struct.pack_into(panel_map.WORD, self.raw, offset, value & 0xffff)
 
     def apply(self, control, action, value=0):
         name = panel_map.ALL_CONTROL_NAMES.get(control)
@@ -318,7 +320,7 @@ class PanelModel:
                         continue
                     self.cooldown = self.SELECTOR_WINDOW_FRAMES
                 direction = 1 if remaining > 0 else -1
-                current = struct.unpack_from(">H", self.raw, offset)[0]
+                current = struct.unpack_from(panel_map.WORD, self.raw, offset)[0]
                 self._set_word(offset, current + direction)
                 if remaining == direction:
                     del self.pending[offset]
@@ -346,9 +348,9 @@ class PanelModel:
             frame = bytearray(self.raw)
             for offset, byte in self.overrides.items():
                 frame[offset] = byte
-        words = {name: struct.unpack_from(">H", frame, off)[0]
+        words = {name: struct.unpack_from(panel_map.WORD, frame, off)[0]
                  for name, (off, _) in panel_map.ANALOG_WORDS.items()}
-        words.update({f"0x{off:02x}": struct.unpack_from(">H", frame, off)[0]
+        words.update({f"0x{off:02x}": struct.unpack_from(panel_map.WORD, frame, off)[0]
                       for off in (0x26, 0x28, 0x2a)})
         return words
 
@@ -360,7 +362,7 @@ class PanelModel:
             for offset, byte in self.overrides.items():
                 frame[offset] = byte
         pads = [index + 1 for index in range(16)
-                if struct.unpack_from(">H", frame, panel_map.PAD_A_OFFSET + 2 * index)[0]]
+                if struct.unpack_from(panel_map.WORD, frame, panel_map.PAD_A_OFFSET + 2 * index)[0]]
         return {"buttons": frame[1:6].hex(), "pads": pads}
 
     def release_all(self):

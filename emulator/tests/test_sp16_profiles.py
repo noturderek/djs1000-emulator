@@ -153,6 +153,45 @@ class VersionDataTests(unittest.TestCase):
         self.assertEqual(profile["firmware"]["panel_revisions"]["subucom1"], "Rev.5000")
         self.assertEqual(profile["panel"], profiles.legacy()["panel"])
 
+    def test_application_family_picks_reference_and_ids(self):
+        # A DJS-1000 version without a profile of its own starts from the DJS measurements, not the SP-16's, and
+        # gets a djs- id; the SP-16 (and an application the product does not list) keeps the sp16 reference.
+        djs, sp16 = profiles.family("/root/pdj/EP113_Main_R"), profiles.family("/root/pdj/EP085_Main_R")
+        self.assertEqual((djs["prefix"], djs["name"], djs["reference_profile"]), ("djs", "DJS-1000", "djs-1.22"))
+        self.assertEqual((sp16["prefix"], sp16["reference_profile"]), ("sp16", "sp16-1.60"))
+        self.assertEqual(profiles.family("/root/pdj/Other")["reference_profile"], "sp16-1.60")
+        self.assertEqual(profiles.family()["prefix"], "sp16")
+        how, profile = profiles.active("e" * 64, app_path="/root/pdj/EP113_Main_R")
+        self.assertEqual((how, profile["id"]), ("reference", "djs-1.22"))
+        self.assertEqual(profiles.active("e" * 64, app_path="/root/pdj/EP085_Main_R")[1]["id"], "sp16-1.60")
+        manifest = {"update": {"trailer_version": "1.10", "sha256": "1" * 64, "revisions": {}},
+                    "app_path": "/root/pdj/EP113_Main_R", "app_sha256": "3" * 64}
+        candidate = firmware.candidate_profile(manifest)
+        self.assertEqual((candidate["id"], candidate["derived_from"]), ("djs-1.10", "djs-1.22"))
+        self.assertEqual(candidate["panel"], profiles.load("djs-1.22")["panel"])
+        # Every family's reference profile exists, runs the family's application and names the family's product.
+        for app, fam in profiles.product()["app_families"].items():
+            self.assertEqual(profiles.load(fam["reference_profile"])["firmware"]["app_path"], app)
+            self.assertEqual(profiles.load(fam["reference_profile"])["product"], fam["product"])
+
+    def test_one_update_format_serves_two_products(self):
+        # The DJS-1000's application is its own product; an unlisted application is the descriptor's.
+        self.assertEqual(profiles.family("/root/pdj/EP113_Main_R")["product"], "djs1000")
+        self.assertEqual(profiles.family("/root/pdj/EP085_Main_R")["product"], "sp16")
+        self.assertEqual(profiles.family("/root/pdj/Other")["product"], "sp16")
+        self.assertEqual(profiles.products(), {"sp16", "djs1000"})
+
+    def test_product_descriptor_rejects_bad_families(self):
+        for field, value in (("prefix", "../djs"), ("product", "DJS 1000")):
+            with tempfile.TemporaryDirectory() as folder:
+                shutil.copytree(TOOLS / "profiles/products", Path(folder) / "products")
+                path = Path(folder) / "products/sp16.json"
+                data = json.loads(path.read_text())
+                data["app_families"]["/root/pdj/EP113_Main_R"][field] = value
+                path.write_text(json.dumps(data))
+                with self.assertRaises(ValueError):
+                    profiles.product(directory=folder)
+
     def test_shipped_profiles_keep_runtime_data_only(self):
         shipped = native.shipped_profile(profiles.legacy())
         self.assertEqual(set(shipped), set(profiles.RUNTIME_FIELDS))
@@ -225,6 +264,7 @@ class ProfileValidationTests(unittest.TestCase):
         self.check_invalid(lambda p: p["panel"]["lamp_roles"].update(track=["mono", 35]))
         self.check_invalid(lambda p: p["panel"]["lamp_roles"].update(track=["rgb", 32]))
         self.check_invalid(lambda p: p["panel"]["pad_curve"].update(a_min=900))
+        self.check_invalid(lambda p: p["panel"]["pad_curve"].update(a_min=p["panel"]["pad_curve"]["hit_threshold"]))
         self.check_invalid(lambda p: p["panel"]["button_roles"].update(track=[0, 9]))
         self.check_invalid(lambda p: p["panel"]["counters"].update(knob1=[60, 2]))
         self.check_invalid(lambda p: p["runtime"].update(cwd="/root/../tmp"))

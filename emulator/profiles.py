@@ -12,7 +12,9 @@ run is marked unverified.
 
 A product descriptor (profiles/products/<product>.json) holds what is common to a product's updates: layer layout,
 application and loader candidates, the stock trailer marker and the reference profile used before a version has its
-own. The schema is documented in docs/profiles.md.
+own. Updates of one container format can carry different applications (the SP-16's EP085_Main_R, the DJS-1000's
+EP113_Main_R); `app_families` gives each application its own id prefix, display name and reference profile, so a new
+DJS version starts from the DJS measurements, not the SP-16's. The schema is documented in docs/profiles.md.
 """
 import json
 from pathlib import Path
@@ -29,7 +31,7 @@ SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 VERSION_PATTERN = re.compile(r"[0-9]\.[0-9]{2}")
 GUEST_PATH = re.compile(r"/(?:[A-Za-z0-9._-]+/?)*")
 TOKEN = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
-LAMP_KINDS = {"mono": range(0, 35), "rgb": range(0, 32)}
+LAMP_KINDS = {"mono": range(0, 35), "rgb": range(0, 32), "pair": range(0, 44)}
 FRAME_BYTES = 128
 
 # Hardware-suite fields at the top level of a profile and their JSON container types (the names the suite uses;
@@ -91,6 +93,7 @@ def validate(profile):
     _require(isinstance(pad, dict) and all(isinstance(pad.get(k), int) for k in ("a_min", "a_max", "b_contact")),
              "pad_curve")
     _require(0 < pad["a_min"] < pad["a_max"] <= 0xffff and 0 < pad["b_contact"] <= 0xffff, "pad limits")
+    _require(pad.get("hit_threshold", 0) < pad["a_min"], "pad_curve a_min must register above hit_threshold")
     buttons = panel.get("button_roles")
     _require(isinstance(buttons, dict) and buttons, "button_roles")
     for name, value in buttons.items():
@@ -101,24 +104,43 @@ def validate(profile):
     for name, value in counters.items():
         _require(isinstance(value, list) and len(value) == 2 and isinstance(value[0], int)
                  and 0 < value[0] < FRAME_BYTES - 1 and value[1] in (1, -1), f"counter {name!r}")
+    _require(panel.get("word_order", "big") in ("big", "little"), "word_order")
+    pad_words = panel.get("pad_words")
+    _require(pad_words is None or (isinstance(pad_words, dict) and set(pad_words) == {"a", "b"}
+                                   and all(isinstance(v, int) and 0 < v and v + 32 <= FRAME_BYTES - 4
+                                           for v in pad_words.values())), "pad_words")
     analog = panel.get("analog_words")
     _require(isinstance(analog, dict), "analog_words")
     for name, value in analog.items():
-        _require(isinstance(value, list) and len(value) == 2 and isinstance(value[0], int)
-                 and 0 < value[0] < FRAME_BYTES - 1 and isinstance(value[1], bool), f"analog {name!r}")
+        _require(isinstance(value, list) and len(value) in (2, 3) and isinstance(value[0], int)
+                 and 0 < value[0] < FRAME_BYTES - 1 and isinstance(value[1], bool)
+                 and (len(value) == 2 or (isinstance(value[2], list) and len(value[2]) == 2
+                                          and all(isinstance(v, int) for v in value[2])
+                                          and 0 < value[2][0] < FRAME_BYTES - 1 and value[2][0] != value[0]
+                                          and 0 <= value[2][1] <= 1023)), f"analog {name!r}")
     roles = panel.get("lamp_roles")
     _require(isinstance(roles, dict) and roles, "lamp_roles")
     for role, value in roles.items():
         _require(isinstance(role, str) and isinstance(value, list) and len(value) == 2
                  and value[0] in LAMP_KINDS and isinstance(value[1], int) and value[1] in LAMP_KINDS[value[0]],
                  f"lamp role {role!r}")
+    colors = panel.get("lamp_colors") or {}
+    _require(isinstance(colors, dict) and all(isinstance(v, list) and len(v) == 3
+                                              and all(isinstance(c, int) and 0 <= c <= 255 for c in v)
+                                              for v in colors.values()), "lamp_colors")
+    dim_off = panel.get("lamp_dim_off") or []
+    _require(isinstance(dim_off, list) and all(role in roles for role in dim_off), "lamp_dim_off")
+    marker = panel.get("tx_marker", 0xaa)
+    _require(marker is None or (isinstance(marker, int) and 0 <= marker <= 255), "tx_marker")
+    level = panel.get("tx_level_offset", 0x6e)
+    _require(isinstance(level, int) and 0 < level < FRAME_BYTES - 4, "tx_level_offset")
     calibration = profile.get("calibration")
     _require(isinstance(calibration, dict) and isinstance(calibration.get("range"), list)
              and len(calibration["range"]) == 2 and isinstance(calibration.get("default"), int)
              and calibration["range"][0] <= calibration["default"] <= calibration["range"][1], "calibration")
     _require(guest_path(calibration.get("path")), "calibration.path")
     _require(isinstance(calibration.get("template"), str) and "{attributes}" in calibration["template"]
-             and isinstance(calibration.get("attribute"), str) and "{n}" in calibration["attribute"]
+             and isinstance(calibration.get("attribute"), str) and re.search(r"\{n(:[0-9d]*)?\}", calibration["attribute"])
              and "{value}" in calibration["attribute"] and isinstance(calibration.get("pads"), int)
              and 1 <= calibration["pads"] <= 64, "calibration template")
     _require(isinstance(calibration.get("markers", []), list), "calibration.markers")
@@ -185,21 +207,44 @@ def product(name=PRODUCT, directory=None):
           and update.get("tar_layers") and all(guest_path(p) for p in data.get("app_candidates") or [None])
           and all(guest_path(p) for p in data.get("loader_candidates") or [None])
           and all(guest_path(p) for p in update.get("mount_points", []))
-          and ID_PATTERN.fullmatch(str(data.get("reference_profile"))))
+          and ID_PATTERN.fullmatch(str(data.get("reference_profile")))
+          and isinstance(data.get("app_families", {}), dict)
+          and all(guest_path(app) and isinstance(f, dict) and TOKEN.fullmatch(str(f.get("prefix")))
+                  and TOKEN.fullmatch(str(f.get("product", data.get("product"))))
+                  and isinstance(f.get("name"), str) and 0 < len(f["name"]) <= 40
+                  and ID_PATTERN.fullmatch(str(f.get("reference_profile")))
+                  for app, f in data.get("app_families", {}).items()))
     if not ok:
         raise ValueError("invalid product descriptor")
     return data
 
 
-def active(app_sha256, allow_unverified=True, directory=None):
+def family(app_path=None, directory=None):
+    """The application family of an update: {"product", "prefix", "name", "reference_profile"}. One update format
+    serves several products (the SP-16's EP085 and the DJS-1000's EP113); the application decides which. An
+    application the descriptor does not list (or none given) is the descriptor's own product."""
+    data = product(directory=directory)
+    default = {"product": data["product"], "prefix": data["product"], "name": data.get("name", data["product"]),
+               "reference_profile": data["reference_profile"]}
+    return {"product": data["product"], **(data.get("app_families") or {}).get(app_path, default)}
+
+
+def products(directory=None):
+    """Every product an imported firmware can belong to: the descriptor's own and its application families'."""
+    data = product(directory=directory)
+    return {data["product"]} | {f.get("product", data["product"]) for f in (data.get("app_families") or {}).values()}
+
+
+def active(app_sha256, allow_unverified=True, directory=None, app_path=None):
     """The profile a boot uses and how it was chosen: ("verified"|"candidate"|"reference", profile). Every firmware
-    gets a profile (D2 in docs/architecture.md); `allow_unverified` is accepted for old callers and has no effect."""
+    gets a profile (D2 in docs/architecture.md); `allow_unverified` is accepted for old callers and has no effect.
+    Without a profile of its own, a firmware runs on the reference profile of its application family."""
     profile = for_app(app_sha256, directory)
     if profile and profile["status"] == "verified":
         return "verified", profile
     if profile:
         return "candidate", profile
-    return "reference", load(product(directory=directory)["reference_profile"], directory)
+    return "reference", load(family(app_path, directory)["reference_profile"], directory)
 
 
 def lamp_roles(profile):

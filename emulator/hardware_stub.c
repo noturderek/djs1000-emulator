@@ -728,6 +728,28 @@ int snd_pcm_hw_params_set_buffer_size_near(snd_pcm_t *handle,snd_pcm_hw_params_t
                                       s->name,(unsigned long)requested,(unsigned long)(frames?*frames:0),result);
     return result;
 }
+/* The board PCMs are redirected to the "null" plugin, which accepts any channel count; a real codec link does not.
+ * Restrict the configuration space to the codec's own channel ceiling so a firmware that asks the device for its
+ * maximum (JUCE does) gets what the hardware reports: AK4452 links are stereo (GPL imx-ak4452.c channels_max = 2),
+ * the AK4458 port carries 16. The DJS-1000 app otherwise opens 4-channel ak4452 streams and its JUCE ALSA thread
+ * faults (memcpy from NULL) on the channels its engine never fills. */
+static unsigned codec_channels_max(const char *name) {
+    return !strncmp(name,"hw:ak4452audio,",15) ? 2 : !strncmp(name,"hw:ak4458audio,",15) ? 16 : 0;
+}
+int snd_pcm_hw_params_any(snd_pcm_t *handle,snd_pcm_hw_params_t *params) {
+    int (*real)(snd_pcm_t *,snd_pcm_hw_params_t *)=alsa_symbol("snd_pcm_hw_params_any");
+    if (!real) { errno=ENOSYS; return -ENOSYS; }
+    int result=real(handle,params);
+    struct pcm_state *s=pcm(handle);
+    unsigned limit=s?codec_channels_max(s->name):0;
+    if (result>=0 && limit) {
+        int (*set_max)(snd_pcm_t *,snd_pcm_hw_params_t *,unsigned int *)=alsa_symbol("snd_pcm_hw_params_set_channels_max");
+        unsigned value=limit;
+        int limited=set_max?set_max(handle,params,&value):-ENOSYS;
+        if (first_time(s,9)) fprintf(stderr,"[sp16-ui-stub] PCM %s channels_max=%u result=%d\n",s->name,value,limited);
+    }
+    return result;
+}
 /* Commit: after a successful snd_pcm_hw_params the params object holds the installed configuration, so the
  * negotiated values are read back with the real getters (not interposed). */
 int snd_pcm_hw_params(snd_pcm_t *handle,snd_pcm_hw_params_t *params) {

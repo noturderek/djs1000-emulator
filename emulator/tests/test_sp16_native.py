@@ -175,6 +175,21 @@ class NativeTransportTests(unittest.TestCase):
         batches = [line for line in out if line.startswith("SP16_TB ")]
         self.assertEqual([len(line.split()) - 3 for line in batches], [16, 4])
         self.assertTrue(all(line.startswith("SP16_TB i0 c3 ") for line in batches))
+    def test_gdb_trace_gets_its_own_port_and_bridge(self):
+        # --trace gdb tunnels the guest's qemu-user gdbstub out over a dedicated virtio-serial port (host end
+        # <socket>.gdb); other builds have no such port. The host bridge finds a running session on either host arch.
+        text = " ".join(native.arguments(Path("/q"), Path("/g"), "/s", trace="gdb"))
+        self.assertIn("sp16.trace=gdb", text)
+        self.assertIn("path=/s.gdb,server=on", text)
+        self.assertIn("name=sp16.gdb", text)
+        for trace in (None, "strace", "pcmtap"):
+            self.assertNotIn("sp16.gdb", " ".join(native.arguments(Path("/q"), Path("/g"), "/s", trace=trace)))
+        init = (TOOLS / "guest-init.sh").read_text()
+        self.assertIn("sp16.gdb) ln -sf", init)
+        self.assertIn("/dev/sp16-gdb", init)
+        bridge = (TOOLS / "gdb-bridge.py").read_text()
+        self.assertIn("qemu-system-(aarch64|x86_64)", bridge)
+        self.assertIn('default="127.0.0.1"', bridge)  # loopback only
 
     def test_audio_transport_is_a_dedicated_port_off_by_default(self):
         base = " ".join(native.arguments(Path("/q"), Path("/g"), "/s"))
@@ -310,16 +325,16 @@ class BundleIdentityTests(unittest.TestCase):
             return plistlib.loads((app / "Contents/Info.plist").read_bytes())
 
     def test_bundle_identity_is_the_decoupled_one(self):
-        self.assertEqual(self.plist_for()["CFBundleIdentifier"], "local.sp16-compatible.emulator")
+        self.assertEqual(self.plist_for()["CFBundleIdentifier"], "local.djs1k-replicator")
         full = self.plist_for(profile="fullpanel")
-        self.assertEqual(full["CFBundleIdentifier"], "local.sp16-compatible.emulator.fullpanel")
-        self.assertEqual(full["CFBundleName"], "SP-16 Compatible Emulator")
-        self.assertEqual(full["CFBundleExecutable"], "SP16Emulator")
+        self.assertEqual(full["CFBundleIdentifier"], "local.djs1k-replicator.fullpanel")
+        self.assertEqual(full["CFBundleName"], "DJS1K Replicator")
+        self.assertEqual(full["CFBundleExecutable"], "DJS1KReplicator")
 
     def test_suffix_appends_to_bundle_id_and_name(self):
         suffixed = self.plist_for(profile="fullpanel", bundle_suffix="devtest")
-        self.assertEqual(suffixed["CFBundleIdentifier"], "local.sp16-compatible.emulator.fullpanel.devtest")
-        self.assertEqual(suffixed["CFBundleName"], "SP-16 Compatible Emulator devtest")
+        self.assertEqual(suffixed["CFBundleIdentifier"], "local.djs1k-replicator.fullpanel.devtest")
+        self.assertEqual(suffixed["CFBundleName"], "DJS1K Replicator devtest")
 
     def test_suffix_validation(self):
         for token in ["a", "devtest", "task-42", "0", "a" * 32]:
@@ -471,7 +486,8 @@ class PersistenceArgumentTests(unittest.TestCase):
         self.assertNotIn("-drive", args)
 
     def test_data_arguments_add_block_device_and_control_port(self):
-        args = native.arguments(Path("/q"), Path("/g"), "/tmp/sp16-x/ui.sock", data=True)
+        args = native.arguments(Path("/q"), Path("/g"), "/tmp/sp16-x/ui.sock", data=True,
+                                arch=native.hostarch.ARCHES["arm64"])
         self.assertIn(f"file={native.DATA_PLACEHOLDER},format=raw,if=none,id=sp16emmc", args)
         self.assertIn("virtio-blk-device,drive=sp16emmc,serial=sp16emmc", args)
         self.assertIn("socket,id=sp16ctl,path=/tmp/sp16-x/ui.sock.ctl,server=on,wait=off", args)

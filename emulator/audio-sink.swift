@@ -72,6 +72,10 @@ final class AudioSink {
     let output: AudioOutput?
     static let outputStream = 0            // ak4458audio-0: ch12 (L) and ch14 (R) are the decoded master pair
     static let leftChannel = 12, rightChannel = 14
+    // DJS-1000 (EP113) never opens ak4458audio-0; its master DAC is ak4452audio-1 (stereo FLOAT_LE). That stream feeds
+    // the host output until an ak4458audio-0 stream appears (SP-16 firmware opens all three).
+    static let fallbackStream = 2, fallbackLeft = 0, fallbackRight = 1
+    var sawPrimary = false
 
     init(socketPath: String, directory: String, writeFiles: Bool = true, output: AudioOutput? = nil,
          isRunning: @escaping () -> Bool) {
@@ -276,7 +280,12 @@ final class AudioSink {
                 }
             } else if index < next { s.overlapFrames += next - index }
         }
-        if id == AudioSink.outputStream, let output = output { feedOutput(output, s, payload: payload, frames: frames, index: index, gap: gapFrames) }
+        if id == AudioSink.outputStream { sawPrimary = true }
+        if let output = output, id == AudioSink.outputStream || (id == AudioSink.fallbackStream && !sawPrimary) {
+            feedOutput(output, s, payload: payload, frames: frames, index: index, gap: gapFrames,
+                       channels: id == AudioSink.outputStream ? (AudioSink.leftChannel, AudioSink.rightChannel)
+                                                              : (AudioSink.fallbackLeft, AudioSink.fallbackRight))
+        }
         s.nextFrame = index + UInt64(frames)
         payload.withUnsafeBytes { raw in
             if s.fd >= 0 { _ = Darwin.write(s.fd, raw.baseAddress!, frames * bpf) }
@@ -303,18 +312,30 @@ final class AudioSink {
         updateHeader(id, force: false)
     }
 
-    /// Decode the ch12/ch14 pair (S16) to float and hand it to the CoreAudio path. A guest drop leaves a gap in the
-    /// absolute frame index: short gaps are bridged with silence to keep the timeline, long ones flush the buffer.
-    func feedOutput(_ output: AudioOutput, _ s: StreamState, payload: Data, frames: Int, index: UInt64, gap: UInt64) {
-        guard s.format == 2 else { return }   // S16 only: that is what the ak4458 master carries
-        let li = AudioSink.leftChannel - s.firstChannel, ri = AudioSink.rightChannel - s.firstChannel
+    /// Decode the master pair (ak4458 ch12/ch14 S16, or the DJS ak4452 ch0/ch1) to float and hand it to the CoreAudio
+    /// path. A guest drop leaves a gap in the absolute frame index: short gaps are bridged with silence to keep the
+    /// timeline, long ones flush the buffer.
+    func feedOutput(_ output: AudioOutput, _ s: StreamState, payload: Data, frames: Int, index: UInt64, gap: UInt64,
+                    channels: (Int, Int)) {
+        guard let width = AudioSink.sampleWidth(s.format) else { return }
+        let li = channels.0 - s.firstChannel, ri = channels.1 - s.firstChannel
         guard li >= 0, ri >= 0, li < s.channels, ri < s.channels else { return }
         var left = [Float](repeating: 0, count: frames), right = left
+        let format = s.format
+        func sample(_ raw: UnsafeRawBufferPointer, _ o: Int) -> Float {
+            switch format {
+            case 2: return Float(raw.loadUnaligned(fromByteOffset: o, as: Int16.self).littleEndian) / 32768
+            case 10: return Float(raw.loadUnaligned(fromByteOffset: o, as: Int32.self).littleEndian) / 2147483648
+            default:
+                let v = Float(bitPattern: raw.loadUnaligned(fromByteOffset: o, as: UInt32.self).littleEndian)
+                return v.isFinite ? max(-1, min(1, v)) : 0
+            }
+        }
         payload.withUnsafeBytes { raw in
             for f in 0..<frames {
-                let base = (f * s.channels) * 2
-                left[f] = Float(raw.loadUnaligned(fromByteOffset: base + li * 2, as: Int16.self).littleEndian) / 32768
-                right[f] = Float(raw.loadUnaligned(fromByteOffset: base + ri * 2, as: Int16.self).littleEndian) / 32768
+                let base = (f * s.channels) * width
+                left[f] = sample(raw, base + li * width)
+                right[f] = sample(raw, base + ri * width)
             }
         }
         if gap > 0 {

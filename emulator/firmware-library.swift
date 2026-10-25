@@ -23,6 +23,7 @@ struct FirmwareEntry {
     let directory: URL
     let status: String          // "verified" or "unverified"
     let profile: String?
+    let familyReference: String?  // reference profile of the application's family (SP-16 or DJS-1000)
     let reason: String
     let manifest: [String: Any]
 
@@ -43,6 +44,18 @@ enum FirmwareLibrary {
 
     static func matches(_ text: String, _ pattern: String) -> Bool {
         text.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// The reference profile of an application's family from the bundled product descriptor (app_families), or the
+    /// product's own reference profile for an application it does not list.
+    static func familyReference(appPath: String) -> String? {
+        guard let url = Bundle.main.url(forResource: "sp16", withExtension: "json", subdirectory: "fwlib/profiles/products"),
+              let data = try? Data(contentsOf: url),
+              let product = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let families = product["app_families"] as? [String: Any] ?? [:]
+        let id = (families[appPath] as? [String: Any])?["reference_profile"] as? String
+            ?? product["reference_profile"] as? String
+        return id.flatMap { matches($0, idPattern) ? $0 : nil }
     }
 
     /// Profiles bundled with the app: [app_sha256: (id, status, version)].
@@ -95,7 +108,7 @@ enum FirmwareLibrary {
               let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw FirmwareLibraryError.invalid("firmware \(id) has no readable manifest")
         }
-        guard manifest["schema"] as? Int == 1, manifest["product"] as? String == "sp16",
+        guard manifest["schema"] as? Int == 1, ["sp16", "djs1000"].contains(manifest["product"] as? String ?? ""),
               manifest["id"] as? String == id,
               let kind = manifest["kind"] as? String, ["stock", "mod"].contains(kind),
               let app = manifest["app_sha256"] as? String, matches(app, shaPattern),
@@ -143,7 +156,8 @@ enum FirmwareLibrary {
         return FirmwareEntry(id: id, name: name, kind: kind, version: version, appPath: appPath, appSHA256: app,
                              baseAppSHA256: base,
                              imageSHA256: imageSHA, imageBytes: imageBytes, directory: directory, status: status,
-                             profile: profile?.id, reason: reason, manifest: manifest)
+                             profile: profile?.id, familyReference: familyReference(appPath: appPath), reason: reason,
+                             manifest: manifest)
     }
 
     /// Integrity: size and SHA-256 of the stored image must equal the manifest.

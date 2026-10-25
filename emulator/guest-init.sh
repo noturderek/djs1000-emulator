@@ -20,7 +20,9 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t tmpfs -o mode=700 tmpfs /tmp
 ip link set lo up
+# virtio transport: mmio on the Apple silicon (virt) guest, PCI on the Intel (q35) guest.
 modprobe virtio_mmio || :
+modprobe virtio_pci || :
 modprobe virtio_console
 # Name the virtio ports by their QEMU names: with a block device present the serial controller is no longer
 # virtio0, so /dev/vport0p1 (hard-coded in the bridge) must be a link to whichever node is "sp16.ui".
@@ -429,6 +431,16 @@ PY
   else
     echo 'SP16_GDB vport=missing; stub reachable only inside the guest' > /dev/console
   fi ;;
+esac
+# Research trace builds: when the OEM app's own crash handler writes its SIGSEGV report (in the app's working
+# directory), copy it to the console
+# (SP16_APP_SIGSEGV lines); the handler's own copy to /mnt/debug is a blocked helper.
+case " $(cat /proc/cmdline) " in
+ *" sp16.trace="*)
+  (sp16_report=/tmp/sp16-root$sp16_app_cwd/SIGSEGV.txt
+   while [ ! -s "$sp16_report" ]; do sleep 1; done
+   sleep 2
+   sed 's/^/SP16_APP_SIGSEGV /' "$sp16_report" > /dev/console) & ;;
 esac
 sp16_tap_env=
 if [ "${sp16_pcmtap:-0}" = 1 ]; then

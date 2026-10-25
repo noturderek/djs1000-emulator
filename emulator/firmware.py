@@ -31,6 +31,7 @@ import time
 import zipfile
 import zlib
 
+import hostarch
 import profiles
 
 TOOLS = Path(__file__).resolve().parent
@@ -336,7 +337,7 @@ def validate_manifest(manifest, entry_id=None):
         if not condition:
             raise FirmwareError(f"firmware manifest is invalid ({what})")
     need(isinstance(manifest, dict) and manifest.get("schema") == MANIFEST_SCHEMA, "schema")
-    need(manifest.get("product") == PRODUCT, "product")
+    need(manifest.get("product") in profiles.products(), "product")
     need(entry_id is None or manifest.get("id") == entry_id, "id")
     need(manifest.get("kind") in ("stock", "mod"), "kind")
     need(isinstance(manifest.get("app_sha256"), str) and SHA256.fullmatch(manifest["app_sha256"]), "app_sha256")
@@ -411,12 +412,12 @@ def check_report(manifest, library=None):
     """The compatibility report (M5): what the import found against the shim, the panel and the profiles."""
     status = boot_status(manifest, library)
     # The profile the boot really uses: guest-firmware.py asks profiles.active for the same base application.
-    boot_source, booted = profiles.active(base_app_sha256(manifest))
-    # Panel revisions are compared with the matched profile, else with the 1.60 panel model the shim implements.
+    boot_source, booted = profiles.active(base_app_sha256(manifest), app_path=manifest["app_path"])
+    # Panel revisions are compared with the matched profile, else with the reference of the application's family.
     reference = profiles.for_app(base_app_sha256(manifest))
     if reference is None:
         try:
-            reference = profiles.load(profiles.product()["reference_profile"])
+            reference = profiles.load(profiles.family(manifest["app_path"])["reference_profile"])
         except ValueError:
             reference = None
     compat = manifest.get("compat") or {}
@@ -426,7 +427,8 @@ def check_report(manifest, library=None):
     items = [
         {"check": "key decrypts the update", "result": "pass"},
         {"check": "update layout (the product's layers)", "result": "pass"},
-        {"check": "SP-16 application present", "result": "pass", "detail": manifest["app_path"]},
+        {"check": f"{profiles.family(manifest['app_path'])['name']} application present", "result": "pass",
+         "detail": manifest["app_path"]},
         {"check": "compatibility profile",
          "result": "pass" if status["status"] == "verified" else "warn",
          "detail": status["profile"] if status["status"] == "verified" else unverified_detail(status, boot_source, booted)},
@@ -465,12 +467,12 @@ def unverified_detail(status, boot_source, booted):
 def candidate_profile(manifest, from_profile=None):
     """A candidate profile for an imported version (M5): identity from the manifest; runtime layout, panel maps and
     calibration copied from a reference profile as starting assumptions to verify. Never verified on creation."""
-    product = profiles.product()
-    reference = profiles.load(from_profile or product["reference_profile"])
+    family = profiles.family(manifest["app_path"])
+    reference = profiles.load(from_profile or family["reference_profile"])
     version = manifest["update"]["trailer_version"]
     revisions = manifest["update"].get("revisions") or {}
     profile = json.loads(json.dumps(reference))
-    profile["id"] = f"sp16-{version}"
+    profile["id"] = f"{family['prefix']}-{version}"
     profile["status"] = "candidate"
     profile["verification"] = {"method": "pending", "result": "pending",
                                "evidence": f"measurements copied from {reference['id']}; verify on this version"}
@@ -624,18 +626,20 @@ def audit_build(bundle_paths, initrds, library, forbidden_files=None, forbidden_
 
 # ------------------------------------------------------------------------------------------------------- import VM
 
-def import_arguments(qemu, kernel, initrd, update, output, sock, update_bytes):
-    return [str(qemu), "-machine", "virt,gic-version=3", "-cpu", "host", "-accel", "hvf", "-smp", "4", "-m", "4096",
+def import_arguments(qemu, kernel, initrd, update, output, sock, update_bytes, arch=None):
+    arch = arch or hostarch.current()
+    blk = hostarch.virtio("blk", arch)
+    return [str(qemu), *hostarch.vm_arguments(arch, qemu), "-smp", "4", "-m", "4096",
             "-nodefaults", "-display", "none", "-monitor", "none", "-serial", "stdio", "-nic", "none", "-no-reboot",
             "-kernel", str(kernel), "-initrd", str(initrd),
-            "-append", f"console=ttyAMA0 rdinit=/init panic=-1 quiet sp16.mode=import sp16.upd_bytes={update_bytes}",
-            "-device", "virtio-serial-device",
+            "-append", f"console={arch['console']} rdinit=/init panic=-1 quiet sp16.mode=import sp16.upd_bytes={update_bytes}",
+            "-device", hostarch.virtio("serial", arch),
             "-chardev", f"socket,id=sp16imp,path={sock},server=on,wait=off",
             "-device", "virtserialport,chardev=sp16imp,name=sp16.import",
             "-drive", f"file={update},format=raw,if=none,id=sp16upd,readonly=on",
-            "-device", "virtio-blk-device,drive=sp16upd,serial=sp16upd",
+            "-device", f"{blk},drive=sp16upd,serial=sp16upd",
             "-drive", f"file={output},format=raw,if=none,id=sp16out",
-            "-device", "virtio-blk-device,drive=sp16out,serial=sp16out"]
+            "-device", f"{blk},drive=sp16out,serial=sp16out"]
 
 
 def run_import_vm(boot, update, update_bytes, key, output, console, timeout=900, progress=None):
@@ -694,11 +698,14 @@ def import_update(library, boot, update_path, key, *, name=None, verify_mod=None
     `boot` is {"qemu", "kernel", "initrd", "initrd_sha256"} of a decoupled base build."""
     update_path = input_file(update_path, "update")
     meta = inspect_update(update_path)
-    if meta["kind"] == "stock" and library.entry_dir(f"sp16-{meta['trailer_version']}-{meta['sha256'][:12]}").exists():
-        error = FirmwareError(f"this update is already in the library as sp16-{meta['trailer_version']}-"
-                              f"{meta['sha256'][:12]}")
-        error.report = refusal_report(meta, str(error))
-        raise error
+    # The application (and so the id prefix) is known only after the import; check every family's stock id.
+    prefixes = sorted({f["prefix"] for f in (profiles.product().get("app_families") or {}).values()} | {PRODUCT})
+    for prefix in prefixes if meta["kind"] == "stock" else ():
+        existing = f"{prefix}-{meta['trailer_version']}-{meta['sha256'][:12]}"
+        if library.entry_dir(existing).exists():
+            error = FirmwareError(f"this update is already in the library as {existing}")
+            error.report = refusal_report(meta, str(error))
+            raise error
     work = library.path / f".import-{secrets.token_hex(6)}"
     work.mkdir(mode=0o700)
     try:
@@ -724,9 +731,10 @@ def import_update(library, boot, update_path, key, *, name=None, verify_mod=None
             raise FirmwareError("firmware image hash differs between guest and host")
         kind = meta["kind"]
         version = meta["trailer_version"]
-        entry_id = f"sp16-{version}-{meta['sha256'][:12]}" if kind == "stock" else None
+        family = profiles.family(guest["app_path"])
+        entry_id = f"{family['prefix']}-{version}-{meta['sha256'][:12]}" if kind == "stock" else None
         manifest = {
-            "schema": MANIFEST_SCHEMA, "product": PRODUCT, "kind": kind,
+            "schema": MANIFEST_SCHEMA, "product": family["product"], "kind": kind,
             "update": {**guest["update"], "sha256": meta["sha256"], "file_name": update_path.name[:120]},
             "app_path": guest["app_path"], "app_sha256": guest["app_sha256"],
             "image": {"file": "firmware.sqfs", "bytes": image["bytes"], "sha256": image["sha256"],
@@ -742,7 +750,7 @@ def import_update(library, boot, update_path, key, *, name=None, verify_mod=None
         if kind == "mod":
             manifest["mod"] = (verify_mod(guest, meta, work) if verify_mod is not None else
                                unverified_mod(None, "no mod verification was available"))
-            entry_id = f"sp16-{version}-mod-{manifest['mod']['id']}-{meta['sha256'][:12]}"
+            entry_id = f"{family['prefix']}-{version}-mod-{manifest['mod']['id']}-{meta['sha256'][:12]}"
         manifest["id"] = entry_id
         validate_manifest(manifest, entry_id)
         target = library.entry_dir(entry_id)
@@ -750,7 +758,7 @@ def import_update(library, boot, update_path, key, *, name=None, verify_mod=None
             raise FirmwareError(f"this update is already in the library as {entry_id}")
         clone(update_path, work / "update.upd")
         write_json(work / "manifest.json", manifest)
-        write_json(work / "entry.json", {"name": name or f"SP-16 {version}" + (" mod" if kind == "mod" else ""),
+        write_json(work / "entry.json", {"name": name or f"{family['name']} {version}" + (" mod" if kind == "mod" else ""),
                                          "created": manifest["created"]})
         for path in work.iterdir():
             os.chmod(path, 0o700 if path.is_dir() else 0o600)  # owner-only whatever the caller's umask

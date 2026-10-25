@@ -20,6 +20,7 @@ What every update of the product shares; used by the importer before a version h
 | `update.revision_files[]` | small version files copied into the manifest |
 | `update.mount_points[]` | directories created in the assembled tree |
 | `app_candidates[]`, `loader_candidates[]` | where the application and the ARM loader may be |
+| `app_families{}` | per application path: `prefix` (library and profile ids), `name` (display) and `reference_profile`, so an unprofiled version of a second application (the DJS-1000's `EP113_Main_R`) starts from its own family's measurements; an unlisted application uses the product's |
 
 ## Compatibility profile (`profiles/sp16-<version>.json`)
 

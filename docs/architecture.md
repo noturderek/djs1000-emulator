@@ -107,7 +107,7 @@ the build folder, owner-only:
 | `sessions/native-<id>/clean-exit` | written when the app quits normally; `app.pid` tells a later launch whether a session without it is still running |
 
 At launch the app looks at the previous session: no `clean-exit` and no live process, or a new macOS crash report
-(`~/Library/Logs/DiagnosticReports/SP16Emulator-*.ips`) naming this app, shows a non-blocking notice that offers to
+(`~/Library/Logs/DiagnosticReports/DJS1KReplicator-*.ips`) naming this app, shows a non-blocking notice that offers to
 collect diagnostics, once per finding. Help > Collect Diagnostics… (and `./sp16 diagnostics`) runs the bundled
 `diagnostics.py`, which writes one redacted zip; see "Reporting a bug" in the README for what it contains.
 

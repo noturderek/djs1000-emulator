@@ -40,7 +40,7 @@ def discover_socket(build=None):
         raise SystemExit(f"could not list processes to find the session socket: {error}")
     found = []
     for line in listing.splitlines():
-        if "qemu-system-aarch64" not in line:
+        if not re.search(r"qemu-system-(aarch64|x86_64)", line):  # Apple silicon or Intel host (hostarch.py)
             continue
         match = re.search(r"path=([^,\s]*\.gdb)\b", line)
         if match and (build is None or f"/{build}/" in line or f"/{build}/" in match.group(1) or build in line):

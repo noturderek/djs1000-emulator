@@ -201,7 +201,8 @@ class FwdevHostTests(unittest.TestCase):
         self.assertIn("rm -f /tmp/sp16-root/dev/sp16-panel-input", init)
         self.assertIn("sp16_devlayer", init)
         swift = (TOOLS / "native-window.swift").read_text()
-        for op in ('case "app-restart":', 'case "firmware":', "virtio-9p-device,fsdev=sp16dev", "readonly=on"):
+        for op in ('case "app-restart":', 'case "firmware":', 'virtioDevice("9p", config.arguments) + ",fsdev=sp16dev',
+                   "readonly=on"):
             self.assertIn(op, swift)
         bridge = (TOOLS / "guest-bridge.py").read_text()
         self.assertIn('"[sp16-mod]"', bridge)

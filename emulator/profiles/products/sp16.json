@@ -21,6 +21,10 @@
     "revision_files": ["release.txt", "app.rev", "subucom1.rev", "subucom2.rev"],
     "mount_points": ["/dev", "/proc", "/sys", "/tmp", "/root/data", "/mnt/emmc"]
   },
-  "app_candidates": ["/root/pdj/EP085_Main_R"],
+  "app_candidates": ["/root/pdj/EP085_Main_R", "/root/pdj/EP113_Main_R"],
+  "app_families": {
+    "/root/pdj/EP085_Main_R": {"product": "sp16", "prefix": "sp16", "name": "SP-16", "reference_profile": "sp16-1.60"},
+    "/root/pdj/EP113_Main_R": {"product": "djs1000", "prefix": "djs", "name": "DJS-1000", "reference_profile": "djs-1.22"}
+  },
   "loader_candidates": ["/lib/ld-linux.so.3"]
 }

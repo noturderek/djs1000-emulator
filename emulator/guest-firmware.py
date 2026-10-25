@@ -410,7 +410,7 @@ def attach(params):
     if app_sha != params.get("sp16.fwapp"):
         raise ValueError("application does not match the firmware manifest")
     base = params.get("sp16.fwbase", app_sha)
-    how, profile = profiles.active(base)
+    how, profile = profiles.active(base, app_path=app_path)
     variant = ("stock" if base == app_sha else "mod") + ("" if how == "verified" else "-unverified")
     version = params.get("sp16.fwver", "")
     if not re.fullmatch(r"[0-9]\.[0-9]{2}", version):

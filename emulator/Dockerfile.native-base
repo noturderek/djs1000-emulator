@@ -2,8 +2,10 @@
 # Build tooling only; the resulting kernel + initramfs boot under native macOS QEMU. The user's firmware is imported
 # into a read-only squashfs inside this guest (sp16.mode=import) and attached at run time as a virtio-blk disk.
 FROM debian:bookworm-slim
+# The guest kernel matches the Mac (hostarch.py): linux-image-arm64 on Apple silicon, linux-image-amd64 on Intel.
+ARG KERNEL_PACKAGE=linux-image-arm64
 RUN apt-get update \
- && apt-get install -y --no-install-recommends linux-image-arm64 kmod cpio gzip iproute2 \
+ && apt-get install -y --no-install-recommends ${KERNEL_PACKAGE} kmod cpio gzip iproute2 \
  qemu-user-static xvfb x11-utils dosfstools python3 gcc-arm-linux-gnueabi libc6-dev-armel-cross libxtst6 \
  dmsetup squashfs-tools xorriso \
  && rm -rf /var/lib/apt/lists/*

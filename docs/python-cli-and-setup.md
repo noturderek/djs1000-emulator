@@ -16,7 +16,7 @@ checkout. Set `PREFIX=/some/path` with either target to use a different install 
 
 ## Prerequisites
 
-The emulator runs on Apple silicon Macs with macOS 13 or later. Check the local setup with:
+The emulator runs on Apple silicon and Intel Macs with macOS 13 or later. Check the local setup with:
 
 ```sh
 ./sp16 doctor

@@ -249,7 +249,7 @@ enum CrashCheck {
     static func isRunning(pid: Int32) -> Bool {
         guard pid > 1, kill(pid, 0) == 0 || errno == EPERM else { return false }
         var buffer = [CChar](repeating: 0, count: 4096)
-        return proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 && String(cString: buffer).contains("SP16Emulator")
+        return proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 && String(cString: buffer).contains("DJS1KReplicator")
     }
 
     static func modified(_ path: String) -> Date? {
@@ -277,7 +277,7 @@ enum CrashCheck {
         let reports = reportsDirectory
         let id = bundleID
         for name in ((try? fm.contentsOfDirectory(atPath: reports)) ?? []).sorted()
-        where name.hasPrefix("SP16Emulator-") && name.hasSuffix(".ips") {
+        where (name.hasPrefix("DJS1KReplicator-") || name.hasPrefix("SP16Emulator-")) && name.hasSuffix(".ips") {
             let path = reports + "/" + name
             guard let date = modified(path), date > threshold,
                   let handle = FileHandle(forReadingAtPath: path) else { continue }

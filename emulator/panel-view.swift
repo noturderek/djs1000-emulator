@@ -51,6 +51,11 @@ struct PanelLayout: Decodable {
         let initial: Int?   // analog only: where the knob starts, host value 0...1000 (panel_map.ANALOG_DEFAULTS)
 
         var isInput: Bool { kind != .lamp }
+        var isFader: Bool { kind == .analog && shape == "fader" }
+        /// Fader position under a point as a knob-style angle: top -135 ... bottom 135.
+        func faderAngle(at p: CGPoint) -> CGFloat {
+            min(135, max(-135, (p.y - frame.minY) / max(frame.height, 1) * 270 - 135))
+        }
         var isCircle: Bool { shape == "circle" }
         var center: CGPoint { CGPoint(x: cx, y: cy) }
         var frame: CGRect {
@@ -418,7 +423,10 @@ final class PanelRenderer {
             let n = max(1, d.count ?? 1)
             for i in 0..<n {
                 let t = n == 1 ? 0.5 : CGFloat(i) / CGFloat(n - 1)
-                let a = ((d.from ?? 0) + ((d.to ?? 0) - (d.from ?? 0)) * t) * .pi / 180
+                // Split up: as one expression it exceeds the type checker's time limit on slower (Intel) Macs.
+                let from: CGFloat = d.from ?? 0, to: CGFloat = d.to ?? 0
+                let degrees: CGFloat = from + (to - from) * t
+                let a: CGFloat = degrees * .pi / 180
                 let dir = CGPoint(x: sin(a), y: -cos(a))
                 if let tick = d.tick, tick > 0 {
                     ctx.line(CGPoint(x: c.x + dir.x * r, y: c.y + dir.y * r),
@@ -633,6 +641,10 @@ final class PanelRenderer {
     }
 
     private func drawAnalogBody(_ ctx: CGContext, _ c: PanelLayout.Control) {
+        if c.isFader {
+            ctx.fill(path: roundedPath(c.frame, c.cornerRadius), color: hexColor(0x050506))
+            return
+        }
         let ctr = c.center, r = c.r ?? 30
         ctx.fillCircle(ctr, r + 3, hexColor(0x050506))
         ctx.fillRadial([(0, hexColor(0x26272a)), (1, hexColor(0x070708))], center: ctr, radius: r)
@@ -751,7 +763,9 @@ final class PanelRenderer {
         case .knob:
             drawIndicator(ctx, c, angle: st.knobAngle[c.id] ?? 0, long: false)
         case .analog:
-            drawIndicator(ctx, c, angle: st.knobAngle[c.id] ?? 0, long: true)
+            if c.isFader { drawFaderCap(ctx, c, angle: st.knobAngle[c.id] ?? 0) } else {
+                drawIndicator(ctx, c, angle: st.knobAngle[c.id] ?? 0, long: true)
+            }
         case .selector:
             drawSelector(ctx, c, angle: st.selectorAngle, held: held)
         case .strip:
@@ -889,6 +903,20 @@ final class PanelRenderer {
             ctx.restoreGState()
             ctx.strokeCircle(ctr, cap - 1.8, hexColor(0xffffff, 0.95), 1.8)
         }
+    }
+
+    /// A vertical fader (an analog control with shape "fader"): -135 = top ... 135 = bottom, like the knob angle.
+    private func drawFaderCap(_ ctx: CGContext, _ c: PanelLayout.Control, angle: CGFloat) {
+        let f = c.frame
+        let y = f.minY + (angle + 135) / 270 * f.height
+        let cap = CGRect(x: f.midX - 22, y: y - 9, width: 44, height: 18)
+        ctx.fill(path: roundedPath(cap.insetBy(dx: -1.5, dy: -1.5), 4), color: hexColor(0x050506))
+        ctx.saveGState()
+        ctx.addPath(roundedPath(cap, 3)); ctx.clip()      // fillLinear paints the whole clip
+        ctx.fillLinear([(0, hexColor(0x3a3c40)), (0.5, hexColor(0x1c1d20)), (1, hexColor(0x2c2e31))],
+                       from: CGPoint(x: cap.minX, y: cap.minY), to: CGPoint(x: cap.minX, y: cap.maxY))
+        ctx.restoreGState()
+        ctx.line(CGPoint(x: cap.minX + 4, y: y), CGPoint(x: cap.maxX - 4, y: y), hexColor(0xffffff, 0.9), 1.6)
     }
 
     private func drawStripThumb(_ ctx: CGContext, _ f: CGRect, _ position: Int) {
@@ -1038,7 +1066,8 @@ final class PanelView: NSView, NSViewToolTipOwner {
     static let stubTooltip = "Analog control — not emulated (stub)"
     static let adcTooltip = "Analog pot — only the firmware's ADC readback is emulated (no audio effect)"
     /// MAIN OUT, DRIVE and HP CUTOFF have a proven firmware ADC field (AD TEST page); the others do not.
-    static let adcControls: Set<UInt8> = [61, 62, 65]
+    /// DJS-1000: FX LEVEL/DEPTH, headphone LEVEL and the tempo slider (the guest ignores ids its profile lacks).
+    static let adcControls: Set<UInt8> = [61, 62, 65, 101, 102, 104]
 
     private func analogNote(_ c: PanelLayout.Control) -> String {
         c.kind != .analog ? c.accessibility
@@ -1447,6 +1476,11 @@ final class PanelView: NSView, NSViewToolTipOwner {
             guard !rightButton else { return }
             input.lastPoint = p
             input.drag = .analog(id)
+            if let c = controlIndex[id], c.isFader {
+                state.knobAngle[id] = c.faderAngle(at: p)
+                invalidate([id])
+                emitAnalog(id)
+            }
         case .strip:
             guard !rightButton else { return }
             let pos = stripPosition(at: p)
@@ -1475,7 +1509,11 @@ final class PanelView: NSView, NSViewToolTipOwner {
         case .analog(let id):
             let dy = input.lastPoint.y - p.y
             input.lastPoint = p
-            state.knobAngle[id] = min(135, max(-135, (state.knobAngle[id] ?? 0) + dy * 1.2))
+            if let c = controlIndex[id], c.isFader {
+                state.knobAngle[id] = c.faderAngle(at: p)
+            } else {
+                state.knobAngle[id] = min(135, max(-135, (state.knobAngle[id] ?? 0) + dy * 1.2))
+            }
             invalidate([id])
             emitAnalog(id)
         case .strip:

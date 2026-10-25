@@ -51,7 +51,7 @@ MIN_TOOL_PYTHON = (3, 12)
 MIN_CLI_PYTHON = (3, 9)
 MIN_FREE_BYTES = 3 * 1024 ** 3
 DOWNLOAD_VERSIONS = ("1.60", "1.50", "1.40", "1.31")  # the official firmware downloads (see the download section)
-PROFILE_BUNDLE_ID = "local.sp16-compatible.emulator.fullpanel"
+PROFILE_BUNDLE_ID = "local.djs1k-replicator.fullpanel"
 AUDIO_SOURCES = ("audio-selftest.swift", "audio-output.swift", "audio-sink.swift")
 AUDIO_SWIFT_FLAGS = ("-O", "-parse-as-library", "-framework", "AVFoundation", "-framework", "CoreAudio")
 
@@ -522,8 +522,8 @@ def ensure_build_root(ctx):
 def preflight_build(ctx, name, need_qemu_toolchain):
     """Fail in seconds with the fix, not minutes into a build."""
     problems = []
-    if platform.system() != "Darwin" or not is_apple_silicon(ctx):
-        problems.append("the emulator needs a Mac with Apple silicon (Hypervisor.framework); this machine is not one")
+    if platform.system() != "Darwin" or host_arch(ctx) is None:
+        problems.append("the emulator needs a Mac (Apple silicon or Intel) and a native terminal, not one under Rosetta")
     if not ctx.which("swiftc"):
         problems.append("swiftc is missing; install the Xcode Command Line Tools with: xcode-select --install")
     if not ctx.which("docker"):
@@ -549,9 +549,17 @@ def preflight_build(ctx, name, need_qemu_toolchain):
         raise CliError("cannot build yet:\n  - " + "\n  - ".join(problems) + "\nRun `./sp16 doctor` for the full check.")
 
 
-def is_apple_silicon(ctx):
+def host_arch(ctx):
+    """This Mac's guest table entry (hostarch.py), or None: an Apple silicon Mac in a Rosetta terminal would build an
+    Intel QEMU it cannot accelerate."""
+    if str(ctx.tools) not in sys.path:
+        sys.path.insert(0, str(ctx.tools))
+    import hostarch
     code, out = ctx.capture(["sysctl", "-n", "hw.optional.arm64"], timeout=5)
-    return out.strip() == "1" if code == 0 else platform.machine() == "arm64"
+    if out.strip() == "1" if code == 0 else platform.machine() == "arm64":
+        code, out = ctx.capture(["sysctl", "-n", "sysctl.proc_translated"], timeout=5)
+        return None if code == 0 and out.strip() == "1" else hostarch.ARCHES["arm64"]
+    return hostarch.ARCHES.get(platform.machine())
 
 
 def git_problems(ctx, name):
@@ -676,6 +684,8 @@ RUN_OPTS = [
     Opt("--no-audio-files", "Audio builds (--audio file or both): keep reading and counting the guest's audio (metrics) "
         "but write no WAV into the session folder, for unattended runs that read no audio (about 28 MB a minute "
         "otherwise).", flag=True),
+    Opt("--testmode", "Research builds: start the firmware's factory test UI (BUTTON, ENCODER and AD TEST pages name "
+        "what the firmware reads; BACK and HOME step the pages).", flag=True),
 ]
 
 
@@ -807,7 +817,7 @@ def open_official(url, method="GET", headers=None, timeout=60):
 def pinned_update_sha(ctx, version):
     """The update SHA-256 a compatibility profile pins for this version, or None."""
     try:
-        data = json.loads((ctx.tools / "profiles" / f"sp16-{version}.json").read_text())
+        data = json.loads((ctx.tools / "profiles" / f"sp16-{version}.json").read_text())  # SP-16 downloads only
         value = data["firmware"]["upd_sha256"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -1149,20 +1159,25 @@ def profile_for(ctx, library, firmware_id, given):
     if given:
         if Path(given).suffix == ".json":
             return str(Path(given))
-        path = folder / f"sp16-{given}.json"
+        # A version (1.60, the SP-16's) or a profile id (djs-1.22).
+        path = folder / (f"{given}.json" if (folder / f"{given}.json").is_file() else f"sp16-{given}.json")
         if not path.is_file():
             raise CliError(f"there is no profile for version {given}; available: "
-                           + (", ".join(sorted(p.stem[5:] for p in folder.glob("sp16-*.json"))) or "none"))
+                           + (", ".join(sorted(p.stem for p in folder.glob("*.json"))) or "none"))
         return str(path)
     version = None
+    prefix = "sp16"
     if library is not None:
         try:
             chosen = firmware_id or json.loads((library / "selected.json").read_text()).get("id")
-            version = json.loads((library / chosen / "manifest.json").read_text())["update"]["trailer_version"]
-        except (OSError, ValueError, KeyError, TypeError):
+            manifest = json.loads((library / chosen / "manifest.json").read_text())
+            version = manifest["update"]["trailer_version"]
+            families = json.loads((folder / "products" / "sp16.json").read_text()).get("app_families") or {}
+            prefix = (families.get(manifest.get("app_path")) or {}).get("prefix", "sp16")
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             version = None
-    if version and (folder / f"sp16-{version}.json").is_file():
-        return str(folder / f"sp16-{version}.json")
+    if version and (folder / f"{prefix}-{version}.json").is_file():
+        return str(folder / f"{prefix}-{version}.json")
     raise CliError("cannot tell which profile to use; pass --profile VERSION (for example --profile 1.60)")
 
 
@@ -1388,13 +1403,14 @@ def doctor_checks(ctx):
         checks.append((status, title, detail, fix))
 
     mac = platform.system() == "Darwin"
-    if mac and is_apple_silicon(ctx):
-        add("ok", "Apple silicon Mac", platform.machine())
+    arch = host_arch(ctx) if mac else None
+    if arch:
+        add("ok", "Supported Mac", f"{arch['name']} ({platform.machine()})")
     elif mac:
-        add("fail", "Apple silicon Mac", "an Intel Mac or a terminal running under Rosetta",
-            "use a Mac with Apple silicon (the emulator uses Hypervisor.framework); open a native terminal")
+        add("fail", "Supported Mac", "an Apple silicon Mac in a terminal running under Rosetta",
+            "open a native terminal (the emulator builds QEMU for the Mac's own CPU)")
     else:
-        add("fail", "Apple silicon Mac", platform.system(), "the emulator runs on macOS only")
+        add("fail", "Supported Mac", platform.system(), "the emulator runs on macOS only")
     version = platform.mac_ver()[0]
     try:
         major = int(version.split(".")[0]) if version else 0
@@ -2873,7 +2889,7 @@ def make_commands():
         "options and examples.", positionals=[Pos("topic", "a command name", nargs="?", metavar="COMMAND")],
         examples=["./sp16 help build", "./sp16 run --help"], usage="./sp16 help [COMMAND]", direct=True)
     add("doctor", "Start here", "Check that this Mac can build and run the emulator, and print the fix for each problem",
-        "Checks the Mac (Apple silicon, macOS 13+), Xcode Command Line Tools, Python 3.12+, QEMU build tools, Docker, "
+        "Checks the Mac (Apple silicon or Intel, macOS 13+), Xcode Command Line Tools, Python 3.12+, QEMU build tools, Docker, "
         "free disk space and the git set-up. Exits non-zero when something blocks a build.",
         examples=["./sp16 doctor"], usage="./sp16 doctor", direct=True)
     add("bootstrap", "Start here", "Set up everything in one go: check, build, import firmware, fill the USB stick, run",
@@ -2924,7 +2940,7 @@ def make_commands():
         "run", "Build and run", "Launch a built emulator app",
         "Opens build/NAME with `open -n`; close the window to stop the emulator. The first boot of each firmware "
         "creates a 1 GB data image for it in the library; projects and settings persist there.",
-        opts=RUN_OPTS, usage="./sp16 run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR] [--no-ui-input] [--no-audio-files]",
+        opts=RUN_OPTS, usage="./sp16 run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR] [--no-ui-input] [--no-audio-files] [--testmode]",
         examples=["./sp16 run", "./sp16 run --name sp16-dev --firmware ID",
                   "./sp16 run --usb-image ~/sticks/other.img", "./sp16 run --no-usb", "./sp16 run --ephemeral",
                   "./sp16 run --name sp16-dev --ephemeral --no-ui-input   # unattended, scripted through ./sp16 ctl"],

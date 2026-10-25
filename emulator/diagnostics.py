@@ -312,7 +312,7 @@ def session_dirs(build, count):
 def crash_reports(now, root=None):
     root = Path(root) if root else Path.home() / "Library/Logs/DiagnosticReports"
     found = []
-    for pattern in ("SP16Emulator-*.ips", "qemu-system-aarch64-*.ips"):
+    for pattern in ("DJS1KReplicator-*.ips", "SP16Emulator-*.ips", "qemu-system-aarch64-*.ips", "qemu-system-x86_64-*.ips"):
         for path in root.glob(pattern):
             try:
                 if path.is_file() and not path.is_symlink() and now - path.stat().st_mtime <= REPORT_DAYS * 86400:

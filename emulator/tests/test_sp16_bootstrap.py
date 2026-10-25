@@ -540,7 +540,7 @@ class PlanTests(BootCase):
 
     def test_a_running_emulator_is_not_launched_again(self):
         folder = self.make_build("sp16", audio="coreaudio")
-        self.ps_row(4242, f"{folder}/SP-16 Compatible Emulator.app/Contents/MacOS/x")
+        self.ps_row(4242, f"{folder}/DJS1K Replicator.app/Contents/MacOS/x")
         self.add_entry(self.update_sha(), selected=True)
         self.assertEqual(self.states("--update", str(self.upd))["run"], "skip")
 

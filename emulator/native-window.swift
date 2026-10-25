@@ -102,7 +102,11 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     init(_ config: Configuration) {
         self.config = config
-        let layout = Bundle.main.url(forResource: "panel-layout", withExtension: "json")
+        // A firmware whose profile has its own panel (panel-layout-<profile id>.json, e.g. the DJS-1000) gets it; a
+        // version without one uses its application family's (a new DJS version gets the DJS panel).
+        let layout = bootedProfileID.flatMap { Bundle.main.url(forResource: "panel-layout-\($0)", withExtension: "json") }
+            ?? bootedFamilyReference.flatMap { Bundle.main.url(forResource: "panel-layout-\($0)", withExtension: "json") }
+            ?? Bundle.main.url(forResource: "panel-layout", withExtension: "json")
             ?? URL(fileURLWithPath: "panel-layout.json")
         panel = PanelView(layoutURL: layout)
         super.init()
@@ -111,7 +115,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     var title: String {
         if let name = config.firmwareName {
-            return "SP-16 Emulator — \(name)" + (unverifiedNotice == nil ? "" : " (unverified)")
+            return "DJS1K Replicator — \(name)" + (unverifiedNotice == nil ? "" : " (unverified)")
         }
         return "SP16 Emulator"
     }
@@ -230,7 +234,7 @@ final class NativeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         let menu = NSMenu()
         let appItem = NSMenuItem(); menu.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: config.firmware != nil ? "Quit SP-16 Emulator" : "Quit SP16 Emulator",
+        appMenu.addItem(withTitle: config.firmware != nil ? "Quit DJS1K Replicator" : "Quit SP16 Emulator",
                         action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         if config.firmware != nil {
@@ -750,11 +754,16 @@ func refuse(_ message: String) -> Never {
     AppLog.log("refused to start: \(message)")
     AppLog.markCleanExit("refused")
     let alert = NSAlert()
-    let neutral = Bundle.main.bundleIdentifier?.hasPrefix("local.sp16-compatible.") == true
-    alert.messageText = neutral ? "SP-16 Compatible Emulator cannot start" : "SP16 Emulator cannot start"
+    let neutral = Bundle.main.bundleIdentifier?.hasPrefix("local.djs1k-replicator.") == true
+    alert.messageText = neutral ? "DJS1K Replicator cannot start" : "SP16 Emulator cannot start"
     alert.informativeText = message
     alert.runModal()
     exit(3)
+}
+
+/// A virtio device on the build's guest (hostarch.py): PCI on the Intel (q35) guest, mmio on the Apple silicon (virt) one.
+func virtioDevice(_ kind: String, _ arguments: [String]) -> String {
+    return "virtio-\(kind)-" + (arguments.contains("virtio-serial-pci") ? "pci" : "device")
 }
 
 /// Attach the persistent (or, with --ephemeral, disposable) data image: fill @DATA@ in the QEMU arguments.
@@ -773,7 +782,7 @@ func attachData(_ config: Configuration, ephemeral: Bool, usbImage: String? = ni
             try DataImage.validateUSBImage(usb)
             // Virtual USB stick: a second virtio disk told apart by its serial; the guest formats it only if blank.
             extra = ["-drive", "file=\(usb),format=raw,if=none,id=sp16usb",
-                     "-device", "virtio-blk-device,drive=sp16usb,serial=sp16usb"]
+                     "-device", virtioDevice("blk", config.arguments) + ",drive=sp16usb,serial=sp16usb"]
         }
         return Configuration(qemu: config.qemu, arguments: config.arguments.map { $0.replacingOccurrences(of: "@DATA@", with: image) } + extra,
                              session: config.session, socket: config.socket, variant: config.variant,
@@ -788,6 +797,11 @@ func attachData(_ config: Configuration, ephemeral: Bool, usbImage: String? = ni
 /// own data directory.
 /// Decoupled build with nothing to boot yet: the app shows the import screen (or the library) instead of a VM.
 var firmwareSetup: (config: Configuration, library: String)?
+
+/// Profile id of the firmware being booted (set by resolveFirmware); it selects a per-firmware panel layout.
+var bootedProfileID: String?
+/// Reference profile of the booted firmware's application family: the panel layout when the version has none.
+var bootedFamilyReference: String?
 
 /// Set when the booted firmware is unverified: the compatibility notice shown once after the window opens, and the
 /// reason the window title carries "(unverified)".
@@ -810,6 +824,8 @@ func resolveFirmware(_ defaults: Configuration, requested: String?) -> Configura
         AppLog.log("firmware chosen: id=\(entry.id) name=\(entry.name) version=\(entry.version) kind=\(entry.kind) "
                    + "status=\(entry.status) profile=\(entry.profile ?? "none") reason=\(entry.reason) "
                    + "app=\(entry.appSHA256) image=\(entry.imageSHA256)")
+        bootedProfileID = entry.profile
+        bootedFamilyReference = entry.familyReference
         if entry.status != "verified" {
             unverifiedNotice = (entry.id + ":" + entry.imageSHA256, FirmwareLibrary.unverifiedNotice(entry))
         }
@@ -843,11 +859,29 @@ func attachDevOverlay(_ config: Configuration, folder: String?) -> Configuration
         arguments[index + 1] += " sp16.dev=1"
     }
     arguments += ["-fsdev", "local,id=sp16dev,path=\(path),security_model=none,readonly=on",
-                  "-device", "virtio-9p-device,fsdev=sp16dev,mount_tag=sp16dev"]
+                  "-device", virtioDevice("9p", config.arguments) + ",fsdev=sp16dev,mount_tag=sp16dev"]
     return Configuration(qemu: config.qemu, arguments: arguments, session: config.session, socket: config.socket,
                          variant: config.variant, profile: config.profile, research: config.research, data: config.data,
                          audio: config.audio, firmware: config.firmware, firmwareID: config.firmwareID,
                          firmwareName: (config.firmwareName ?? "") + " + developer overlay", devOverlay: path)
+}
+
+/// Factory test UI (`--testmode`, research builds): the guest starts the firmware's app with its `testmode` argument
+/// when the firmware profile allows it (runtime.app_args). Its BUTTON, ENCODER and AD TEST pages name what the firmware
+/// reads, which maps an unknown panel (another firmware or product) from raw frames.
+func attachTestmode(_ config: Configuration, enabled: Bool) -> Configuration {
+    guard enabled else { return config }
+    guard config.firmware != nil, config.research == true else {
+        refuse("--testmode needs a decoupled research build (./sp16 build --research)")
+    }
+    var arguments = config.arguments
+    if let index = arguments.firstIndex(of: "-append"), index + 1 < arguments.count {
+        arguments[index + 1] += " sp16.app=testmode"
+    }
+    return Configuration(qemu: config.qemu, arguments: arguments, session: config.session, socket: config.socket,
+                         variant: config.variant, profile: config.profile, research: config.research, data: config.data,
+                         audio: config.audio, firmware: config.firmware, firmwareID: config.firmwareID,
+                         firmwareName: (config.firmwareName ?? "") + " (testmode)", devOverlay: config.devOverlay)
 }
 
 func configuration() -> Configuration? {
@@ -858,6 +892,8 @@ func configuration() -> Configuration? {
     arguments.removeAll { $0 == "--no-ui-input" }
     audioFilesDisabled = arguments.contains("--no-audio-files")
     arguments.removeAll { $0 == "--no-audio-files" }
+    let testmode = arguments.contains("--testmode")
+    arguments.removeAll { $0 == "--testmode" }
     var requestedFirmware: String? = nil
     var devOverlay: String? = nil
     if let index = arguments.firstIndex(of: "--dev-overlay") {
@@ -899,7 +935,8 @@ func configuration() -> Configuration? {
         firmwareSetup = (decoded, firmware.library)
         return nil
     }
-    let defaults = attachDevOverlay(resolveFirmware(decoded, requested: requestedFirmware), folder: devOverlay)
+    let defaults = attachTestmode(attachDevOverlay(resolveFirmware(decoded, requested: requestedFirmware), folder: devOverlay),
+                                  enabled: testmode)
     // The persistent profile lock comes first: a refused second session leaves no session directory behind.
     if !ephemeral, let data = defaults.data {
         do { sessionLockFD = try DataImage.acquireLock(directory: data.dir) } catch { refuse("\(error)") }
@@ -957,7 +994,7 @@ enum Launcher {
                 }
                 exit(0)
             }
-            fputs("Usage: SP16Emulator --config /absolute/private/runtime.json\n", stderr)
+            fputs("Usage: DJS1KReplicator --config /absolute/private/runtime.json\n", stderr)
             exit(2)
         }
         // SIGTERM takes the same clean-stop path as Cmd-Q (guest sync + unmount) instead of killing the app.

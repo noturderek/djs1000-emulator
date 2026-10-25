@@ -218,7 +218,7 @@ class BuildTests(CliCase):
 
     def test_rebuild_refuses_a_running_build(self):
         folder = self.make_build("sp16")
-        self.ps = f"4242 {folder}/SP-16 Compatible Emulator.app/Contents/MacOS/SP16Emulator\n"
+        self.ps = f"4242 {folder}/DJS1K Replicator.app/Contents/MacOS/DJS1KReplicator\n"
         with self.assertRaisesRegex(cli.CliError, "is running"):
             self.argv("build", "--rebuild")
 
@@ -611,7 +611,7 @@ class CleanTests(CliCase):
 
     def test_a_running_build_is_refused_and_one_choice_is_required(self):
         folder, _, _ = self.populate()
-        self.ps = f"77 {folder}/x/SP16Emulator\n"
+        self.ps = f"77 {folder}/x/DJS1KReplicator\n"
         code, _, err = self.main("clean", "--all")
         self.assertEqual(code, 1)
         self.assertIn("is running", err)
@@ -641,7 +641,7 @@ class DoctorAndAudioTests(CliCase):
             return 0, ""
         ctx.capture = capture
         with mock.patch.object(cli.platform, "system", return_value="Darwin"), \
-                mock.patch.object(cli, "is_apple_silicon", return_value=True), \
+                mock.patch.object(cli, "host_arch", return_value={"name": "Apple silicon"}), \
                 mock.patch.object(cli.platform, "mac_ver", return_value=("14.5", ("", "", ""), "arm64")):
             return cli.run_doctor(ctx, None, []), ctx.out.getvalue()
 

@@ -70,9 +70,9 @@ class Fixture(unittest.TestCase):
         (self.build / "library/fw-1.60/update.upd").write_bytes(b"upd")
         self.reports = root / "reports"
         self.reports.mkdir()
-        (self.reports / "SP16Emulator-2026-10-13-100000.ips").write_text(f'{{"app_name":"SP16Emulator"}}\n{{"path":"{self.home}/x"}}\n')
+        (self.reports / "DJS1KReplicator-2026-10-13-100000.ips").write_text(f'{{"app_name":"DJS1KReplicator"}}\n{{"path":"{self.home}/x"}}\n')
         (self.reports / "qemu-system-aarch64-2026-10-13-100000.ips").write_text("{}\n")
-        old = self.reports / "SP16Emulator-2026-01-01-100000.ips"
+        old = self.reports / "DJS1KReplicator-2026-01-01-100000.ips"
         old.write_text("{}\n")
         os.utime(old, (time.time() - 40 * 86400,) * 2)
         (self.reports / "OtherApp-2026-10-13-100000.ips").write_text("{}\n")
@@ -170,7 +170,7 @@ class CollectTests(Fixture):
         self.assertEqual(len(build_log.splitlines()), 501)
         # Crash reports of the last 14 days, for the app and QEMU only.
         crashes = {n for n in names if n.startswith("crash-reports/")}
-        self.assertEqual(crashes, {"crash-reports/SP16Emulator-2026-10-13-100000.ips",
+        self.assertEqual(crashes, {"crash-reports/DJS1KReplicator-2026-10-13-100000.ips",
                                    "crash-reports/qemu-system-aarch64-2026-10-13-100000.ips"})
         zip_names = [n.lower() for n in names]
         self.assertFalse([n for n in zip_names if n.endswith((".key", ".upd", ".sqfs", ".img"))])
@@ -393,10 +393,10 @@ check(CrashCheck.findProblem(build: build, current: nil) == nil, "sessions witho
 try? FileManager.default.removeItem(atPath: legacy)
 
 // A macOS crash report newer than the last session and naming this app; one for another app; an old one.
-touch(reports + "/SP16Emulator-new.ips", content: "{\"bundleID\":\"local.test.app\"}\n")
+touch(reports + "/DJS1KReplicator-new.ips", content: "{\"bundleID\":\"local.test.app\"}\n")
 touch(reports + "/SP16Emulator-other.ips", content: "{\"bundleID\":\"local.test.app.other\"}\n")
 let ips = CrashCheck.findProblem(build: build, current: nil)
-check(ips != nil && ips!.text.contains("SP16Emulator-new.ips") && !ips!.text.contains("other"), "crash report found: \(String(describing: ips))")
+check(ips != nil && ips!.text.contains("DJS1KReplicator-new.ips") && !ips!.text.contains("other"), "crash report found: \(String(describing: ips))")
 CrashCheck.acknowledge(build: build, session: nil)
 check(CrashCheck.findProblem(build: build, current: nil) == nil, "crash report announced once only")
 print("harness ok")

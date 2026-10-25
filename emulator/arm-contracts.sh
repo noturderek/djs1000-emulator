@@ -9,7 +9,8 @@ output=$(mktemp)
 iidfile=$(mktemp)
 trap 'rm -f "$output" "$iidfile"; [ -n "${image:-}" ] && docker image rm "$image" >/dev/null 2>&1; true' EXIT
 status=0
-if ! docker build -f Dockerfile.native-base --iidfile "$iidfile" . > "$output" 2>&1; then
+case "$(uname -m)" in x86_64) kernel_package=linux-image-amd64 ;; *) kernel_package=linux-image-arm64 ;; esac
+if ! docker build -f Dockerfile.native-base --build-arg "KERNEL_PACKAGE=$kernel_package" --iidfile "$iidfile" . > "$output" 2>&1; then
   echo "FAIL docker build of native guest image"; tail -20 "$output"; exit 1
 fi
 image=$(cat "$iidfile")
@@ -32,6 +33,7 @@ PRE="qemu-arm-static -L /usr/arm-linux-gnueabi -E LD_PRELOAD=/opt/sp16/libsp16-u
 run sp16_stub_contract "$CC /tmp/test.c -o /tmp/run/t; $PRE /tmp/run/t"
 run sp16_pcm_contract "$CC -DSP16_FAKE_ALSA -shared -fPIC /tmp/test.c -o /tmp/run/libsp16-fake-alsa.so; $CC /tmp/test.c -L/tmp/run -lsp16-fake-alsa -o /tmp/run/t; $PRE -E LD_LIBRARY_PATH=/tmp/run /tmp/run/t"
 run sp16_hwparams_contract "$CC -DSP16_FAKE_ALSA -shared -fPIC /tmp/test.c -o /tmp/run/libsp16-fake-alsa.so; $CC /tmp/test.c -L/tmp/run -lsp16-fake-alsa -o /tmp/run/t; $PRE -E LD_LIBRARY_PATH=/tmp/run /tmp/run/t"
+expect 'PCM hw:ak4452audio,1 channels_max=2 result=0'
 expect 'PCM hw:ak4452audio,1 set_access requested=3(RW_INTERLEAVED) result=0'
 expect 'PCM hw:ak4452audio,1 set_rate_near requested=44100 dir=0 returned=44100'
 expect 'PCM hw:ak4452audio,1 hw_params result=0 access=RW_INTERLEAVED(3) format=S16_LE(2) channels=2 rate=44100'
