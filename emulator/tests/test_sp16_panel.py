@@ -1,5 +1,7 @@
 """Semantic panel protocol, RX frame model and layout/control-ID consistency."""
+import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -79,7 +81,11 @@ class PanelModelTests(unittest.TestCase):
         self.assertEqual(counter(frame, 0x2a), 1023)          # HIGHPASS shown as 1023 - raw
         self.assertEqual(model.apply(main, "press"), protocol.INPUT_INVALID)
         self.assertEqual(model.apply(drive, "value", 1001), protocol.INPUT_INVALID)
-        self.assertEqual(model.apply(panel_map.CONTROL_IDS["lp_cutoff"], "value", 10), protocol.INPUT_UNSUPPORTED)
+        # CUTOFF has no ADC word: it is host analog state for the shim's board model and leaves the frame alone.
+        before = model.frame()
+        self.assertEqual(model.apply(panel_map.CONTROL_IDS["lp_cutoff"], "value", 10), protocol.INPUT_OK)
+        self.assertEqual(model.frame(), before)
+        self.assertEqual(model.apply(panel_map.CONTROL_IDS["lp_cutoff"], "press"), protocol.INPUT_INVALID)
 
     def test_adc_readback_reports_the_words_in_the_frame_and_through_sessionctl(self):
         import sessionctl
@@ -279,6 +285,76 @@ class PanelModelTests(unittest.TestCase):
         self.assertEqual(model.apply(strip, "press", 1001), protocol.INPUT_INVALID)
 
 
+class BoardModelTests(unittest.TestCase):
+    """Host side of the shim's analog board model: the shared state file and the board-model metrics lines."""
+
+    def test_host_analog_controls_fill_the_shared_state_and_leave_untouched_ones_neutral(self):
+        model = panel.PanelModel()
+        state = model.analog_state()
+        self.assertEqual(len(state), 64)
+        self.assertEqual(state[:8], b"SP16ANA1")
+        self.assertEqual(struct.unpack_from("<5H", state, 12), (0xFFFF,) * 5)
+        self.assertEqual(struct.unpack_from("<H", state, 24)[0], 0xFFFF)
+        self.assertEqual(struct.unpack_from("<H", state, 22)[0], panel_map.INPUT_TONE_HZ)
+        for name, value in (("main_out", 900), ("input_level", 250), ("lp_resonance", 1000), ("input_tone", 600),
+                            ("filter_tone", 700)):
+            self.assertEqual(model.apply(panel_map.CONTROL_IDS[name], "value", value), protocol.INPUT_OK)
+        self.assertTrue(model.analog_changed)
+        state = model.analog_state()
+        self.assertEqual(struct.unpack_from("<5H", state, 12), (900, 250, 0xFFFF, 1000, 600))
+        self.assertEqual(struct.unpack_from("<H", state, 24)[0], 700)
+        self.assertFalse(model.analog_changed)
+        self.assertEqual(counter(model.frame(), 0x28), round(900 * 1023 / 1000))  # MAIN OUT keeps its ADC word
+        self.assertEqual(model.apply(panel_map.CONTROL_IDS["input_tone"], "value", 1001), protocol.INPUT_INVALID)
+
+    def test_state_file_updates_in_place_under_an_even_sequence(self):
+        import tempfile
+        model = panel.PanelModel()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "analog"
+            writer = panel.AnalogStateFile(str(path), model)
+            model.apply(panel_map.CONTROL_IDS["lp_cutoff"], "value", 123)
+            writer.update()
+            writer.update()
+            data = path.read_bytes()
+            writer.close()
+        self.assertEqual(struct.unpack_from("<I", data, 8)[0], 4)
+        self.assertEqual(struct.unpack_from("<H", data, 16)[0], 123)
+
+    def test_power_key_drives_rx_bit_5_4(self):
+        model = panel.PanelModel()
+        model.apply(panel_map.CONTROL_IDS["power"], "press")
+        self.assertEqual(frames(model)[5] & 0x10, 0x10)
+        model.apply(panel_map.CONTROL_IDS["power"], "release")
+        self.assertEqual(frames(model, 4)[5] & 0x10, 0)
+        self.assertNotIn(100, panel_map.CONTROL_NAMES)  # no place in the panel layout
+
+    def test_bridge_reads_the_board_model_lines(self):
+        spec = importlib.util.spec_from_file_location("sp16_bridge_lines", TOOLS / "guest-bridge.py")
+        source = (TOOLS / "guest-bridge.py").read_text()
+        start, end = source.index("DAC_WORD = "), source.index("def main():")
+        scope = {"re": re}
+        exec(compile(source[start:end], str(spec.origin), "exec"), scope)
+        board_line = scope["board_line"]
+        self.assertEqual(board_line("[sp16-ui-stub] dac hpf word=0x1abc ctrl=1 code=2748 writes=7"),
+                         ("dac", {"word": 0x1abc, "ctrl": 1, "code": 2748, "writes": 7}))
+        key, value = board_line("[sp16-ui-stub] filter loop send_peak=0.5000 return_peak=0.2500 frames=44100 "
+                                "underruns=3 drops=0 lp_hz=1200 hp=dac")
+        self.assertEqual((key, value["return_peak"], value["lp_hz"], value["hp"]), ("filter_loop", .25, 1200, "dac"))
+        self.assertEqual(board_line("[sp16-ui-stub] midi loopback /dev/ttymxc1 first bytes=4"),
+                         ("midi_loopback", {"node": "/dev/ttymxc1", "first_bytes": 4}))
+        self.assertIsNone(board_line("[sp16-ui-stub] dac write of 7 bytes ignored (expected 2)"))
+        self.assertEqual(board_line("[sp16-ui-stub] gpio GPIO5_IO05=1 SEL_xTHRU/DSF"), ("gpio", ("GPIO5_IO05", 1)))
+
+    def test_shim_board_lines_match_the_bridge_patterns(self):
+        source = (TOOLS / "hardware_stub.c").read_text()
+        self.assertIn('"[sp16-ui-stub] dac hpf word=0x%04x ctrl=%u code=%u writes=%lu\\n"', source)
+        self.assertIn("filter loop send_peak=%.4f return_peak=%.4f frames=%lu underruns=%lu drops=%lu lp_hz=%.0f hp=%s",
+                      source)
+        self.assertIn('"[sp16-ui-stub] midi loopback %s first bytes=%ld\\n"', source)
+        self.assertIn('"[sp16-ui-stub] gpio GPIO%u_IO%02u=%u %s\\n"', source)
+
+
 class GeometryTests(unittest.TestCase):
     """Layout resource properties that the native view relies on (no AppKit needed)."""
 
@@ -449,7 +525,9 @@ class MapTests(unittest.TestCase):
         self.assertEqual((bits["track"], bits["play"], bits["step9"], bits["step16"], bits["bar4"]),
                          ((1, 4), (2, 3), (4, 0), (4, 7), (5, 3)))
         controls = [name for name in bits if name != "selector"]
-        self.assertEqual(len(controls), 36)  # + selector push = 37 button objects
+        self.assertEqual(len(controls), 37)  # every dispatched button object; the selector push is not one of them
+        self.assertEqual(bits["power"], (5, 4))
+        self.assertEqual(sorted(bits[name] for name in controls), sorted(panel_map.BUTTON_OBJECTS))
         self.assertEqual(len(set(bits.values())), len(bits))
 
     def test_default_pad_curve_reaches_the_firmware_hit_thresholds(self):

@@ -191,6 +191,11 @@ for sp16_token in $(cat /proc/cmdline); do
     case ",$sp16_app_args," in *",${sp16_token#sp16.app=},"*) sp16_app_arg=${sp16_token#sp16.app=} ;; esac ;;
   esac
 done
+# With a profile app argument (1.60: the factory test mode) the DIN MIDI ports get a virtual OUT -> IN cable for the
+# DEVICE TEST page (the shim serves /dev/ttymxc1 and /dev/din_midi as one loopback). Off in normal runs, where
+# looping the app's own MIDI back into it would feed it its own clock.
+sp16_midi_env=
+if [ -n "$sp16_app_arg" ]; then sp16_midi_env="-E SP16_MIDI_LOOPBACK=1"; fi
 # Research builds only (native.py --research --trace): opt-in QEMU user-mode tracing, default off.
 sp16_trace_args=
 case " $(cat /proc/cmdline) " in
@@ -519,7 +524,7 @@ fi
     SP16_APP_CWD=$sp16_app_cwd python3 /opt/sp16/enter.py /tmp/sp16-root /qemu-arm-static $sp16_trace_args -cpu $sp16_cpu \
      -E DISPLAY=127.0.0.1:99 -E LD_LIBRARY_PATH=$sp16_ldpath \
      -E LD_PRELOAD=$sp16_preload -E ALSA_CONFIG_PATH=/etc/sp16-alsa.conf \
-     -E SP16_PANEL_INPUT=1 $sp16_tap_env $sp16_audio_env \
+     -E SP16_PANEL_INPUT=1 $sp16_tap_env $sp16_audio_env $sp16_midi_env \
      $sp16_app_path $sp16_app_arg >> /output/application.txt 2>&1 &
     echo $! > /run/sp16-app.pid
     echo "SP16_APP_STARTED pid=$!" > /dev/console

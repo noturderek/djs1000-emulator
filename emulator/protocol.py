@@ -136,7 +136,7 @@ def decode_research(payload):
 def encode_stats(counters):
     import json
     body = json.dumps(counters, sort_keys=True, separators=(",", ":")).encode()
-    if len(body) > 1024:
+    if len(body) > 2048:  # the board-model report added about 200 bytes to the roughly 700 of the panel counters
         raise ValueError("guest stats too large")
     return message(STATS, body)
 

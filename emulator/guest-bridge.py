@@ -15,7 +15,7 @@ from protocol import (ACK, CONTROL, FRAME, INPUT_FAILED, INPUT_INVALID, INPUT_UN
                       RESEARCH, TOUCH, TX_FRAME, WHEEL, decode_control, decode_key,
                       decode_research, decode_touch, decode_wheel, encode_feedback,
                       encode_result, encode_stats, frame_pixels, message, receive)
-from panel import PanelModel, crc16
+from panel import AnalogStateFile, PanelModel, crc16
 
 spec = importlib.util.spec_from_file_location("sp16_input", "/opt/sp16/input.py")
 controls = importlib.util.module_from_spec(spec)
@@ -46,6 +46,9 @@ class Counters:
         self.unknown_devices = {}
         # Requests the shim accepted, by device kind (hardware suite HW-45: every declared request was served).
         self.ioctls_seen = {}
+        # Analog board model (hardware_stub.c): the last DAC7811 word the app wrote for the high-pass, the newest
+        # filter-loop report and the bytes sent over the DIN MIDI loopback cable.
+        self.board = {}
 
     def add(self, name, amount=1):
         with self.lock:
@@ -66,15 +69,52 @@ class Counters:
             if request in self.ioctls_seen or len(self.ioctls_seen) < 64:
                 self.ioctls_seen[request] = kind
 
+    def board_update(self, key, value):
+        with self.lock:
+            if key == "gpio":  # one entry per line: the newest level the app wrote
+                self.board.setdefault("gpio", {})[value[0]] = value[1]
+            else:
+                self.board[key] = value
+
     def snapshot(self):
         with self.lock:
             return {**self.values, "unknown_ioctls": dict(self.unknown_ioctls),
-                    "unknown_devices": dict(self.unknown_devices), "ioctls_seen": dict(self.ioctls_seen)}
+                    "unknown_devices": dict(self.unknown_devices), "ioctls_seen": dict(self.ioctls_seen),
+                    "board": json_copy(self.board)}
+
+
+def json_copy(value):
+    return {k: dict(v) if isinstance(v, dict) else v for k, v in value.items()}
 
 
 UNKNOWN_IOCTL = re.compile(r"\[sp16-ui-stub\] unsupported ioctl fd=\d+ request=(0x[0-9a-f]{1,8})$")
 UNKNOWN_DEVICE = re.compile(r"\[sp16-ui-stub\] unknown device open path=(/[!-~]{1,63})$")
 IOCTL_SEEN = re.compile(r"\[sp16-ui-stub\] ioctl accepted request=(0x[0-9a-f]{1,8}) device=([a-z]{1,16})$")
+DAC_WORD = re.compile(r"\[sp16-ui-stub\] dac hpf word=0x([0-9a-f]{4}) ctrl=(\d+) code=(\d+) writes=(\d+)$")
+FILTER_LOOP = re.compile(r"\[sp16-ui-stub\] filter loop send_peak=([0-9.]+) return_peak=([0-9.]+) frames=(\d+) "
+                         r"underruns=(\d+) drops=(\d+) lp_hz=(\d+) hp=(dac|off)$")
+GPIO_LINE = re.compile(r"\[sp16-ui-stub\] gpio (GPIO\d_IO\d\d)=([01]) ([A-Za-z_/?]+)$")
+MIDI_LOOP = re.compile(r"\[sp16-ui-stub\] midi loopback (/dev/[a-z0-9_]+) first bytes=(\d+)$")
+
+
+def board_line(line):
+    """A board-model line of the shim -> (metrics key, value), or None."""
+    match = DAC_WORD.match(line)
+    if match:
+        return "dac", {"word": int(match.group(1), 16), "ctrl": int(match.group(2)), "code": int(match.group(3)),
+                       "writes": int(match.group(4))}
+    match = FILTER_LOOP.match(line)
+    if match:
+        return "filter_loop", {"send_peak": float(match.group(1)), "return_peak": float(match.group(2)),
+                               "frames": int(match.group(3)), "underruns": int(match.group(4)),
+                               "drops": int(match.group(5)), "lp_hz": int(match.group(6)), "hp": match.group(7)}
+    match = MIDI_LOOP.match(line)
+    if match:
+        return "midi_loopback", {"node": match.group(1), "first_bytes": int(match.group(2))}
+    match = GPIO_LINE.match(line)
+    if match:
+        return "gpio", (match.group(1), int(match.group(2)))
+    return None
 
 
 def main():
@@ -109,6 +149,9 @@ def main():
                 device = UNKNOWN_DEVICE.match(line)
                 if device:
                     counters.unknown_device(device.group(1))
+                board = board_line(line)
+                if board:
+                    counters.board_update(*board)
         logged_lines = len(lines)
 
     def send(kind, payload):
@@ -164,7 +207,14 @@ def main():
         panel_target, cdc_target = f"{ROOT}/dev/sp16-panel-input", f"{ROOT}/dev/sp16-cdc-input"
         last, baseline = 0.0, False
         try:
+            analog = AnalogStateFile(f"{ROOT}/dev/sp16-analog", model)
+        except OSError as exc:
+            analog = None
+            print(f"SP16_ANALOG_ERROR {exc}", flush=True)
+        try:
             while not stopped.wait(timing["period"]):
+                if analog is not None and model.analog_changed:
+                    analog.update()
                 due = model.step()
                 now = time.monotonic()
                 if not baseline or due or model.active() or now - last >= HEARTBEAT:
@@ -177,6 +227,8 @@ def main():
         finally:
             out.close()
             cdc.close()
+            if analog is not None:
+                analog.close()
 
     def listen_tx():
         """Capture OEM panel TX frames (lamp state source); decode only proven fields."""

@@ -18,7 +18,8 @@ import zlib
 from pathlib import Path
 
 HEADER = 64
-FORMATS = {2: ("<h", 2, 32768.0, "S16_LE"), 14: ("<f", 4, 1.0, "FLOAT_LE"), 10: ("<i", 4, 2147483648.0, "S32_LE")}
+FORMATS = {2: ("<h", 2, 32768.0, "S16_LE"), 14: ("<f", 4, 1.0, "FLOAT_LE"), 10: ("<i", 4, 2147483648.0, "S32_LE"),
+           6: ("<i", 4, 8388608.0, "S24_LE")}
 
 
 def extract(console, out):

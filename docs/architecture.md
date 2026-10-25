@@ -12,7 +12,10 @@ The firmware talks to its hardware through a small set of interfaces. The emulat
 | Panel MCU (buttons, encoders, selector, pads, analog pots, lamps) over SPI device nodes | `hardware_stub.c` (device nodes, ioctls) and `panel.py` / `panel_map.py` / `protocol.py` (128-byte frames with CRC, both directions) |
 | Touch strip (capacitive converter) | `hardware_stub.c`, `panel.py` |
 | LCD (800x480) and touch | Xvfb in the guest, mirrored to the app window; touch injected as X events |
-| Audio codec (three ALSA playback ports) | `hardware_stub.c` paces each stream on its own clock and carries the samples to the host (`audio-sink.swift`, `audio-output.swift`) |
+| Audio codec (three ALSA playback ports, two capture ports) | `hardware_stub.c` paces each stream on its own clock and carries the samples to the host (`audio-sink.swift`, `audio-output.swift`); the AK4452 ports accept any format the ALSA null plugin takes, so the firmware runs FLOAT_LE there although the codec lists only S16_LE, S24_LE and S20_3LE (the shim's research switch `SP16_PCM_CODEC_FORMATS=1` restricts them; off by default, see the profile's `audio.alsa_streams_note`) |
+| Analog board: filter send/return loop, high-pass DAC, MAIN OUT, INPUT LEVEL, CUTOFF, RESONANCE | `hardware_stub.c` board model (see [Analog board model](#analog-board-model)); host-only pot positions from `panel.py` through a shared state file |
+| GPIO lines (filter select, input limiter, MIDI thru, USB-A power and over-current) | `hardware_stub.c` serves `/dev/gpiodrv` (one byte per line); changes are logged and reported in `metrics.guest.board.gpio` |
+| DIN MIDI (factory test only) | `hardware_stub.c` serves `/dev/ttymxc1` and `/dev/din_midi` as one OUT-to-IN loopback cable when the firmware runs its factory test mode |
 | Internal storage | a per-firmware 1 GB data image (`data/emmc.img`), formatted once |
 | USB stick | an optional raw image attached at launch (`--usb-image`), FAT32 |
 | Backlight, media notifications, helper processes | `hardware_stub.c` (unknown device nodes and ioctls fail loudly and are counted) |
@@ -36,6 +39,40 @@ profile ([profiles.md](profiles.md)).
 | Developer tools | `fwdev.py`, `sessionctl.py`, `e2e-screen.py`, `pcm-tap-analyze.py`, `arm-contracts.sh` |
 | Hardware conformance suite | `hwsuite.py` |
 | Data | `profiles/*.json`, `profiles/products/sp16.json` |
+
+## Analog board model
+
+The hardware has analog circuitry the firmware never sees as samples. The shim models it so the firmware's own
+audio paths run as on the hardware:
+
+- **Filter insert loop.** The analog filter sits between the "Send & Return" playback (send DAC) and capture (return
+  ADC). The shim queues the send frames and returns them one period later through a two-pole low-pass (CUTOFF and
+  RESONANCE, pots no microcontroller reads) and a two-pole high-pass whose cutoff follows the 12-bit code the
+  firmware writes to `/dev/dac_spi4.0` (one 2-byte write per change of the HP CUTOFF pot word). The firmware mixes the
+  return into its outputs while ACTIVE is on (ACTIVE also drives the filter select GPIO line).
+- **MAIN OUT** is an analog volume after the master DAC: the shim scales the master channels the host receives (the
+  firmware still gets the pot position as an ADC word). **INPUT LEVEL** scales the input capture.
+- A control the host never moved is neutral (unity gain, low-pass open), so a session that does not touch them sounds
+  as before. The cutoff laws (20 Hz to 20 kHz, exponential over the pot or DAC range) are assumptions, not
+  measurements of the hardware.
+- Research stimuli (`./sp16 ctl event NAME value 0..1000`, 0 = off): `input_tone` puts a 1 kHz tone on the input
+  jack, `filter_tone` one at the filter input. `input_level` and `power` (the power/standby key, RX bit 5.4) are host
+  controls without a place on the panel drawing.
+- `metrics.guest.board` reports the newest DAC word (`dac`), the filter loop's peaks every 5 s while it carries
+  signal (`filter_loop`), the GPIO lines (`gpio`) and the MIDI loopback (`midi_loopback`).
+
+The power/standby key (`./sp16 ctl press power`) puts the firmware in standby: it unmounts the USB stick, stops
+project saves and raises its standby flag in the panel frame. A real unit then cuts power; the emulator has no power
+controller, so the firmware stays in standby until `./sp16 ctl app-restart` (decoupled builds) or a new session.
+
+## Factory test mode
+
+On the hardware, holding HOLD + TRACK + STEP 1 while powering on makes the initramfs (which reads the panel for about
+1.5 s before the firmware starts) start the application with the argument `testmode`. The emulator skips that
+initramfs step: `--app-arg testmode` (research builds, allowed by the profile's `runtime.app_args`) is the same
+entry. The other power-on combinations, HOLD + MODE (update) and TRACK + MUTE + HOLD (update everything), start the
+vendor's updater, which the emulator never runs. In test mode the DIN MIDI ports get a loopback cable, which the
+DEVICE TEST page uses for its MIDI check.
 
 ## Boot
 
