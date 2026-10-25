@@ -1,0 +1,35 @@
+# Builds, firmware libraries, sessions and anything firmware-derived stay out of git.
+/build/
+/private/
+*.UPD
+*.upd
+*.key
+*.sqfs
+*.iso
+*.img
+*.wav
+*.WAV
+*.zip
+*.ZIP
+*.tar.gz
+*.tgz
+*.sfs
+*.mot
+*.bin
+*.ISO
+*.IMG
+*.KEY
+diagnostics-*.zip
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local tooling
+.envrc
+.direnv/
+.venv/
+venv/
+.vscode/
+.idea/
+*.swp
+*.part
