@@ -1166,6 +1166,13 @@ static float loop_send_peak, loop_return_peak;
 static uint64_t loop_report_ns;
 static struct svf loop_lp, loop_hp;
 static int is_board(const struct pcm_state *s,const char *name,int stream) { return s->stream==stream && !strcmp(s->name,name); }
+/* SP16_BOARD_LOOP=0 (profile runtime.board_loop false): this product's hw:ak4452audio,1 is not the SP-16 filter loop
+ * (on the DJS-1000 its playback is the master DAC), so the send is not queued and the return capture is left alone. */
+static int board_loop_on(void) {
+    static int on=-1;
+    if (on<0) { const char *v=getenv("SP16_BOARD_LOOP"); on=!(v && !strcmp(v,"0")); }
+    return on;
+}
 static void loop_send(struct pcm_state *s,const void *buffer,snd_pcm_sframes_t frames) {
     unsigned w=bm_width(s->format);
     if (!w || !s->channels || frames<=0 || !buffer) return;
@@ -1283,7 +1290,7 @@ snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t *handle,const void *buffer,snd_pcm_uf
     struct pcm_state *tapped=pcm(handle);
     if (tapped && tapped->tap) pcm_tap_feed(tapped,buffer,result);
     if (tapped && tapped->ax) ax_feed(tapped,buffer,result);
-    if (tapped && is_board(tapped,"hw:ak4452audio,1",0)) loop_send(tapped,buffer,result);
+    if (tapped && board_loop_on() && is_board(tapped,"hw:ak4452audio,1",0)) loop_send(tapped,buffer,result);
     pace(handle,result,0); return result;
 }
 snd_pcm_sframes_t snd_pcm_writen(snd_pcm_t *handle,void **buffers,snd_pcm_uframes_t frames) {
@@ -1294,7 +1301,7 @@ snd_pcm_sframes_t snd_pcm_readi(snd_pcm_t *handle,void *buffer,snd_pcm_uframes_t
     snd_pcm_sframes_t (*real)(snd_pcm_t *,void *,snd_pcm_uframes_t)=dlsym(RTLD_NEXT,"snd_pcm_readi");
     snd_pcm_sframes_t result=real(handle,buffer,frames);
     struct pcm_state *s=pcm(handle);
-    if (s && is_board(s,"hw:ak4452audio,1",1)) loop_return(s,buffer,result);
+    if (s && board_loop_on() && is_board(s,"hw:ak4452audio,1",1)) loop_return(s,buffer,result);
     else if (s && is_board(s,"hw:ak4452audio,0",1)) input_fill(s,buffer,result);
     pace(handle,result,2); return result;
 }

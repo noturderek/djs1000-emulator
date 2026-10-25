@@ -85,6 +85,7 @@ def validate(profile):
              "runtime.tmpfs_dirs")
     _require(isinstance(runtime.get("app_args", []), list) and all(isinstance(a, str) and TOKEN.fullmatch(a)
                                                                  for a in runtime.get("app_args", [])), "runtime.app_args")
+    _require(isinstance(runtime.get("board_loop", True), bool), "runtime.board_loop")
     panel = profile.get("panel")
     _require(isinstance(panel, dict), "panel")
     _require(isinstance(panel.get("selector_window_frames"), int) and 1 <= panel["selector_window_frames"] <= 64,
@@ -253,11 +254,14 @@ def lamp_roles(profile):
 
 def runtime_fields(profile, app_path=None):
     """Shell-safe runtime layout of a profile for guest-init.sh, in a fixed order (every value is a validated plain
-    token or guest path): id app_path cwd qemu_cpu ld_library_path tmpfs_dirs data_dir emmc_mount usb_mount app_args."""
+    token or guest path): id app_path cwd qemu_cpu ld_library_path tmpfs_dirs data_dir emmc_mount usb_mount app_args
+    board_loop. board_loop (default on) runs the shim's SP-16 filter insert loop; a product whose send/return PCM is
+    not that loop (DJS-1000: hw:ak4452audio,1 playback is the master DAC) sets it false."""
     runtime = profile["runtime"]
     return [profile["id"], app_path or profile["firmware"]["app_path"], runtime["cwd"], runtime["qemu_cpu"],
             runtime["ld_library_path"], ",".join(runtime["tmpfs_dirs"]) or "-", runtime["data_dir"],
-            runtime["emmc_mount"], runtime["usb_mount"], ",".join(runtime.get("app_args", [])) or "-"]
+            runtime["emmc_mount"], runtime["usb_mount"], ",".join(runtime.get("app_args", [])) or "-",
+            "on" if runtime.get("board_loop", True) else "off"]
 
 
 def legacy():
