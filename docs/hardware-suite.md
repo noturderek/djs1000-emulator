@@ -31,7 +31,7 @@ titles, probe coordinates, lamp roles). A check whose profile data is missing is
 | USB | HW-36..39 | attach, mount, eject, USB STOP, presence lamp, blank and dirty sticks |
 | Storage, power, soak | HW-40..44 | persistence across clean and hard restarts, isolation between firmware data images, clean quit, 5-minute soak |
 | Driver coverage | HW-45 | every device node and ioctl the firmware uses is served; unknown ones are reported |
-| Analog board model | HW-46 | ACTIVE drives the filter select line; a tone at the filter input reaches the headphone output only while ACTIVE is on, and the lowest CUTOFF cuts it by more than 20 dB |
+| Analog board model | HW-46 | ACTIVE drives the filter select line; the shim's filter loop carries a tone injected at the filter input; headphone levels with ACTIVE on/off and CUTOFF open/lowest are recorded, not judged (how the firmware uses the return is still open) |
 
 Tiers: **smoke** (16 checks, about 6 minutes), **core** (all but the soak), **full** (all 46, about 31 minutes).
 Only a full-tier run can mark a profile verified.

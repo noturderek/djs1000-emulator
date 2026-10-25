@@ -48,8 +48,8 @@ audio paths run as on the hardware:
 - **Filter insert loop.** The analog filter sits between the "Send & Return" playback (send DAC) and capture (return
   ADC). The shim queues the send frames and returns them one period later through a two-pole low-pass (CUTOFF and
   RESONANCE, pots no microcontroller reads) and a two-pole high-pass whose cutoff follows the 12-bit code the
-  firmware writes to `/dev/dac_spi4.0` (one 2-byte write per change of the HP CUTOFF pot word). The firmware mixes the
-  return into its outputs while ACTIVE is on (ACTIVE also drives the filter select GPIO line).
+  firmware writes to `/dev/dac_spi4.0` (one 2-byte write per change of the HP CUTOFF pot word). ACTIVE drives the filter
+  select GPIO line; how the firmware uses the return (and when it feeds the send) is not yet understood.
 - **MAIN OUT** is an analog volume after the master DAC: the shim scales the master channels the host receives (the
   firmware still gets the pot position as an ADC word). **INPUT LEVEL** scales the input capture.
 - A control the host never moved is neutral (unity gain, low-pass open), so a session that does not touch them sounds
