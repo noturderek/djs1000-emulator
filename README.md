@@ -1,14 +1,41 @@
-# DJS1K Replicator: mattpstv's fork of the SP16 Emulator
+# DJS-1000 Emulator
 
-> **This fork** (mattpstv) extends noturderek's [sp16-emulator](https://github.com/noturderek/sp16-emulator) toward
-> booting the **DJS-1000** firmware (`EP113_Main_R`, 1.22) on the same emulated hardware, and runs on **Intel Macs as
-> well as Apple silicon**. Everything below this box is upstream's README and still applies. Fork status and changes:
-> [docs/djs-fork.md](docs/djs-fork.md).
+A macOS emulator of the sampler hardware that is compatible with the Pioneer DJ DJS-1000. It emulates the machine
+(panel, pads, encoders, lamps, LCD, touch strip, audio codec, USB stick and internal storage) and boots a firmware
+update that **you** supply. The application, its libraries and everything else that runs inside the emulated
+machine come from that update; this repository contains none of it.
 
-A macOS emulator of the sampler hardware that is compatible with the TORAIZ SP-16. It emulates the machine (panel,
-pads, encoders, lamps, LCD, touch strip, audio codec, USB stick and internal storage) and boots a firmware update
-that **you** supply. The application, its libraries and everything else that runs inside the emulated machine come
-from that update; this repository contains none of it.
+It shares its engine with [sp16-emulator](https://github.com/noturderek/sp16-emulator) (the TORAIZ SP-16 sibling,
+same update format and same board family), with the same folder layout and commands. The DJS-1000 port is
+**mattpstv's DJS1K Replicator**, brought over onto upstream `125b35d`. The SP-16 profiles still work here; this
+repository's focus is the DJS-1000. Status, gaps and the plan: [docs/djs-1000.md](docs/djs-1000.md) and
+[docs/roadmap.md](docs/roadmap.md).
+
+> **Status (2026-10-25).** Stock DJS-1000 firmware 1.22 boots on Apple silicon to the PROJECT screen with audio
+> (built and booted on Apple silicon; the unit tests pass). Not yet: PRO DJ LINK, audio input, headphone output,
+> the standby key, MIDI, a hardware-suite pass. No custom mods; only the latest official firmware is supported.
+
+The rest of this README is inherited from sp16-emulator and is being updated for the DJS-1000. Where it says
+SP-16, the commands are the same (`./sp16 ...`; the command name will change when the engine is shared).
+
+## Quick start (DJS-1000)
+
+```sh
+git clone https://github.com/noturderek/djs1000-emulator.git && cd djs1000-emulator
+./sp16 doctor
+./sp16 build --name djs --audio coreaudio      # or --audio file for a silent build that records WAV files
+./sp16 firmware import --build djs --update DJS1000.UPD --key-file KEY   # or --gpl-archive PART1 PART2
+./sp16 firmware list                           # note the djs-1.22-... id
+./sp16 run --name djs --firmware djs-1.22-<id>
+```
+
+- **Firmware:** the latest official DJS-1000 update, version 1.22 (`DJS1000_ver122.zip`, which holds `DJS1000.UPD`),
+  from AlphaTheta's official support pages. You download it yourself.
+- **Key:** the update uses the same key as the SP-16 update, which the importer takes from the SP-16 GPL source
+  archive (see below) or from a key file you already have.
+- **Test sounds:** `python3 emulator/make_test_kit.py build/test-kit && ./sp16 usb add build/test-kit/*.wav` writes
+  synthetic samples, so no factory content is needed.
+- Only firmware 1.22 is supported, and only the stock, unmodified firmware (no custom mods yet).
 
 > **Not affiliated.** This project is independent and is not affiliated with, endorsed by or supported by
 > AlphaTheta Corporation, Pioneer DJ or the makers of the TORAIZ SP-16. It ships no firmware, no firmware-derived

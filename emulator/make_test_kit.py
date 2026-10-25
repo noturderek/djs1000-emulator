@@ -2,7 +2,7 @@
 """Write a small synthetic test kit: HW-KICK, HW-SNARE, HW-HAT and HW-TONE440 (16-bit 44.1 kHz mono WAV).
 
 The sounds are generated here, so the repository ships no audio and nobody's samples. They are the kit the DJS-1000
-research used (docs/djs-fork.md): the 440 Hz tone for pitch and timing, the kick and hat as onset markers.
+research used (docs/djs-1000.md): the 440 Hz tone for pitch and timing, the kick and hat as onset markers.
 
     python3 emulator/make_test_kit.py build/test-kit && ./sp16 usb add build/test-kit/*.wav
 """

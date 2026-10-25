@@ -1,6 +1,7 @@
 # AGENTS.md
 
-This repository is a macOS emulator for SP-16 compatible sampler firmware. It contains no firmware.
+This repository is a macOS emulator for DJS-1000 compatible sampler firmware (it also runs SP-16 profiles). It contains no firmware.
+It was ported from mattpstv's DJS1K Replicator onto sp16-emulator. Only stock official firmware (1.22) is in scope; no custom mods yet. Plan: [docs/roadmap.md](docs/roadmap.md).
 
 - Keep all agent rules and skills under `.agents/`. Claude Code reads `CLAUDE.md`, which imports this file; follow the same `.agents/skills/` entrypoints used by Codex. Do not add a separate `.claude/skills/` copy.
 - To take someone from a fresh clone to a running emulator (build with audio, firmware of their choice, samples and
