@@ -47,7 +47,19 @@ CONTROL_NAMES = {
     59: "usb_stop", 60: "active",
     61: "main_out", 62: "drive", 63: "lp_cutoff", 64: "lp_resonance", 65: "hp_cutoff",
 }
-CONTROL_IDS = {name: control for control, name in CONTROL_NAMES.items()}
+# Controls with no place in the panel layout (driven through the research socket): POWER/STANDBY is the M1 key that M2
+# relays as RX bit (5,4) (service manual key matrix; the app's PowerManager handles button object 14); INPUT LEVEL is
+# the rear analog gain pot; INPUT TONE is a test signal on the input jack and FILTER TONE one at the analog filter's
+# input, where the send DAC plays (research stimuli, level 0..1000, 0 = off).
+HOST_CONTROL_NAMES = {100: "power", 101: "input_level", 102: "input_tone", 103: "filter_tone"}
+ALL_CONTROL_NAMES = {**CONTROL_NAMES, **HOST_CONTROL_NAMES}
+CONTROL_IDS = {name: control for control, name in ALL_CONTROL_NAMES.items()}
+# Analog controls the board applies outside the firmware (no MCU sees them, or, for MAIN OUT, in addition to its ADC
+# word): the bridge passes them to the shim's board model (hardware_stub.c), which leaves an untouched control neutral.
+# Order = the u16 slots of the shared analog state (offset 12 + 2 * index); the tone frequency sits between slots 4
+# and 5 (offset 22), so FILTER TONE is at offset 24.
+HOST_ANALOG = ("main_out", "input_level", "lp_cutoff", "lp_resonance", "input_tone", "filter_tone")
+INPUT_TONE_HZ = 1000
 
 FRAME_BYTES = 128
 PAD_A_OFFSET, PAD_B_OFFSET = 0x06, 0x3f
@@ -69,8 +81,8 @@ assert len(BUTTON_OBJECTS) == 37
 # listed. 1.60 profile: E8 selector push is
 # byte 1 bit 1 (PUSH ENCODER STATUS); the button test names each single held bit; E9 from three levels deep
 # (HOME > UTILITY > TOUCH STRIP SETTING) bit 1.3 goes straight to HOME while bit 1.2 goes up one level per press.
-# Bits (1,2)/(1,3) also step the factory test pages. (1,0), (5,4), (5,7) produced no effect; (1,0) and (5,7) are not
-# among the 37 dispatched button objects.
+# Bits (1,2)/(1,3) also step the factory test pages. (1,0) and (5,7) produced no effect and are not among the 37
+# dispatched button objects. (5,4) is the power/standby key (role "power"): released, it puts the app in standby.
 BUTTON_BITS = {name: (byte, bit) for name, (byte, bit) in PROFILE["panel"]["button_roles"].items()}
 SELECTOR_PUSH = BUTTON_BITS.get("selector")
 
@@ -118,15 +130,16 @@ def decode_tx(frame):
 
 # Lamp-only ids shared with panel-layout.json (they have no input).
 LAMP_NAMES = {
-    **{69 + i: f"strip_led{i}" for i in range(1, 11)},
+    **{69 + i: f"strip_led{i}" for i in range(1, 9)},
     80: "lamp_pitch", 81: "lamp_repeat", 82: "lamp_user1", 83: "lamp_user2",
     **{83 + i: f"bar_led{i}" for i in range(1, 5)},
     88: "usb_led", 89: "over_led",
 }
 LAMP_IDS = {name: lamp for lamp, name in LAMP_NAMES.items()}
 
-# E8/E10: lamp roles -> ("rgb"|"mono", channel), from the firmware profile. Roles absent there have no proven
-# channel: strip_led9/10 (the TX extras at 0x66..0x68 and 0x6e are unassigned; no TX bit moved with the audio level).
+# E8/E10: lamp roles -> ("rgb"|"mono", channel), from the firmware profile. The service manual's LED matrix has 8
+# ribbon LEDs (Ribbon0..7), no LED on SHIFT or MODE (mono 4 drives nothing), the STBY LED on the USB STOP/WAKE UP key
+# (mono 24), and four LEDs M1 drives directly: ACTIVE (23), STBY (24), OVER (34) and USB CONNECT (25).
 # Evidence for the 1.60 profile: E8 buttons; E13 USB LED = mono 25 (lit while the virtual stick is mounted, blinking
 # during USB STOP hold and file writes); E14 OVER LED = mono 34 (master output peaks at or above about -0.9 dBFS,
 # held about 0.5 s; the role name is an inference from that trigger); E10 one-hot mode indicators (MODE cycles

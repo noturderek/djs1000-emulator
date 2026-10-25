@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SP-16 hardware conformance suite runner (docs/hardware-suite.md).
 
-45 checks (HW-01..HW-45) of the emulated hardware boundary, driven only through a research session's control socket,
+46 checks (HW-01..HW-46) of the emulated hardware boundary, driven only through a research session's control socket,
 its files and process signals to exact PIDs. The firmware is the oracle for hardware outcomes only; per-version data
 (probes, recipes, lamp roles) comes from the firmware's compatibility profile, and a check whose profile data is
 missing is BLOCKED, never PASS.
@@ -128,10 +128,12 @@ CHECKS = [
     Check("HW-44", "Soak", "Five minutes of play and input stays healthy", "L", ["audio.default_bpm"], ["HW-01"]),
     Check("HW-45", "Driver ABI", "Every device node and ioctl the firmware uses is served; unknown ones are loud", "S",
           ["device_nodes", "ioctl_set", "identity.panel_protocol_revision"], ["HW-01"]),
+    Check("HW-46", "Analog", "ACTIVE switches the filter loop into the output; CUTOFF shapes it", "C",
+          ["panel.lamp_roles"], ["HW-01"]),
 ]
 CHECK_BY_ID = {check.id: check for check in CHECKS}
 SMOKE_IDS = tuple(c.id for c in CHECKS if c.tier == "S")
-assert len(CHECKS) == 45 and len(SMOKE_IDS) == 16
+assert len(CHECKS) == 46 and len(SMOKE_IDS) == 16
 
 
 def checks_hash():
@@ -1804,7 +1806,7 @@ class Runner:
         # Named roles, then raw bits the profile declares with an observed effect (not dispatched as a named role).
         # Entries marked run_last leave the firmware in a state that lasts until restart; they run at the end of
         # the run, in the last session.
-        targets = [(role, effects.get(role)) for role in roles]
+        targets = [(role, effects.get(role)) for role in roles if not (effects.get(role) or {}).get("run_last")]
         targets += [(name, effect) for name, effect in effects.items() if effect.get("bit") and not effect.get("run_last")]
         subs = self.button_effects(targets)
         # Undeclared bits: a raw frame with only that bit set must change nothing.
@@ -2720,12 +2722,121 @@ class Runner:
                     errors.append((value, word, expected, round(settle, 2)))
                 if word is not None:
                     worst = max(worst, abs(word - expected))
-            s.event(name, "value", 500)
+            # MAIN OUT is also an analog volume in the board model (unity only at full scale): leave it there so later
+            # audio checks hear the firmware's level; the other pots go back to the centre.
+            s.event(name, "value", 1000 if name == "main_out" else 500)
             subs.append(sub(f"{name}: word linear within 1% of 1023, settle <= 2 s", not errors, str(errors[:3])))
+        dac = self.hp_dac_sweep(subs) if "hp_cutoff" in words else None
         for name in ("lp_cutoff", "lp_resonance"):
             if name not in words:
-                subs.append(sub(name, True, "no ADC word: analog-only stub (by design)", na=True))
-        return from_subresults("HW-30", subs, {"worst_error": worst})
+                g0 = self.fresh_guest()
+                result = s.event(name, "value", 500)
+                g1 = self.fresh_guest()
+                ok = result.get("ok", True) is not False and g1["unsupported"] == g0["unsupported"]
+                subs.append(sub(f"{name}: no ADC word; accepted as host analog state for the board model", ok,
+                                f"unsupported +{g1['unsupported'] - g0['unsupported']}"))
+        return from_subresults("HW-30", subs, {"worst_error": worst, "hp_dac": dac})
+
+    def hp_dac_sweep(self, subs):
+        """HP CUTOFF goes back out as the DAC7811 word on /dev/dac_spi4.0 (the shim reports the newest word). The app
+        eases the word toward its target, so each step waits for it to settle; DRIVE must leave it alone."""
+        s = self.session
+
+        def settled():
+            last, deadline = None, time.monotonic() + 6
+            while time.monotonic() < deadline:
+                time.sleep(.6)
+                code = ((self.fresh_guest().get("board") or {}).get("dac") or {}).get("code")
+                if code is not None and code == last:
+                    return code
+                last = code
+            return last
+        codes = []
+        for value in (0, 250, 500, 750, 1000):
+            s.event("hp_cutoff", "value", value)
+            codes.append(settled())
+        rising = None not in codes and all(a < b for a, b in zip(codes, codes[1:]))
+        subs.append(sub("hp_cutoff: DAC code rises strictly with the pot (0, 250, 500, 750, 1000)", rising, str(codes)))
+        s.event("drive", "value", 1000)
+        after = settled()
+        s.event("drive", "value", 500)
+        s.event("hp_cutoff", "value", 500)
+        settled()
+        subs.append(sub("drive: leaves the DAC code unchanged", after == codes[-1], f"{codes[-1]} -> {after}"))
+        return codes
+
+    # ------------------------------------------------------------------ checks: analog board model
+    def phones_peak(self, seconds=1.5):
+        """1 kHz amplitude in the newest `seconds` of the headphone stream (hw:ak4452audio,0) in the session's WAV, read after
+        waiting that long, or None when the session records no such file."""
+        time.sleep(seconds + 1.0)  # the host sink writes behind the guest by a few packets
+        stream = ((self.session.metrics().get("audio") or {}).get("streams") or {}).get("ak4452audio-0") or {}
+        path = stream.get("wav")
+        if not path or not Path(path).is_file():
+            return None
+        with open(path, "rb") as handle:
+            data = handle.read()
+        start = data.find(b"data") + 8
+        frames = (len(data) - start) // 8
+        take = min(frames, int(seconds * RATE))
+        values = struct.unpack_from(f"<{take * 2}f", data, start + (frames - take) * 8)
+        left = [v if math.isfinite(v) else 0.0 for v in values[0::2]]
+        # Amplitude of the 1 kHz stimulus only (Goertzel), so other sounds on the headphone bus (a sample an earlier
+        # check left playing, the metronome) do not mask the filter's effect.
+        k = 2 * math.cos(2 * math.pi * 1000 / RATE)
+        s1 = s2 = 0.0
+        for v in left:
+            s1, s2 = v + k * s1 - s2, s1
+        power = s1 * s1 + s2 * s2 - k * s1 * s2
+        return 2 * math.sqrt(max(power, 0.0)) / max(len(left), 1)
+
+    def hw46(self):
+        """The Dave Smith filter is an analog insert loop (service manual): the send DAC feeds the low-pass (CUTOFF,
+        RESONANCE, never seen by an MCU) and the DAC7811-driven high-pass, the return ADC brings it back, and ACTIVE
+        drives the filter select line GPIO5_IO05 through /dev/gpiodrv. A tone at the filter input (research
+        stimulus FILTER TONE) must reach the headphone output while ACTIVE is on and not while it is off, and the
+        lowest CUTOFF must cut it by more than 20 dB."""
+        s = self.session
+        self.normalize()
+        subs = []
+
+        def sel():
+            return (((self.fresh_guest().get("board") or {}).get("gpio") or {}).get("GPIO5_IO05"))
+
+        def set_active(on):
+            for _ in range(2):
+                if self.full(self.now(), "active") == on:
+                    return True
+                s.press("active")
+                time.sleep(.8)
+            return self.full(self.now(), "active") == on
+        lines = []
+        for on in (True, False, True):
+            ok = set_active(on)
+            lines.append((on, ok, sel()))
+        follows = all(ok and level == int(on) for on, ok, level in lines)
+        subs.append(sub("ACTIVE drives the filter select line GPIO5_IO05 (1 = filter in)", follows, str(lines)))
+        s.event("lp_cutoff", "value", 1000)
+        s.event("lp_resonance", "value", 0)
+        s.event("filter_tone", "value", 900)  # -6 dBFS, 1 kHz
+        on_peak = self.phones_peak()
+        set_active(False)
+        off_peak = self.phones_peak()
+        set_active(True)
+        ok = on_peak is not None and on_peak > .05 and off_peak is not None and off_peak < .1 * on_peak
+        subs.append(sub("the filter return reaches the headphone output only while ACTIVE is on", ok,
+                        f"on {on_peak}, off {off_peak}"))
+        s.event("lp_cutoff", "value", 0)
+        closed_peak = self.phones_peak()
+        ok = on_peak is not None and closed_peak is not None and closed_peak < .1 * on_peak
+        subs.append(sub("CUTOFF at its lowest cuts a 1 kHz tone by more than 20 dB", ok,
+                        f"open {on_peak}, lowest {closed_peak}"))
+        s.event("lp_cutoff", "value", 1000)
+        s.event("filter_tone", "value", 0)
+        report = (self.fresh_guest().get("board") or {}).get("filter_loop")
+        subs.append(sub("send stream from a track insert: not observed yet (informational)", True,
+                        "the app left the send playback silent in every insert setting tried; " + str(report)))
+        return from_subresults("HW-46", subs, {"on": on_peak, "off": off_peak, "lowest": closed_peak})
 
     # ------------------------------------------------------------------ checks: audio
     def hw31(self):
@@ -3565,7 +3676,7 @@ class Runner:
                  ("HW-34", self.hw34), ("HW-22", self.hw22), ("HW-23", self.hw23),
                  ("HW-27", self.hw27), ("HW-25", self.hw25), ("HW-35", self.hw35), ("HW-33", self.hw33_and_32),
                  ("HW-32", self.hw32), ("HW-44", self.hw44), ("HW-37", self.hw37), ("HW-38", self.hw38),
-                 ("HW-42", self.hw42), ("HW-45", self.hw45), ("HW-14", self.hw14)]
+                 ("HW-42", self.hw42), ("HW-45", self.hw45), ("HW-46", self.hw46), ("HW-14", self.hw14)]
         for hw_id, fn in order:
             self.record(hw_id, fn)
             if self.lost:

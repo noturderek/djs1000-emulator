@@ -86,7 +86,7 @@ PRE_SCOPE_BUTTON_BITS = {
     "hold": (2, 4), "mode": (2, 5), "scene": (2, 6), "pattern": (2, 7),
     **{f"step{i + 1}": (3 if i < 8 else 4, i % 8) for i in range(16)},
     "bar1": (5, 0), "bar2": (5, 1), "bar3": (5, 2), "bar4": (5, 3), "active": (5, 5), "usb_stop": (5, 6),
-    "back": (1, 2), "home": (1, 3)}
+    "back": (1, 2), "home": (1, 3), "power": (5, 4)}
 
 
 class VersionDataTests(unittest.TestCase):

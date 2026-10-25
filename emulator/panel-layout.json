@@ -76,8 +76,6 @@
     {"id": 75, "name": "strip_led6", "kind": "lamp", "group": "strip", "shape": "roundRect", "radius": 2, "cx": 167, "cy": 583.5, "w": 7, "h": 19, "accessibility": "Strip LED 6"},
     {"id": 76, "name": "strip_led7", "kind": "lamp", "group": "strip", "shape": "roundRect", "radius": 2, "cx": 167, "cy": 554.6, "w": 7, "h": 19, "accessibility": "Strip LED 7"},
     {"id": 77, "name": "strip_led8", "kind": "lamp", "group": "strip", "shape": "roundRect", "radius": 2, "cx": 167, "cy": 525.7, "w": 7, "h": 19, "accessibility": "Strip LED 8"},
-    {"id": 78, "name": "strip_led9", "kind": "lamp", "group": "strip", "shape": "roundRect", "radius": 2, "cx": 167, "cy": 496.8, "w": 7, "h": 19, "accessibility": "Strip LED 9"},
-    {"id": 79, "name": "strip_led10", "kind": "lamp", "group": "strip", "shape": "roundRect", "radius": 2, "cx": 167, "cy": 467.9, "w": 7, "h": 19, "accessibility": "Strip LED 10"},
     {"id": 80, "name": "lamp_pitch", "kind": "lamp", "group": "mode", "shape": "text", "label": "PITCH", "cx": 142, "cy": 269, "w": 70, "h": 16, "accessibility": "Mode lamp Pitch"},
     {"id": 81, "name": "lamp_repeat", "kind": "lamp", "group": "mode", "shape": "text", "label": "REPEAT", "cx": 142, "cy": 293, "w": 70, "h": 16, "accessibility": "Mode lamp Repeat"},
     {"id": 82, "name": "lamp_user1", "kind": "lamp", "group": "mode", "shape": "text", "label": "USER1", "cx": 142, "cy": 316, "w": 70, "h": 16, "accessibility": "Mode lamp User1"},
