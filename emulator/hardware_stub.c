@@ -6,6 +6,10 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <net/if_arp.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <sys/mman.h>
 #include <stdarg.h>
@@ -20,9 +24,9 @@
 #include <unistd.h>
 
 #define MAX_FDS 1024
-enum device { NONE, PANEL, CDC, DAC, BACKLIGHT, MEDIA, PACKET };
+enum device { NONE, PANEL, CDC, DAC, BACKLIGHT, MEDIA, PACKET, MIDI, GPIO };
 /* media: 1 = /proc/udev_usb1, 2 = /proc/udev_usbctn1 (only meaningful when kind==MEDIA). */
-struct state { enum device kind; int peer; uint32_t interval, bytes; uint16_t bits; uint8_t timer, endian, input, media; };
+struct state { enum device kind; int peer; uint32_t interval, bytes, offset; uint16_t bits; uint8_t timer, endian, input, media; };
 struct spi_message { uint8_t multi_id, reserved, part_id, part_num; uint32_t bytes; uint64_t tx_buf; };
 _Static_assert(sizeof(struct spi_message)==16,"SPI transfer descriptor ABI must be 16 bytes");
 static struct state devices[MAX_FDS];
@@ -38,6 +42,7 @@ static uint64_t mono_ns(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
     return (uint64_t)t.tv_sec*1000000000ULL+(uint64_t)t.tv_nsec;
 }
+static void dac_write(const void *buffer,size_t count);
 
 /* Bind a native-only datagram endpoint (panel RX or CDC strip). `input` is 1 for the
  * panel and 2 for the CDC controller, which closes/unlinks its own path. */
@@ -206,7 +211,89 @@ static enum device classify(const char *path) {
     if (!strcmp(path, "/dev/dac_spi4.0")) return DAC;
     if (!strcmp(path, "/dev/backlight")) return BACKLIGHT;
     if (!strcmp(path, "/proc/udev_usb1") || !strcmp(path, "/proc/udev_usbctn1")) return MEDIA;
+    if (!strcmp(path, "/dev/gpiodrv")) return GPIO;
+    /* DIN MIDI (UART2 and the din_midi driver) only when a loopback cable is asked for (factory test mode). */
+    if (!strcmp(path, "/dev/ttymxc1") || !strcmp(path, "/dev/din_midi")) {
+        const char *loop=getenv("SP16_MIDI_LOOPBACK");
+        return loop && !strcmp(loop,"1") ? MIDI : NONE;
+    }
     return NONE;
+}
+
+/* /dev/gpiodrv: the vendor GPIO driver. One byte per line at offset (bank - 1) * 32 + number; the app seeks, then
+ * writes the level (outputs) or reads it (inputs). Lines the app drives (service manual names): GPIO5_IO05
+ * SEL_xTHRU/DSF (analog filter input select), GPIO5_IO06 LMT_xOFF/ON (input limiter), GPIO1_IO05 MIDI_PASS (hardware
+ * MIDI thru), GPIO4_IO15 USB-A power enable; it polls GPIO4_IO14, USB-A over-current, active low. Every line reads 1
+ * (idle for the active-low inputs) until written. Changes are logged; the board model reads the filter select. */
+#define GPIO_LINES (7*32)
+static uint8_t gpio_level[GPIO_LINES], gpio_written[GPIO_LINES];
+static int gpio_ready;
+static unsigned long gpio_writes;
+static const char *gpio_name(unsigned line) {
+    switch (line) {
+    case 4*32+5: return "SEL_xTHRU/DSF";
+    case 4*32+6: return "LMT_xOFF/ON";
+    case 0*32+5: return "MIDI_PASS";
+    case 3*32+15: return "USB_OTG_PWR";
+    case 3*32+14: return "USBPWR_OC";
+    }
+    return "?";
+}
+static int gpio_open(void) {
+    if (!gpio_ready) { memset(gpio_level,1,sizeof gpio_level); gpio_ready=1; }
+    int pair[2]; /* a descriptor of our own; data never travels through it */
+    if (socketpair(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0,pair)) return -1;
+    if (pair[0]>=MAX_FDS) { original_close(pair[0]); original_close(pair[1]); errno=EMFILE; return -1; }
+    devices[pair[0]]=(struct state){ .kind=GPIO,.peer=pair[1] };
+    return pair[0];
+}
+static ssize_t gpio_io(struct state *s,void *buffer,size_t count,int writing) {
+    uint8_t *b=buffer;
+    size_t n=0;
+    for (;n<count && s->offset<GPIO_LINES;n++,s->offset++) {
+        unsigned line=s->offset;
+        if (!writing) { b[n]=gpio_level[line]; continue; }
+        uint8_t level=b[n]&1;
+        __atomic_add_fetch(&gpio_writes,1,__ATOMIC_RELAXED);
+        int first=!__atomic_exchange_n(&gpio_written[line],1,__ATOMIC_ACQ_REL);
+        if (__atomic_exchange_n(&gpio_level[line],level,__ATOMIC_ACQ_REL)!=level || first)
+            fprintf(stderr,"[sp16-ui-stub] gpio GPIO%u_IO%02u=%u %s\n",line/32+1,line%32,level,gpio_name(line));
+    }
+    return (ssize_t)n;
+}
+static off_t gpio_seek(struct state *s,off_t offset,int whence) {
+    off_t next=whence==SEEK_SET?offset:whence==SEEK_CUR?(off_t)s->offset+offset:whence==SEEK_END?GPIO_LINES+offset:-1;
+    if (next<0 || next>GPIO_LINES) { errno=EINVAL; return -1; }
+    s->offset=(uint32_t)next;
+    return next;
+}
+
+/* DIN MIDI loopback (SP16_MIDI_LOOPBACK=1, set for factory test mode): a cable from MIDI OUT to MIDI IN. Every open
+ * of a node shares one stream socket pair, so bytes written through any descriptor are read back through any other,
+ * as the factory DEVICE TEST expects (it writes a pattern through one open of /dev/ttymxc1 and reads it through a
+ * second). Node 1 = /dev/ttymxc1, node 2 = /dev/din_midi. */
+static int midi_pair[3][2]={ {-1,-1},{-1,-1},{-1,-1} };
+static unsigned long midi_bytes[3];
+static int midi_socket(int node) {
+    if (midi_pair[node][0]<0) {
+        int pair[2];
+        if (socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,pair)) return -1;
+        midi_pair[node][0]=pair[0]; midi_pair[node][1]=pair[1];
+    }
+    int fd=dup(midi_pair[node][0]);
+    if (fd<0) return -1;
+    if (fd>=MAX_FDS) { original_close(fd); errno=EMFILE; return -1; }
+    devices[fd]=(struct state){ .kind=MIDI,.peer=-1,.media=(uint8_t)node };
+    return fd;
+}
+static ssize_t midi_write(struct state *s,const void *buffer,size_t count) {
+    int out=midi_pair[s->media][1];
+    if (out<0) { errno=EBADF; return -1; }
+    ssize_t n=send(out,buffer,count,MSG_DONTWAIT|MSG_NOSIGNAL);
+    if (n<0 && errno==EAGAIN) return (ssize_t)count; /* a full cable drops bytes, as an unread UART would */
+    if (n>0 && (midi_bytes[s->media]+=(unsigned long)n)==(unsigned long)n)
+        fprintf(stderr,"[sp16-ui-stub] midi loopback %s first bytes=%ld\n",s->media==2?"/dev/din_midi":"/dev/ttymxc1",(long)n);
+    return n;
 }
 
 /* Driver coverage (hardware suite HW-45, docs/architecture.md M5): a device node the shim does not serve is reported once
@@ -243,6 +330,8 @@ static int open_device(const char *path, int flags, mode_t mode) {
     int fd=-1;
     if (native && kind==PANEL) fd=input_socket(PANEL,"SP16_PANEL_SOCKET","/dev/sp16-panel-input",panel_path);
     else if (native && kind==CDC) fd=input_socket(CDC,"SP16_CDC_SOCKET","/dev/sp16-cdc-input",cdc_path);
+    else if (kind==MIDI) fd=midi_socket(!strcmp(path,"/dev/din_midi")?2:1);
+    else if (kind==GPIO) fd=gpio_open();
     else if (kind==MEDIA) {
         int node=!strcmp(path,"/proc/udev_usbctn1")?2:1;
         fd=media_socket(node);
@@ -265,6 +354,19 @@ int open64(const char *path, int flags, ...) {
     mode_t mode = 0;
     if (flags & O_CREAT) { va_list args; va_start(args, flags); mode = va_arg(args, mode_t); va_end(args); }
     return open_device(path, flags, mode);
+}
+
+off_t lseek(int fd,off_t offset,int whence) {
+    off_t (*real)(int,off_t,int)=dlsym(RTLD_NEXT,"lseek");
+    struct state *s=device(fd);
+    if (s && s->kind==GPIO) return gpio_seek(s,offset,whence);
+    return real(fd,offset,whence);
+}
+int64_t lseek64(int fd,int64_t offset,int whence) {
+    int64_t (*real)(int,int64_t,int)=dlsym(RTLD_NEXT,"lseek64");
+    struct state *s=device(fd);
+    if (s && s->kind==GPIO) return gpio_seek(s,(off_t)offset,whence);
+    return real(fd,offset,whence);
 }
 
 int close(int fd) {
@@ -299,8 +401,11 @@ ssize_t write(int fd, const void *buffer, size_t count) {
         media_note(s,"write");
         if (s->peer<0) return media_write(s,fd,buffer,count);
     }
+    if (s->kind==MIDI) return midi_write(s,buffer,count);
+    if (s->kind==GPIO) return gpio_io(s,(void *)buffer,count,1);
     if (s->kind == MEDIA || s->kind==PACKET) { errno=ENOTSUP; return -1; }
     if (s->timer) { errno=EFAULT; return -1; }
+    if (s->kind==DAC) dac_write(buffer,count);
     /* The OEM synchronous SPI write contract returns zero, not count. */
     return 0;
 }
@@ -326,6 +431,8 @@ ssize_t read(int fd, void *buffer, size_t count) {
         }
         return result;
     }
+    if (s->kind==MIDI) return original_read(fd,buffer,count); /* the loopback cable */
+    if (s->kind==GPIO) return gpio_io(s,buffer,count,0);
     if (s->kind==MEDIA) {
         media_note(s,"read");
         if (s->peer<0) return original_read(fd,buffer,count); /* blocks while empty, pops one message */
@@ -341,7 +448,7 @@ ssize_t read(int fd, void *buffer, size_t count) {
 static void note_ioctl(unsigned long request, enum device kind) {
     static unsigned long seen[32];
     static int count;
-    static const char *names[] = {"none", "panel", "cdc", "dac", "backlight", "media", "packet"};
+    static const char *names[] = {"none", "panel", "cdc", "dac", "backlight", "media", "packet", "midi", "gpio"};
     int known = __atomic_load_n(&count, __ATOMIC_ACQUIRE);
     for (int i=0; i<known && i<32; i++) if (__atomic_load_n(&seen[i], __ATOMIC_RELAXED)==request) return;
     int slot = __atomic_fetch_add(&count, 1, __ATOMIC_ACQ_REL);  /* a racing duplicate line is harmless */
@@ -350,13 +457,73 @@ static void note_ioctl(unsigned long request, enum device kind) {
     fprintf(stderr, "[sp16-ui-stub] ioctl accepted request=0x%lx device=%s\n", request, names[kind]);
 }
 
+/* Fake eth0 (SP16_FAKE_ETH0=1, set with the factory test mode): the guest has only lo, but the DEVICE TEST page
+ * (page 8) reads the MAC (retrying with 250 ms sleeps until bytes 3..5 are not all zero) and the IP of eth0 on the
+ * UI thread, so without an interface it never returns. Every value below is fake: a locally administered MAC
+ * (02:00:5e:10:00:01), 192.0.2.16/24 (TEST-NET-1) and an interface that is up. Link data (SIOCETHTOOL) is not
+ * faked: it fails with EOPNOTSUPP. Off in normal runs, where eth0 stays absent. */
+#define SP16_SIOCGIFFLAGS 0x8913UL
+#define SP16_SIOCGIFADDR 0x8915UL
+#define SP16_SIOCGIFNETMASK 0x891bUL
+#define SP16_SIOCGIFHWADDR 0x8927UL
+#define SP16_SIOCETHTOOL 0x8946UL
+static int fake_eth0_enabled(void) {
+    static int enabled=-1;
+    if (enabled<0) { const char *v=getenv("SP16_FAKE_ETH0"); enabled = v && !strcmp(v,"1"); }
+    return enabled;
+}
+
+static void fake_eth0_address(struct ifreq *ifr, uint32_t host_order_address) {
+    struct sockaddr_in *in=(struct sockaddr_in *)&ifr->ifr_addr;
+    memset(&ifr->ifr_addr, 0, sizeof ifr->ifr_addr);
+    in->sin_family=AF_INET;
+    in->sin_addr.s_addr=htonl(host_order_address);
+}
+
+/* Returns 1 and sets *result when the request is a fake-eth0 one, 0 to pass it on. */
+static int fake_eth0_ioctl(unsigned long request, void *arg, int *result) {
+    static const char *kinds[]={"SIOCGIFHWADDR","SIOCGIFADDR","SIOCGIFNETMASK","SIOCGIFFLAGS","SIOCETHTOOL"};
+    static int logged[5];
+    int kind;
+    switch (request) {
+    case SP16_SIOCGIFHWADDR: kind=0; break;
+    case SP16_SIOCGIFADDR: kind=1; break;
+    case SP16_SIOCGIFNETMASK: kind=2; break;
+    case SP16_SIOCGIFFLAGS: kind=3; break;
+    case SP16_SIOCETHTOOL: kind=4; break;
+    default: return 0;
+    }
+    struct ifreq *ifr=arg;
+    if (!fake_eth0_enabled() || !ifr) return 0;
+    if (strncmp(ifr->ifr_name,"eth0",IFNAMSIZ)) return 0;
+    if (!__atomic_exchange_n(&logged[kind], 1, __ATOMIC_RELAXED))
+        fprintf(stderr, "[sp16-ui-stub] fake eth0 %s\n", kinds[kind]);
+    switch (kind) {
+    case 0: {
+        static const uint8_t mac[6]={0x02,0x00,0x5e,0x10,0x00,0x01};
+        memset(&ifr->ifr_hwaddr, 0, sizeof ifr->ifr_hwaddr);
+        ifr->ifr_hwaddr.sa_family=ARPHRD_ETHER;
+        memcpy(ifr->ifr_hwaddr.sa_data, mac, sizeof mac);
+        *result=0; break; }
+    case 1: fake_eth0_address(ifr, 0xc0000210UL); *result=0; break;
+    case 2: fake_eth0_address(ifr, 0xffffff00UL); *result=0; break;
+    case 3: ifr->ifr_flags=IFF_UP|IFF_RUNNING|IFF_BROADCAST; *result=0; break;
+    default: errno=EOPNOTSUPP; *result=-1; break;
+    }
+    return 1;
+}
+
 static int device_ioctl(struct state *s, int fd, unsigned long request, void *arg);
 
 int ioctl(int fd, unsigned long request, ...) {
     if (!original_ioctl) original_ioctl=dlsym(RTLD_NEXT,"ioctl");
     va_list args; va_start(args, request); void *arg=va_arg(args, void *); va_end(args);
     struct state *s = device(fd);
-    if (!s) return original_ioctl(fd, request, arg);
+    if (!s) {
+        int fake_result;
+        if (fake_eth0_ioctl(request, arg, &fake_result)) return fake_result;
+        return original_ioctl(fd, request, arg);
+    }
     int result = device_ioctl(s, fd, request, arg);
     if (result==0) note_ioctl(request, s->kind);
     return result;
@@ -364,6 +531,16 @@ int ioctl(int fd, unsigned long request, ...) {
 
 static int device_ioctl(struct state *s, int fd, unsigned long request, void *arg) {
     if (s->kind==BACKLIGHT && request==0x40047000UL) return arg?0:(errno=EFAULT,-1);
+    if (s->kind==MIDI) {
+        /* A UART line setting has no meaning on the cable: TCGETS reports a zeroed kernel termios (36 bytes on
+         * ARM), the TCSETS family and TCFLSH are accepted, FIONREAD is answered by the socket. */
+        if (request==0x541bUL) return original_ioctl(fd,request,arg);
+        if (!arg && request!=0x540bUL) { errno=EFAULT; return -1; }
+        if (request==0x5401UL) { memset(arg,0,36); return 0; }
+        if (request==0x5402UL || request==0x5403UL || request==0x5404UL || request==0x540bUL) return 0;
+        fprintf(stderr, "[sp16-ui-stub] unsupported ioctl fd=%d request=0x%lx\n", fd, request);
+        errno=ENOTTY; return -1;
+    }
     if (s->kind!=PANEL && s->kind!=CDC && s->kind!=DAC) { errno=ENOTTY; return -1; }
     if (!arg) { errno=EFAULT; return -1; }
     switch (request) {
@@ -407,7 +584,8 @@ typedef long snd_pcm_sframes_t;
 struct ax_ring;
 struct pcm_state { snd_pcm_t *handle; unsigned int rate; int stream; char name[24];
                    uint64_t calls, frames, slept_ns, reported_ns, deadline_ns; int tid;
-                   uint32_t logged; uint8_t io_logged; struct pcm_tap *tap; struct ax_ring *ax; };
+                   uint32_t logged; uint8_t io_logged; struct pcm_tap *tap; struct ax_ring *ax;
+                   int format; unsigned channels; float phase; };
 static struct pcm_state pcms[16];
 /* Research-only PCM tap (SP16_PCM_TAP=<dir>, set by guest-init only for --trace pcmtap builds). Playback frames
  * written by the OEM are copied with one memcpy into a preallocated, bounded, MAP_SHARED file
@@ -427,6 +605,7 @@ static void ax_init(struct pcm_state *s,unsigned channels,int format);
 static void ax_close(struct pcm_state *s);
 static void ax_feed(struct pcm_state *s,const void *buffer,snd_pcm_sframes_t frames);
 static void ax_report(struct pcm_state *s);
+static void main_out_scale(struct ax_ring *r,uint8_t *data,uint32_t frames);
 static struct pcm_state *pcm(snd_pcm_t *handle) {
     for (unsigned i=0;i<16;i++) if (pcms[i].handle==handle) return &pcms[i];
     return NULL;
@@ -482,12 +661,21 @@ int snd_pcm_hw_params_set_access(snd_pcm_t *handle,snd_pcm_hw_params_t *params,i
                                       s->name,access,access_label(access),result);
     return result;
 }
+/* The AK4452 codec driver of the SP-16 kernel declares S16_LE, S24_LE and S20_3LE only (its DAI stream tables); the
+ * null plugin also takes FLOAT_LE, which the app's format search tries first, so without a restriction the board
+ * streams run a sample path the unit never runs. The shim therefore refuses the formats the codec lacks by default, so
+ * the app settles on S24_LE as on the unit. SP16_PCM_ANY_FORMAT=1 (research) restores the null plugin's answer. */
+static int codec_refuses(const struct pcm_state *s,int format) {
+    const char *any=getenv("SP16_PCM_ANY_FORMAT");
+    if (!s || (any && !strcmp(any,"1")) || strncmp(s->name,"hw:ak4452audio,",15)) return 0;
+    return format!=2 && format!=6 && format!=36;
+}
 int snd_pcm_hw_params_set_format(snd_pcm_t *handle,snd_pcm_hw_params_t *params,int format) {
     int (*real)(snd_pcm_t *,snd_pcm_hw_params_t *,int)=alsa_symbol("snd_pcm_hw_params_set_format");
     if (!real) { errno=ENOSYS; return -ENOSYS; }
-    int result=real(handle,params,format);
     struct pcm_state *s=pcm(handle);
-    if (s && first_time(s,1)) fprintf(stderr,"[sp16-ui-stub] PCM %s set_format requested=%d(%s) result=%d\n",
+    int result=codec_refuses(s,format)?-EINVAL:real(handle,params,format);
+    if (s && (first_time(s,1) || (!result && first_time(s,9)))) fprintf(stderr,"[sp16-ui-stub] PCM %s set_format requested=%d(%s) result=%d\n",
                                       s->name,format,format_label(format),result);
     return result;
 }
@@ -568,6 +756,14 @@ int snd_pcm_hw_params(snd_pcm_t *handle,snd_pcm_hw_params_t *params) {
                 (unsigned long)period,(unsigned long)buffer,periods,s->stream?"capture":"playback");
         if (!result) { pcm_state_init_tap(s,channels,format); ax_init(s,channels,format); }
     }
+    if (s && !result) { /* the board model converts samples in the negotiated layout, also after a re-negotiation */
+        int (*get_format)(const snd_pcm_hw_params_t *,int *)=alsa_symbol("snd_pcm_hw_params_get_format");
+        int (*get_channels)(const snd_pcm_hw_params_t *,unsigned int *)=alsa_symbol("snd_pcm_hw_params_get_channels");
+        int format=-1; unsigned int channels=0;
+        if (get_format) get_format(params,&format);
+        if (get_channels) get_channels(params,&channels);
+        s->format=format; s->channels=channels;
+    }
     return result;
 }
 /* Pace each stream against an absolute deadline on the (shared) 48 kHz board clock. A relative sleep per
@@ -585,8 +781,8 @@ static unsigned tap_seconds(void) {
     const char *text=getenv("SP16_PCM_TAP_SECONDS"); long v=text?strtol(text,NULL,10):PCM_TAP_DEFAULT_S;
     return v<1?PCM_TAP_DEFAULT_S:(v>(long)PCM_TAP_MAX_S?PCM_TAP_MAX_S:(unsigned)v);
 }
-static unsigned tap_width(int format) { /* bytes per sample: S16_LE=2, FLOAT_LE=14 -> 4, S32_LE=10 -> 4 */
-    return format==2?2:(format==14||format==10?4:0);
+static unsigned tap_width(int format) { /* bytes per sample: S16_LE=2, FLOAT_LE=14, S32_LE=10, S24_LE=6 -> 4 */
+    return format==2?2:(format==14||format==10||format==6?4:0);
 }
 static void pcm_state_init_tap(struct pcm_state *s,unsigned channels,int format) {
     const char *dir=getenv("SP16_PCM_TAP");
@@ -670,7 +866,7 @@ static void pcm_tap_feed(struct pcm_state *s,const void *buffer,snd_pcm_sframes_
 #define AX_MAX_SLOTS_PER_PACKET 16u
 struct ax_slot { uint64_t ts_ns, frame_index; uint32_t frames; uint8_t data[AX_SLOT_BYTES]; };
 struct ax_ring { struct ax_slot slots[AX_SLOTS]; uint32_t head, tail, cfg_gen, active;
-                 uint32_t rate, width, total_ch, first_ch, sent_ch, fmt, stream, high_water;
+                 uint32_t rate, width, total_ch, first_ch, sent_ch, fmt, src_fmt, stream, high_water;
                  uint64_t next_frame, drops, packets, frames_sent; };
 static struct ax_ring ax_rings[AX_STREAMS];
 static const char *ax_port_path;
@@ -690,7 +886,9 @@ static void ax_init(struct pcm_state *s,unsigned channels,int format) {
     const char *env=id==0?getenv("SP16_PCM_PORT_CHANNELS"):NULL; /* research override "first:count" */
     if (env) { unsigned a,b; if (sscanf(env,"%u:%u",&a,&b)==2 && b && a+b<=channels) { first=a; count=b; } }
     __atomic_store_n(&r->active,0,__ATOMIC_RELEASE);
-    r->rate=s->rate; r->width=width; r->total_ch=channels; r->first_ch=first; r->sent_ch=count; r->fmt=(uint32_t)format; r->stream=id;
+    /* S24_LE (24 bits low in a 32-bit word) travels as FLOAT_LE, the format the host sink already writes */
+    r->rate=s->rate; r->width=width; r->total_ch=channels; r->first_ch=first; r->sent_ch=count; r->src_fmt=(uint32_t)format;
+    r->fmt=format==6?14u:(uint32_t)format; r->stream=id;
     __atomic_add_fetch(&r->cfg_gen,1,__ATOMIC_RELEASE);
     __atomic_store_n(&r->active,1,__ATOMIC_RELEASE);
     s->ax=r;
@@ -721,6 +919,11 @@ static void ax_feed(struct pcm_state *s,const void *buffer,snd_pcm_sframes_t fra
             slot->ts_ns=ts; slot->frame_index=r->next_frame; slot->frames=n;
             if (run==bpf) memcpy(slot->data,src,(size_t)n*bpf);
             else for (uint32_t i=0;i<n;i++) memcpy(slot->data+(size_t)i*run,src+(size_t)i*bpf+skip,run);
+            if (r->src_fmt==6) for (uint32_t i=0;i<n*r->sent_ch;i++) {
+                int32_t v; memcpy(&v,slot->data+(size_t)i*4,4); v=(int32_t)((uint32_t)v<<8)>>8;
+                float f=(float)v/8388608.0f; memcpy(slot->data+(size_t)i*4,&f,4);
+            }
+            if (r->stream==0) main_out_scale(r,slot->data,n);
             if (head+1-tail>r->high_water) r->high_water=head+1-tail;
             __atomic_store_n(&r->head,head+1,__ATOMIC_RELEASE);
         }
@@ -795,6 +998,229 @@ static void *ax_forwarder(void *unused) {
     }
     return NULL;
 }
+/* ---------------------------------------------------------------------------------------------- analog board model
+ * What the board does to audio outside the firmware, from the service manual's signal path (hardware description in
+ * our own words, docs/architecture.md):
+ *  - The filter is an insert loop: the "Send & Return" playback (send DAC) goes through an analog low-pass (CUTOFF,
+ *    RESONANCE pots, never seen by any MCU) and a high-pass whose cutoff is a control voltage from a DAC7811 on
+ *    /dev/dac_spi4.0, and comes back on the "Send & Return" capture (return ADC). Here the send frames are queued and
+ *    returned one period later through a two-pole low-pass and a two-pole high-pass.
+ *  - MAIN OUT is an analog volume after the master DAC (its pot position also reaches the firmware as an ADC word),
+ *    INPUT LEVEL an analog gain before the input ADC (no MCU sees it).
+ * Host-only state (MAIN OUT gain, INPUT LEVEL, CUTOFF, RESONANCE, a test tone on the input) comes from the bridge
+ * through a 64-byte shared file (SP16_ANALOG, default /dev/sp16-analog) with a sequence lock. A control the host
+ * never moved is neutral (unity gain, filter open), so a session that does not touch them sounds as before.
+ * The shim links no libm, hence the small sine and exp2 below. */
+#define BM_PI 3.14159265f
+static float bm_sin(float x) { /* |error| < 1e-4 on any input */
+    while (x>BM_PI) x-=2*BM_PI;
+    while (x<-BM_PI) x+=2*BM_PI;
+    if (x>BM_PI/2) x=BM_PI-x; else if (x<-BM_PI/2) x=-BM_PI-x;
+    float x2=x*x;
+    return x*(1-x2/6*(1-x2/20*(1-x2/42*(1-x2/72))));
+}
+static float bm_tan(float x) { float c=bm_sin(x+BM_PI/2); return bm_sin(x)/(c>1e-6f?c:1e-6f); }
+static float bm_exp2(float x) { /* 2^x, relative error < 1e-4 for |x| < 60 */
+    if (x<-60) return 0;
+    int i=(int)x; if ((float)i>x) i--;
+    float f=x-(float)i, l=f*0.69314718f;
+    float r=1+l*(1+l/2*(1+l/3*(1+l/4*(1+l/5*(1+l/6)))));
+    for (;i>0;i--) r*=2;
+    for (;i<0;i++) r*=.5f;
+    return r;
+}
+#define BM_DECADES3 9.965784f /* log2(1000): 20 Hz .. 20 kHz over the pot or DAC range */
+
+/* DAC7811 (high-pass control voltage): the app writes one little-endian 16-bit word per change, only when the
+ * HPF pot word changes. The word is control nibble (bits 15..12) + 12-bit code. Logged on change, at most one line
+ * per 50 ms; the newest word is flushed later from the audio clock (pace) so the last position is always logged. */
+static uint32_t dac_word=0xffffffffu; /* 0xffffffff: never written */
+static unsigned long dac_writes;
+static uint32_t dac_logged=0xffffffffu;
+static uint64_t dac_logged_ns;
+static void dac_log(uint32_t word) {
+    /* several audio threads may flush at once: only the one that swaps the logged word in prints */
+    if (__atomic_exchange_n(&dac_logged,word,__ATOMIC_ACQ_REL)==word) return;
+    fprintf(stderr,"[sp16-ui-stub] dac hpf word=0x%04x ctrl=%u code=%u writes=%lu\n",(unsigned)word,(unsigned)(word>>12),
+            (unsigned)(word&0xfff),__atomic_load_n(&dac_writes,__ATOMIC_RELAXED));
+    dac_logged_ns=mono_ns();
+}
+static void dac_write(const void *buffer,size_t count) {
+    if (count!=2 || !buffer) {
+        static int warned;
+        if (!warned++) fprintf(stderr,"[sp16-ui-stub] dac write of %zu bytes ignored (expected 2)\n",count);
+        return;
+    }
+    const uint8_t *b=buffer;
+    uint32_t word=(uint32_t)b[0]|(uint32_t)b[1]<<8;
+    __atomic_store_n(&dac_word,word,__ATOMIC_RELEASE);
+    unsigned long n=__atomic_add_fetch(&dac_writes,1,__ATOMIC_RELAXED);
+    if (word!=dac_logged && (n<=8 || mono_ns()-dac_logged_ns>=50000000ULL)) dac_log(word);
+}
+static void dac_flush(uint64_t now) {
+    uint32_t word=__atomic_load_n(&dac_word,__ATOMIC_ACQUIRE);
+    if (word!=0xffffffffu && word!=dac_logged && now-dac_logged_ns>=50000000ULL) dac_log(word);
+}
+
+/* Shared host state: 0 "SP16ANA1", 8 u32 sequence (odd while the bridge writes), then u16 values 0..1000 or 0xffff
+ * (never moved): 12 main_out, 14 input_level, 16 lp_cutoff, 18 lp_resonance, 20 input tone level (0 = off),
+ * 22 test tone frequency in Hz, 24 filter tone level (a research stimulus at the filter input, where the send DAC plays, 0 = off). */
+struct analog { float main_gain, input_gain, lp_fc, lp_k, tone_amp, tone_hz, filter_amp; int main_set, lp_set; };
+static struct analog analog_now={ 1,1,20000,2,0,1000,0,0,0 };
+static const uint8_t *analog_map;
+static uint64_t analog_checked_ns, analog_open_ns;
+static float pot(uint16_t v) { return v>1000?1.0f:(float)v/1000.0f; }
+static void analog_refresh(uint64_t now) {
+    if (analog_checked_ns && now-analog_checked_ns<20000000ULL) return;
+    analog_checked_ns=now;
+    if (!analog_map) {
+        if (analog_open_ns && now-analog_open_ns<1000000000ULL) return;
+        analog_open_ns=now;
+        const char *path=getenv("SP16_ANALOG"); if (!path) path="/dev/sp16-analog";
+        int fd=original_open?original_open(path,O_RDONLY|O_CLOEXEC):-1;
+        if (fd<0) return;
+        void *map=mmap(NULL,64,PROT_READ,MAP_SHARED,fd,0); original_close(fd);
+        if (map==MAP_FAILED) return;
+        if (memcmp(map,"SP16ANA1",8)) { munmap(map,64); return; }
+        analog_map=map;
+        fprintf(stderr,"[sp16-ui-stub] analog board state mapped from %s\n",path);
+    }
+    uint32_t seq1, seq2; uint16_t v[7];
+    memcpy(&seq1,analog_map+8,4); __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    if (seq1&1) return;
+    memcpy(v,analog_map+12,sizeof v); __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    memcpy(&seq2,analog_map+8,4);
+    if (seq1!=seq2) return;
+    struct analog a=analog_now;
+    a.main_set=v[0]!=0xffff; a.main_gain=a.main_set?pot(v[0])*pot(v[0]):1;       /* audio taper, unity at full */
+    a.input_gain=v[1]!=0xffff?4*pot(v[1])*pot(v[1]):1;                            /* unity at the centre, +12 dB max */
+    a.lp_set=v[2]!=0xffff || v[3]!=0xffff;
+    a.lp_fc=v[2]!=0xffff?20*bm_exp2(pot(v[2])*BM_DECADES3):20000;
+    a.lp_k=v[3]!=0xffff?2-1.9f*pot(v[3]):2;                                       /* 1/Q: 0.5 .. 10 */
+    a.tone_amp=v[4] && v[4]!=0xffff?bm_exp2((-60+60*pot(v[4]))/6.0206f):0;       /* -60 .. 0 dBFS */
+    a.tone_hz=v[5] && v[5]!=0xffff?(float)v[5]:1000;
+    a.filter_amp=v[6] && v[6]!=0xffff?bm_exp2((-60+60*pot(v[6]))/6.0206f):0;
+    analog_now=a;
+}
+
+/* Sample conversion for the layouts the app can negotiate (ALSA format ids). */
+static unsigned bm_width(int format) { return format==2?2:(format==10||format==14||format==6?4:0); }
+static float bm_get(const uint8_t *p,int format) {
+    if (format==14) { float f; memcpy(&f,p,4); return f; }
+    if (format==2) { int16_t v; memcpy(&v,p,2); return (float)v/32768.0f; }
+    int32_t v; memcpy(&v,p,4);
+    if (format==6) { v=(int32_t)((uint32_t)v<<8)>>8; return (float)v/8388608.0f; }
+    return (float)v/2147483648.0f;
+}
+static void bm_put(uint8_t *p,int format,float f) {
+    if (f>1) f=1; else if (f<-1) f=-1;
+    if (format==14) { memcpy(p,&f,4); return; }
+    if (format==2) { int16_t v=(int16_t)(f*32767.0f); memcpy(p,&v,2); return; }
+    int32_t v=format==6?(int32_t)(f*8388607.0f):(int32_t)(f*2147483520.0f);
+    memcpy(p,&v,4);
+}
+
+/* Two-pole state-variable filter (trapezoidal integration, stable under fast parameter changes). */
+struct svf { float fc, k, a1, a2, a3, ic1[2], ic2[2]; };
+static void svf_tune(struct svf *f,float fc,float k,float rate) {
+    if (fc>0.45f*rate) fc=0.45f*rate;
+    if (f->fc==fc && f->k==k) return;
+    float g=bm_tan(BM_PI*fc/rate);
+    f->fc=fc; f->k=k; f->a1=1/(1+g*(g+k)); f->a2=g*f->a1; f->a3=g*f->a2;
+}
+static float svf_run(struct svf *f,unsigned c,float x,int high) {
+    float v3=x-f->ic2[c], v1=f->a1*f->ic1[c]+f->a2*v3, v2=f->ic2[c]+f->a2*f->ic1[c]+f->a3*v3;
+    f->ic1[c]=2*v1-f->ic1[c]; f->ic2[c]=2*v2-f->ic2[c];
+    return high?x-f->k*v1-v2:v2;
+}
+
+/* The loop: the send playback is queued as stereo float; the return capture takes it one period later. A capture
+ * that finds the queue empty returns silence (counted), a full queue drops the newest send frames (counted). */
+#define LOOP_FRAMES 8192u
+static float loop_buf[LOOP_FRAMES][2];
+static uint32_t loop_head, loop_tail;
+static unsigned long loop_frames, loop_underruns, loop_drops;
+static float loop_send_peak, loop_return_peak;
+static uint64_t loop_report_ns;
+static struct svf loop_lp, loop_hp;
+static int is_board(const struct pcm_state *s,const char *name,int stream) { return s->stream==stream && !strcmp(s->name,name); }
+static void loop_send(struct pcm_state *s,const void *buffer,snd_pcm_sframes_t frames) {
+    unsigned w=bm_width(s->format);
+    if (!w || !s->channels || frames<=0 || !buffer) return;
+    const uint8_t *p=buffer; unsigned bpf=w*s->channels;
+    for (snd_pcm_sframes_t i=0;i<frames;i++,p+=bpf) {
+        uint32_t head=loop_head, tail=__atomic_load_n(&loop_tail,__ATOMIC_ACQUIRE);
+        if (head-tail>=LOOP_FRAMES) { loop_drops++; continue; }
+        float l=bm_get(p,s->format), r=s->channels>1?bm_get(p+w,s->format):l;
+        float m=l<0?-l:l, n=r<0?-r:r; if (m>loop_send_peak) loop_send_peak=m; if (n>loop_send_peak) loop_send_peak=n;
+        loop_buf[head%LOOP_FRAMES][0]=l; loop_buf[head%LOOP_FRAMES][1]=r;
+        __atomic_store_n(&loop_head,head+1,__ATOMIC_RELEASE);
+    }
+}
+static void loop_return(struct pcm_state *s,void *buffer,snd_pcm_sframes_t frames) {
+    unsigned w=bm_width(s->format);
+    if (!w || !s->channels || frames<=0 || !buffer) return;
+    struct analog a=analog_now;
+    uint32_t word=__atomic_load_n(&dac_word,__ATOMIC_ACQUIRE);
+    int hp_on=word!=0xffffffffu;
+    float rate=(float)(s->rate?s->rate:44100);
+    svf_tune(&loop_lp,a.lp_fc,a.lp_k,rate);
+    if (hp_on) svf_tune(&loop_hp,20*bm_exp2((float)(word&0xfff)/4095.0f*BM_DECADES3),1.4142f,rate);
+    uint8_t *p=buffer; unsigned bpf=w*s->channels;
+    float step=2*BM_PI*a.tone_hz/rate;
+    for (snd_pcm_sframes_t i=0;i<frames;i++,p+=bpf) {
+        float extra=0;
+        if (a.filter_amp>0) { extra=a.filter_amp*bm_sin(s->phase); s->phase+=step; if (s->phase>BM_PI) s->phase-=2*BM_PI; }
+        uint32_t tail=loop_tail, head=__atomic_load_n(&loop_head,__ATOMIC_ACQUIRE);
+        float in[2]={0,0};
+        if (tail!=head) {
+            in[0]=loop_buf[tail%LOOP_FRAMES][0]; in[1]=loop_buf[tail%LOOP_FRAMES][1];
+            __atomic_store_n(&loop_tail,tail+1,__ATOMIC_RELEASE); loop_frames++;
+        } else loop_underruns++;
+        for (unsigned c=0;c<s->channels;c++) {
+            unsigned k=c<2?c:1;
+            float y=in[k]+extra; /* the research tone enters where the send DAC would, ahead of both filters */
+            if (a.lp_set) y=svf_run(&loop_lp,k,y,0);
+            if (hp_on) y=svf_run(&loop_hp,k,y,1);
+            float m=y<0?-y:y; if (m>loop_return_peak) loop_return_peak=m;
+            bm_put(p+c*w,s->format,y);
+        }
+    }
+    uint64_t now=mono_ns();
+    if (!loop_report_ns) loop_report_ns=now;
+    if (now-loop_report_ns>=5000000000ULL && (loop_send_peak>0 || loop_return_peak>0)) {
+        fprintf(stderr,"[sp16-ui-stub] filter loop send_peak=%.4f return_peak=%.4f frames=%lu underruns=%lu drops=%lu lp_hz=%.0f hp=%s\n",
+                (double)loop_send_peak,(double)loop_return_peak,loop_frames,loop_underruns,loop_drops,
+                (double)(a.lp_set?loop_lp.fc:0),hp_on?"dac":"off");
+        loop_send_peak=loop_return_peak=0; loop_report_ns=now;
+    }
+}
+/* MAIN OUT: an analog volume on the master jacks, applied to the copy the host hears (the app's own buffer, the PCM
+ * tap and the firmware's ADC word are untouched). Which master channels feed OUT1-2 is not mapped yet, so it scales
+ * every channel the transport sends from the master stream. */
+static void main_out_scale(struct ax_ring *r,uint8_t *data,uint32_t frames) {
+    struct analog a=analog_now;
+    if (!a.main_set || a.main_gain==1) return;
+    unsigned w=r->width, count=frames*r->sent_ch;
+    for (unsigned i=0;i<count;i++) bm_put(data+(size_t)i*w,(int)r->fmt,bm_get(data+(size_t)i*w,(int)r->fmt)*a.main_gain);
+}
+/* Input jack: silence unless the host turned on the test tone; INPUT LEVEL scales it. The null plugin leaves a capture
+ * buffer untouched, so silence is written (all-zero bytes are 0 in every format the codec takes, and 0.0 in FLOAT_LE)
+ * or the app's reused buffer would keep the last tone samples. */
+static void input_fill(struct pcm_state *s,void *buffer,snd_pcm_sframes_t frames) {
+    struct analog a=analog_now;
+    unsigned w=bm_width(s->format);
+    if (!w || !s->channels || frames<=0 || !buffer) return;
+    if (a.tone_amp<=0) { memset(buffer,0,(size_t)frames*w*s->channels); return; }
+    float rate=(float)(s->rate?s->rate:44100), step=2*BM_PI*a.tone_hz/rate, amp=a.tone_amp*a.input_gain;
+    uint8_t *p=buffer; unsigned bpf=w*s->channels;
+    for (snd_pcm_sframes_t i=0;i<frames;i++,p+=bpf) {
+        float y=amp*bm_sin(s->phase);
+        s->phase+=step; if (s->phase>BM_PI) s->phase-=2*BM_PI;
+        for (unsigned c=0;c<s->channels;c++) bm_put(p+c*w,s->format,y);
+    }
+}
+
 static const char *const io_names[4]={"writei","writen","readi","readn"};
 static void pace(snd_pcm_t *handle,snd_pcm_sframes_t frames,unsigned method) {
     struct pcm_state *s=pcm(handle);
@@ -806,6 +1232,8 @@ static void pace(snd_pcm_t *handle,snd_pcm_sframes_t frames,unsigned method) {
     }
     if (frames<=0) return;
     uint64_t step=(uint64_t)frames*1000000000ULL/s->rate, now=mono_ns();
+    analog_refresh(now);
+    dac_flush(now);
     if (!s->deadline_ns || now>s->deadline_ns+PCM_MAX_LAG_NS) s->deadline_ns=now;
     s->deadline_ns+=step;
     uint64_t slept=0;
@@ -833,6 +1261,7 @@ snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t *handle,const void *buffer,snd_pcm_uf
     struct pcm_state *tapped=pcm(handle);
     if (tapped && tapped->tap) pcm_tap_feed(tapped,buffer,result);
     if (tapped && tapped->ax) ax_feed(tapped,buffer,result);
+    if (tapped && is_board(tapped,"hw:ak4452audio,1",0)) loop_send(tapped,buffer,result);
     pace(handle,result,0); return result;
 }
 snd_pcm_sframes_t snd_pcm_writen(snd_pcm_t *handle,void **buffers,snd_pcm_uframes_t frames) {
@@ -841,7 +1270,11 @@ snd_pcm_sframes_t snd_pcm_writen(snd_pcm_t *handle,void **buffers,snd_pcm_uframe
 }
 snd_pcm_sframes_t snd_pcm_readi(snd_pcm_t *handle,void *buffer,snd_pcm_uframes_t frames) {
     snd_pcm_sframes_t (*real)(snd_pcm_t *,void *,snd_pcm_uframes_t)=dlsym(RTLD_NEXT,"snd_pcm_readi");
-    snd_pcm_sframes_t result=real(handle,buffer,frames); pace(handle,result,2); return result;
+    snd_pcm_sframes_t result=real(handle,buffer,frames);
+    struct pcm_state *s=pcm(handle);
+    if (s && is_board(s,"hw:ak4452audio,1",1)) loop_return(s,buffer,result);
+    else if (s && is_board(s,"hw:ak4452audio,0",1)) input_fill(s,buffer,result);
+    pace(handle,result,2); return result;
 }
 snd_pcm_sframes_t snd_pcm_readn(snd_pcm_t *handle,void **buffers,snd_pcm_uframes_t frames) {
     snd_pcm_sframes_t (*real)(snd_pcm_t *,void **,snd_pcm_uframes_t)=dlsym(RTLD_NEXT,"snd_pcm_readn");

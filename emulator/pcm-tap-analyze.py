@@ -18,7 +18,8 @@ import zlib
 from pathlib import Path
 
 HEADER = 64
-FORMATS = {2: ("<h", 2, 32768.0, "S16_LE"), 14: ("<f", 4, 1.0, "FLOAT_LE"), 10: ("<i", 4, 2147483648.0, "S32_LE")}
+FORMATS = {2: ("<h", 2, 32768.0, "S16_LE"), 14: ("<f", 4, 1.0, "FLOAT_LE"), 10: ("<i", 4, 2147483648.0, "S32_LE"),
+           6: ("<i", 4, 8388608.0, "S24_LE")}
 
 
 def extract(console, out):
@@ -55,6 +56,14 @@ def parse(raw):
                 first=first, start_ns=start_ns)
 
 
+def decode(code, label, data, count):
+    """Interleaved samples as signed numbers; S24_LE keeps 24 bits in the low bytes of a 32-bit word and is sign-extended."""
+    samples = struct.unpack(f"<{count}{code[1]}", data)
+    if label == "S24_LE":
+        samples = tuple(((v & 0xFFFFFF) ^ 0x800000) - 0x800000 for v in samples)
+    return samples
+
+
 def analyse(raw, onsets=False):
     h = parse(raw)
     spec = FORMATS.get(h["format"])
@@ -62,7 +71,7 @@ def analyse(raw, onsets=False):
         raise ValueError(f"unsupported ALSA format {h['format']}")
     code, width, scale, label = spec
     frames, ch = h["captured"], h["channels"]
-    samples = struct.unpack(f"<{frames * ch}{code[1]}", raw[HEADER:HEADER + frames * ch * width])
+    samples = decode(code, label, raw[HEADER:HEADER + frames * ch * width], frames * ch)
     report = dict(header=h, label=label, channels=[])
     bad = 0
     for c in range(ch):

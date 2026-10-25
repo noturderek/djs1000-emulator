@@ -580,8 +580,13 @@ BUILD_OPTS = [
     Opt("--research", "Add the owner-only research socket (events, raw frames, snapshots), used by `./sp16 ctl`, "
         "`./sp16 mod` and `./sp16 hwsuite`.", flag=True),
     Opt("--trace", "Research only: strace (syscall trace in console.txt), gdb (stub on port 1234, blocks the app "
-        "until attached) or pcmtap (records 4 s of each playback stream into console.txt; no host audio).", "MODE",
-        choices=("strace", "gdb", "pcmtap")),
+        "until attached), pcmtap (records 4 s of each playback stream into console.txt; no host audio) or exec "
+        "(addresses of the translation blocks the app executes, each once per app instance and guest thread, as SP16_TB lines in console.txt; read "
+        "them with emulator/exectrace.py; slows the app a lot).", "MODE",
+        choices=("strace", "gdb", "pcmtap", "exec")),
+    Opt("--app-arg", "Research only: start the firmware app with this argument, e.g. testmode for the factory test mode "
+        "(the guest passes it on only if the firmware profile's runtime.app_args lists it; lowercase letters, digits, "
+        "_ and -; at most 32).", "TOKEN"),
     Opt("--pad-calibration-value", "Stage a synthetic pad calibration N for all pads (default: the profile's own "
         "value, not factory data).", "N"),
     Opt("--uncalibrated", "Stage no pad calibration so the firmware reports uncalibrated pads (they blink); the "
@@ -668,6 +673,9 @@ RUN_OPTS = [
     Opt("--no-ui-input", "Bench mode for unattended runs: the window ignores clicks, drags, scrolling, keys and "
         "accessibility actions (a badge says so) and opens in the background without taking focus; the research "
         "control socket, LCD snapshots and panelshots work as usual.", flag=True),
+    Opt("--no-audio-files", "Audio builds (--audio file or both): keep reading and counting the guest's audio (metrics) "
+        "but write no WAV into the session folder, for unattended runs that read no audio (about 28 MB a minute "
+        "otherwise).", flag=True),
 ]
 
 
@@ -2916,7 +2924,7 @@ def make_commands():
         "run", "Build and run", "Launch a built emulator app",
         "Opens build/NAME with `open -n`; close the window to stop the emulator. The first boot of each firmware "
         "creates a 1 GB data image for it in the library; projects and settings persist there.",
-        opts=RUN_OPTS, usage="./sp16 run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR] [--no-ui-input]",
+        opts=RUN_OPTS, usage="./sp16 run [--name NAME] [--firmware ID] [--usb-image PATH | --no-usb] [--ephemeral] [--dev-overlay DIR] [--no-ui-input] [--no-audio-files]",
         examples=["./sp16 run", "./sp16 run --name sp16-dev --firmware ID",
                   "./sp16 run --usb-image ~/sticks/other.img", "./sp16 run --no-usb", "./sp16 run --ephemeral",
                   "./sp16 run --name sp16-dev --ephemeral --no-ui-input   # unattended, scripted through ./sp16 ctl"],

@@ -81,6 +81,38 @@ def finish(frame):
     return bytes(frame)
 
 
+def analog_state_bytes(slots, sequence=0, tone_hz=None):
+    """Encode the shared analog state: magic, u32 sequence (even = stable), five u16 slots (MAIN OUT, INPUT LEVEL,
+    CUTOFF, RESONANCE, INPUT TONE), u16 tone frequency, then the FILTER TONE slot (hardware_stub.c reads the same)."""
+    body = b"SP16ANA1" + struct.pack("<I", sequence) + struct.pack("<5H", *slots[:5])
+    body += struct.pack("<H", tone_hz or panel_map.INPUT_TONE_HZ) + struct.pack("<H", slots[5])
+    return body.ljust(64, b"\0")
+
+
+class AnalogStateFile:
+    """The bridge's writer of the shared analog state: one 64-byte file mapped by the shim, updated in place under a
+    sequence lock (odd while writing), so the audio thread never sees a torn update and never blocks."""
+
+    def __init__(self, path, model):
+        import mmap
+        self.model, self.sequence = model, 0
+        with open(path, "wb") as handle:
+            handle.write(model.analog_state(0))
+        self.file = open(path, "r+b")
+        self.map = mmap.mmap(self.file.fileno(), 64)
+
+    def update(self):
+        state = self.model.analog_state()
+        self.map[8:12] = struct.pack("<I", self.sequence + 1)
+        self.map[12:64] = state[12:64]
+        self.sequence += 2
+        self.map[8:12] = struct.pack("<I", self.sequence)
+
+    def close(self):
+        self.map.close()
+        self.file.close()
+
+
 class PanelModel:
     """Semantic panel state -> complete OEM RX frames, with held state preserved.
 
@@ -119,6 +151,9 @@ class PanelModel:
         self.cdc_override = None
         self.cdc_changed = False
         self.changed = True
+        # Host-side analog state for the shim's board model; an absent name was never moved (neutral).
+        self.host_analog = {}
+        self.analog_changed = False
 
     def _set_bit(self, bit, on):
         byte, mask = bit[0], 1 << bit[1]
@@ -135,17 +170,21 @@ class PanelModel:
         struct.pack_into(">H", self.raw, offset, value & 0xffff)
 
     def apply(self, control, action, value=0):
-        name = panel_map.CONTROL_NAMES.get(control)
+        name = panel_map.ALL_CONTROL_NAMES.get(control)
         if name is None:
             return INPUT_INVALID
         with self.lock:
             if name == "strip":
                 return self._strip(action, value)
-            if name in panel_map.ANALOG_WORDS:
+            if name in panel_map.ANALOG_WORDS or name in panel_map.HOST_ANALOG:
                 if action != "value" or not 0 <= value <= 1000:
                     return INPUT_INVALID
-                self._set_analog(name, value)
-                self.changed = True
+                if name in panel_map.ANALOG_WORDS:
+                    self._set_analog(name, value)
+                    self.changed = True
+                if name in panel_map.HOST_ANALOG:
+                    self.host_analog[name] = value
+                    self.analog_changed = True
                 return INPUT_OK
             if name.startswith("pad") and action in ("press", "release", "value"):
                 if self.pad_curve is None:
@@ -234,6 +273,14 @@ class PanelModel:
             if not self.cdc_contact:
                 return bytes((0x7f - 64, 0, 0, 0))
             return bytes((0x7f - self.cdc_position, 0x80, 0, 0))
+
+    def analog_state(self, sequence=0):
+        """The 64-byte shared analog state the shim's board model reads (hardware_stub.c): "SP16ANA1", u32 sequence,
+        then u16 slots in panel_map.HOST_ANALOG order (0..1000, 0xffff = never moved) and the tone frequency."""
+        with self.lock:
+            self.analog_changed = False
+            slots = [self.host_analog.get(name, 0xFFFF) for name in panel_map.HOST_ANALOG]
+        return analog_state_bytes(slots, sequence)
 
     def set_raw(self, offset, data):
         """Research only: pin frame bytes after normal state is composed."""

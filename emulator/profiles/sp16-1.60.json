@@ -211,6 +211,10 @@
       "home": [
         1,
         3
+      ],
+      "power": [
+        5,
+        4
       ]
     },
     "buttons_inert": [
@@ -1417,7 +1421,7 @@
         "name": "hw:ak4452audio,0",
         "direction": "playback",
         "access": "RW_INTERLEAVED",
-        "format": "FLOAT_LE",
+        "format": "S24_LE",
         "channels": 2,
         "rate": 44100,
         "period_frames": 64,
@@ -1427,7 +1431,7 @@
         "name": "hw:ak4452audio,1",
         "direction": "playback",
         "access": "RW_INTERLEAVED",
-        "format": "FLOAT_LE",
+        "format": "S24_LE",
         "channels": 2,
         "rate": 44100,
         "period_frames": 64,
@@ -1437,7 +1441,7 @@
         "name": "hw:ak4452audio,0",
         "direction": "capture",
         "access": "RW_INTERLEAVED",
-        "format": "FLOAT_LE",
+        "format": "S24_LE",
         "channels": 2,
         "rate": 44100,
         "period_frames": 64,
@@ -1447,7 +1451,7 @@
         "name": "hw:ak4452audio,1",
         "direction": "capture",
         "access": "RW_INTERLEAVED",
-        "format": "FLOAT_LE",
+        "format": "S24_LE",
         "channels": 2,
         "rate": 44100,
         "period_frames": 64,
@@ -1467,7 +1471,8 @@
       74
     ],
     "late_over_20ms_max": 0.25,
-    "late_over_20ms_note": "share of PCM packets that reach the host more than 20 ms late in one window: host delivery latency, which matters only for live output; measured 0 to 0.134 over 12 windows of 20-62 s (1.50 and 1.60, load 6-16, two VMs) while every window had 44100 frames/s, no gap, drop or sequence gap"
+    "late_over_20ms_note": "share of PCM packets that reach the host more than 20 ms late in one window: host delivery latency, which matters only for live output; measured 0 to 0.134 over 12 windows of 20-62 s (1.50 and 1.60, load 6-16, two VMs) while every window had 44100 frames/s, no gap, drop or sequence gap",
+    "alsa_streams_note": "ak4452 streams: the shim restricts the AK4452 ports to the codec's formats (S16_LE, S24_LE, S20_3LE) so the app runs S24_LE as on the unit; SP16_PCM_ANY_FORMAT=1 restores the null plugin's answer (FLOAT_LE) for research"
   },
   "strip": {
     "lamp_channels": [
@@ -1563,11 +1568,10 @@
     "/dev/dac_spi4.0",
     "/dev/backlight",
     "/proc/udev_usb1",
-    "/proc/udev_usbctn1"
-  ],
-  "device_nodes_unserved": [
+    "/proc/udev_usbctn1",
     "/dev/gpiodrv"
   ],
+  "device_nodes_unserved": [],
   "ioctl_set": [
     "0x40017001",
     "0x40017009",
@@ -1901,11 +1905,7 @@
       "type": "delivered",
       "reason": "no lamp or screen effect with the default one-bar pattern (events accounted)"
     },
-    "bit_5_4": {
-      "bit": [
-        5,
-        4
-      ],
+    "power": {
       "type": "lamp",
       "role": "usb_led",
       "extra": [
@@ -1919,7 +1919,7 @@
           "usb": "attach"
         }
       ],
-      "note": "measured by hwsuite HW-09: a short press of RX bit (5,4) makes the firmware unmount the USB stick at once (SP16_USB unmounted_by_app=yes, LED off); USB STOP (5,6) needs a >= 2 s hold. It also latches TX extra flag 0x67 bit 0 and, until the next start, project saves hang at SAVING 0%; so it runs last. The factory BUTTON TEST page shows no name for it; no physical control known"
+      "note": "power/standby key (service manual: M1 reads POWER SW and M2 relays it as RX bit (5,4); the app's PowerManager handles button object 14: press aborts each standby receiver, release asks each to go to standby). Measured by hwsuite HW-09: a short press unmounts the USB stick at once (SP16_USB unmounted_by_app=yes, LED off), latches TX 0x67 bit 0 (the app's 'transition Standby' flag, after which a real unit's M1 cuts power) and, until the next start, project saves hang at SAVING 0%; so it runs last. The emulator has no M1, so the app stays in standby until it restarts"
     }
   },
   "lamp_unassigned": {
@@ -1930,11 +1930,11 @@
       0,
       2
     ],
-    "note": "SHIFT (mono 4) is never driven; TX extras 0x66 and 0x68 bit 0 move only in the firmware's start-up frames; no channel for strip LEDs 9-10"
+    "note": "SHIFT (mono 4) is never driven and has no LED (the service manual's LED matrix has none on SHIFT or MODE); TX extras 0x66 and 0x68 bit 0 move only in the firmware's start-up frames; the ribbon has 8 LEDs, all assigned"
   },
   "ioctl_set_note": "requests the firmware made and the shim accepted at run time (metrics.guest.ioctls_seen, hwsuite HW-45); the shim also serves 0x40047002, 0x40027003, 0x40017005, 0x40047007, 0x40017008 and 0x40017006, which this version never calls",
   "lamp_extra_driven": {
-    "1": "TX 0x67 bit 0: latched on by RX bit (5,4) (see button_effects.bit_5_4); also set in start-up frames"
+    "1": "TX 0x67 bit 0: the standby transition flag (UIOutputManager::buildTxFrame logs 'transition Standby!' when it sets it), latched by the power key (button_effects.power); also set in start-up frames"
   },
   "lamp_required": [
     "track",
@@ -1997,5 +1997,5 @@
     "pad15",
     "pad16"
   ],
-  "lamp_required_note": "not required: shift (never driven), usb_stop (mono 24, never lit in any suite action), bar 2-4 and their position lamps (the default project has one bar)"
+  "lamp_required_note": "not required: shift (never driven), usb_stop (mono 24, the STBY LED on the USB STOP/WAKE UP key; never lit in any suite action), bar 2-4 and their position lamps (the default project has one bar)"
 }

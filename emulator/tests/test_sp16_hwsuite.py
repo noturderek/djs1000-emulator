@@ -24,14 +24,14 @@ def all_pass(ids=None):
 
 class CheckTableTests(unittest.TestCase):
     def test_table_matches_the_spec(self):
-        self.assertEqual([c.id for c in hwsuite.CHECKS], [f"HW-{n:02d}" for n in range(1, 46)])
+        self.assertEqual([c.id for c in hwsuite.CHECKS], [f"HW-{n:02d}" for n in range(1, 47)])
         self.assertEqual(list(hwsuite.SMOKE_IDS), SPEC_SMOKE)
         self.assertEqual([c.id for c in hwsuite.CHECKS if c.tier == "L"], ["HW-44"])
 
     def test_tiers_and_only(self):
         self.assertEqual(hwsuite.select_checks("smoke"), SPEC_SMOKE)
-        self.assertEqual(len(hwsuite.select_checks("core")), 44)
-        self.assertEqual(len(hwsuite.select_checks("full")), 45)
+        self.assertEqual(len(hwsuite.select_checks("core")), 45)
+        self.assertEqual(len(hwsuite.select_checks("full")), 46)
         self.assertEqual(hwsuite.select_checks("full", ["HW-18", "HW-05"]), ["HW-05", "HW-18"])
         self.assertEqual(hwsuite.select_checks("smoke", ["HW-02", "HW-05"]), ["HW-05"])
         with self.assertRaises(ValueError):
@@ -128,7 +128,7 @@ class VerdictTests(unittest.TestCase):
         text = hwsuite.render_report(result)
         self.assertIn("## HW-18 FAIL", text)
         self.assertIn("- HW-30: analog-only", text)
-        self.assertEqual(text.count("| HW-"), 45)
+        self.assertEqual(text.count("| HW-"), 46)
 
 
 class FrameTests(unittest.TestCase):

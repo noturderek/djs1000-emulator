@@ -288,6 +288,12 @@ class RunTests(CliCase):
         self.assertEqual(argv, [PYTHON, self.tool("native.py"), "launch", "--output", str(folder), "--firmware", "abc",
                                 "--usb-image", "stick.img", "--ephemeral", "--dev-overlay", "mod", "--no-ui-input"])
 
+    def test_run_passes_no_audio_files(self):
+        folder = self.make_build("dev", research=True)
+        argv, _ = self.argv("run", "--build", "dev", "--ephemeral", "--no-ui-input", "--no-audio-files")
+        self.assertEqual(argv, [PYTHON, self.tool("native.py"), "launch", "--output", str(folder), "--ephemeral",
+                                "--no-ui-input", "--no-audio-files"])
+
     def test_a_missing_build_names_the_command_that_creates_it(self):
         self.make_build("other")
         with self.assertRaisesRegex(cli.CliError, r"./sp16 build --name nope.*existing builds: other"):
