@@ -584,6 +584,9 @@ BUILD_OPTS = [
         "(addresses of the translation blocks the app executes, each once per app instance and guest thread, as SP16_TB lines in console.txt; read "
         "them with emulator/exectrace.py; slows the app a lot).", "MODE",
         choices=("strace", "gdb", "pcmtap", "exec")),
+    Opt("--app-arg", "Research only: start the firmware app with this argument, e.g. testmode for the factory test mode "
+        "(the guest passes it on only if the firmware profile's runtime.app_args lists it; lowercase letters, digits, "
+        "_ and -; at most 32).", "TOKEN"),
     Opt("--pad-calibration-value", "Stage a synthetic pad calibration N for all pads (default: the profile's own "
         "value, not factory data).", "N"),
     Opt("--uncalibrated", "Stage no pad calibration so the firmware reports uncalibrated pads (they blink); the "

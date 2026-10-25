@@ -53,6 +53,20 @@ class NativeTransportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             native.build("y", research=False, trace="strace")
 
+    def test_app_arg_is_research_only_validated_and_default_off(self):
+        base = " ".join(native.arguments(Path("/q"), Path("/g"), "/s", firmware=True))
+        self.assertNotIn("sp16.app=", base)
+        text = " ".join(native.arguments(Path("/q"), Path("/g"), "/s", firmware=True, app_arg="testmode"))
+        self.assertIn(" sp16.app=testmode", text)
+        for bad in ("", "Test", "a b", "x" * 33, "a;b", "a=b"):
+            if bad:
+                with self.assertRaises(ValueError):
+                    native.arguments(Path("/q"), Path("/g"), "/s", app_arg=bad)
+        with self.assertRaises(ValueError):
+            native.build("y", research=False, app_arg="testmode")
+        with self.assertRaises(ValueError):
+            native.build("y", research=True, app_arg="Bad Token")
+
     def test_pcm_tap_is_a_research_trace_mode_off_by_default(self):
         self.assertIn("sp16.trace=pcmtap", " ".join(native.arguments(Path("/q"), Path("/g"), "/s", trace="pcmtap")))
         self.assertNotIn("pcmtap", " ".join(native.arguments(Path("/q"), Path("/g"), "/s")))
@@ -375,7 +389,7 @@ class BundleIdentityTests(unittest.TestCase):
                 mock.patch("sys.argv", ["native.py", "build", "--output", "o"]):
             native.main()
         self.assertEqual(build.call_args.kwargs["profile"], "fullpanel")
-        for extra in (["--rootfs", "r"], ["--app-arg", "testmode"], ["--no-persistence"],
+        for extra in (["--rootfs", "r"], ["--no-persistence"],
                       ["--profile", "testmode"]):
             stderr = io.StringIO()
             with mock.patch.object(native, "build") as build, \
@@ -388,7 +402,7 @@ class BundleIdentityTests(unittest.TestCase):
         with mock.patch("sys.argv", ["native.py", "build", "-h"]), \
                 contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit):
             native.main()
-        for hidden in ("--rootfs", "--mod", "--app-arg", "--no-persistence"):
+        for hidden in ("--rootfs", "--mod", "--no-persistence"):
             self.assertNotIn(hidden, stdout.getvalue())
 
 
@@ -487,7 +501,7 @@ class PersistenceArgumentTests(unittest.TestCase):
         out = subprocess.run([sys.executable, str(TOOLS / "native.py"), "build", "--help"],
                              capture_output=True, text=True).stdout
         self.assertIn("--decoupled", out)
-        for removed in ("--rootfs", "--app-arg", "--no-persistence"):
+        for removed in ("--rootfs", "--no-persistence"):
             self.assertNotIn(removed, out)
         out = subprocess.run([sys.executable, str(TOOLS / "native.py"), "launch", "--help"],
                              capture_output=True, text=True).stdout
