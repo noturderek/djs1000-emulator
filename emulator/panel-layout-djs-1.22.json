@@ -1273,7 +1273,7 @@
    "h": 30
   },
   {
-   "id": 100,
+   "id": 110,
    "name": "sync_master",
    "kind": "button",
    "group": "buttons",
@@ -1288,7 +1288,7 @@
    "h": 30
   },
   {
-   "id": 101,
+   "id": 111,
    "name": "fx_level_depth",
    "kind": "analog",
    "group": "analog",
@@ -1300,7 +1300,7 @@
    "r": 34
   },
   {
-   "id": 102,
+   "id": 112,
    "name": "headphone_level",
    "kind": "analog",
    "group": "analog",
@@ -1312,7 +1312,7 @@
    "r": 24
   },
   {
-   "id": 103,
+   "id": 101,
    "name": "input_level",
    "kind": "analog",
    "group": "analog",
@@ -1324,7 +1324,7 @@
    "r": 28
   },
   {
-   "id": 104,
+   "id": 114,
    "name": "tempo_slider",
    "kind": "analog",
    "group": "tempo",

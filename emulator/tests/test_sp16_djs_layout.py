@@ -20,7 +20,7 @@ class DJSLayoutTests(unittest.TestCase):
         ids = [c["id"] for c in self.layout["controls"]]
         self.assertEqual(len(ids), len(set(ids)))
         for c in self.layout["controls"]:
-            table = panel_map.LAMP_NAMES if c["kind"] == "lamp" else panel_map.CONTROL_NAMES
+            table = panel_map.LAMP_NAMES if c["kind"] == "lamp" else panel_map.ALL_CONTROL_NAMES
             self.assertEqual(table.get(c["id"]), c["name"], c)
 
     def test_every_djs_button_has_a_profile_role(self):

@@ -71,7 +71,7 @@ class DJSProfileTests(unittest.TestCase):
             words = {}
             for value in (0, 500, 1000):
                 state = panel.PanelModel()
-                state.apply(104, "value", value)
+                state.apply(114, "value", value)
                 words[value] = struct.unpack_from("<HH", state.raw, 0x56)
             print(json.dumps(words))
         """)

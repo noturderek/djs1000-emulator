@@ -51,8 +51,9 @@ CONTROL_NAMES = {
     61: "main_out", 62: "drive", 63: "lp_cutoff", 64: "lp_resonance", 65: "hp_cutoff",
     # DJS-1000 controls (panel-layout-djs-1.22.json); each works only where the firmware profile gives it a role.
     90: "hot_slice", 91: "project", 92: "sampling", 93: "fx_select", 94: "fx_on_off", 95: "nudge_minus",
-    96: "nudge_plus", 97: "tempo_reset", 98: "tempo_range", 99: "sync", 100: "sync_master",
-    101: "fx_level_depth", 102: "headphone_level", 103: "input_level", 104: "tempo_slider",
+    96: "nudge_plus", 97: "tempo_reset", 98: "tempo_range", 99: "sync", 110: "sync_master",
+    111: "fx_level_depth", 112: "headphone_level", 114: "tempo_slider",
+    # (the DJS INPUT LEVEL knob is the shared host control "input_level", id 101, below)
 }
 # Controls with no place in the panel layout (driven through the research socket): POWER/STANDBY is the M1 key that M2
 # relays as RX bit (5,4) (service manual key matrix; the app's PowerManager handles button object 14); INPUT LEVEL is

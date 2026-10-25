@@ -94,7 +94,7 @@ button(25, "scene", "SCENE", 639, 773, w=40, h=15)
 button(26, "pattern", "PATTERN", 711, 773, w=42, h=15)
 button(56, "mode", "MODE", 148, 407, w=40, h=17, style="mode", access="Ribbon mode")
 button(99, "sync", "SYNC", 655, 316, w=24, h=15, access="Beat sync")
-button(100, "sync_master", "MASTER", 691, 316, w=24, h=15, access="Beat sync master")
+button(110, "sync_master", "MASTER", 691, 316, w=24, h=15, access="Beat sync master")
 button(95, "nudge_minus", "−", 651, 703, w=30, h=17, access="Nudge minus")
 button(96, "nudge_plus", "+", 699, 703, w=30, h=17, access="Nudge plus")
 control(22, "rec", "button", "transport", "roundRect", 165, 703, "Record", label="", style="rec", radius=26, w=26, h=26)
@@ -108,8 +108,8 @@ control(94, "fx_on_off", "button", "fx", "circle", 200, 340, "FX on/off", style=
 control(97, "tempo_reset", "button", "tempo", "circle", 614, 530, "Tempo reset", style="home", r=9)
 control(98, "tempo_range", "button", "tempo", "circle", 676, 366, "Tempo range", style="home", r=8)
 # --- analog: FX level/depth (wired), input level (pure analog on the unit: no RX field) ---
-control(101, "fx_level_depth", "analog", "analog", "circle", 130, 340, "FX level/depth", style="matte", r=17)
-control(103, "input_level", "analog", "analog", "circle", 715, 130, "Input level", style="metal", r=14)
+control(111, "fx_level_depth", "analog", "analog", "circle", 130, 340, "FX level/depth", style="matte", r=17)
+control(101, "input_level", "analog", "analog", "circle", 715, 130, "Input level", style="metal", r=14)
 dots(130, 340, 23)
 dots(715, 130, 19)
 # --- ribbon (the CDC strip) with its LEDs and the mode lamps ---
@@ -146,7 +146,7 @@ decor.append({"type": "usbport", "x": ux, "y": uy, "w": 40 * S, "h": 36 * S, "ra
 control(88, "usb_led", "lamp", "usb", "roundRect", 120, 150, "USB port ring", radius=2, w=36, h=3)
 # tempo slider: an analog control of shape "fader" (profile analog word tempo_slider; top = minus), a slot with fine
 # increments (longer every fifth), centre mark and scale
-control(104, "tempo_slider", "analog", "tempo", "fader", 675, 530, "Tempo slider", radius=3, w=14, h=250)
+control(114, "tempo_slider", "analog", "tempo", "fader", 675, 530, "Tempo slider", radius=3, w=14, h=250)
 for i in range(41):
     y = 410 + i * 6
     long = i % 5 == 0
@@ -169,7 +169,7 @@ for x, size in ((104, 22), (124, 12)):
     decor.append({"type": "dots", "cx": jx, "cy": jy, "r": 0, "from": 0, "to": 0, "count": 1, "size": size})
 decor.append({"type": "line", "x": P(110, 942)[0], "y": P(110, 942)[1], "x2": P(119, 942)[0], "y2": P(119, 942)[1],
               "lineWidth": 1.4})
-control(102, "headphone_level", "analog", "analog", "circle", 160, 942, "Headphone level", style="metal", r=12)
+control(112, "headphone_level", "analog", "analog", "circle", 160, 942, "Headphone level", style="metal", r=12)
 dots(160, 942, 17)
 text("LEVEL", 160, 924, size=10)
 text("FRONT", 735, 942, size=9, color="gray")
