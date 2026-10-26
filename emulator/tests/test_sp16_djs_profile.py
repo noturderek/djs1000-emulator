@@ -93,6 +93,19 @@ class DJSProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             profiles.validate(profile)
 
+    def test_board_loop_is_off_and_djs_controls_keep_clear_of_host_ids(self):
+        # hw:ak4452audio,1 playback is the DJS master DAC, not the SP-16 filter send: the shim must not loop it back.
+        self.assertEqual(profiles.runtime_fields(profiles.load("djs-1.22"))[-1], "off")
+        self.assertEqual(profiles.runtime_fields(profiles.legacy())[-1], "on")
+        out = run_with_profile("""
+            import json, panel_map
+            print(json.dumps({name: panel_map.CONTROL_IDS[name] for name in
+                              ("sync_master", "fx_level_depth", "headphone_level", "input_level", "power")}))
+        """)
+        self.assertEqual(out, {"sync_master": 110, "fx_level_depth": 111, "headphone_level": 112, "input_level": 101,
+                               "power": 100})
+        self.assertIn('-E SP16_BOARD_LOOP=0', (TOOLS / "guest-init.sh").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

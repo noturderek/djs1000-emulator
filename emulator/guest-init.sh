@@ -61,9 +61,9 @@ sp16_profile_env=
 # directories, data/eMMC/USB mount points, allowed app arguments) comes from the firmware profile chosen at attach,
 # never from this script.
 sp16_set_runtime() {
-  [ $# -eq 10 ] || return 1
+  [ $# -eq 11 ] || return 1
   sp16_profile=$1 sp16_app_path=$2 sp16_app_cwd=$3 sp16_cpu=$4 sp16_ldpath=$5 sp16_tmpfs_dirs=$6 \
-    sp16_data_dir=$7 sp16_emmc_mount=$8 sp16_usb_mount=$9 sp16_app_args=${10}
+    sp16_data_dir=$7 sp16_emmc_mount=$8 sp16_usb_mount=$9 sp16_app_args=${10} sp16_board_loop=${11}
 }
 modprobe virtio_blk
 sp16_identity=$(python3 /opt/sp16/guest-firmware.py attach 2>/dev/console) || {
@@ -199,6 +199,8 @@ done
 # guest does not have (only lo): SP16_FAKE_ETH0 makes the shim answer those ioctls with fake values.
 sp16_midi_env=
 if [ -n "$sp16_app_arg" ]; then sp16_midi_env="-E SP16_MIDI_LOOPBACK=1 -E SP16_FAKE_ETH0=1"; fi
+# The shim's filter insert loop models the SP-16 board; a profile with runtime.board_loop false (DJS-1000) turns it off.
+if [ "$sp16_board_loop" = off ]; then sp16_midi_env="$sp16_midi_env -E SP16_BOARD_LOOP=0"; fi
 # Research builds only (native.py --research --trace): opt-in QEMU user-mode tracing, default off.
 sp16_trace_args=
 case " $(cat /proc/cmdline) " in

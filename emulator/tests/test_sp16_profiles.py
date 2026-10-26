@@ -103,7 +103,7 @@ class VersionDataTests(unittest.TestCase):
         self.assertEqual(profiles.runtime_fields(profiles.legacy()),
                          ["sp16-1.60", "/root/pdj/EP085_Main_R", "/root/pdj", "cortex-a9", "/lib:/usr/lib",
                           "/root/pdj/project,/root/pdj/browse,/root/pdj/scenes,/root/pdj/packages", "/root/data",
-                          "/mnt/emmc", "/media/usb1/sda1", "testmode"])
+                          "/mnt/emmc", "/media/usb1/sda1", "testmode", "on"])
         expected = ('<?xml version="1.0" encoding="UTF-8"?>\n\n<PadCalibrationData '
                     + " ".join(f'CALIB_VALUE_PAD{n}="242"' for n in range(1, 17)) + '/>\n')
         self.assertEqual(native.pad_calibration_xml(242), expected)

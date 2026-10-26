@@ -35,7 +35,8 @@
     ],
     "app_args": [
       "testmode"
-    ]
+    ],
+    "board_loop": false
   },
   "panel": {
     "selector_window_frames": 8,
